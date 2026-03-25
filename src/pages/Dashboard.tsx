@@ -182,6 +182,8 @@ export default function Dashboard() {
   const [search, setSearch] = useState('');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [activeActionMenu, setActiveActionMenu] = useState<number | null>(null);
+  const [confirmDeleteItemId, setConfirmDeleteItemId] = useState<number | null>(null);
+  const [deletingItemId, setDeletingItemId] = useState<number | null>(null);
 
   // Add form state
   const [formData, setFormData] = useState({ ...emptyForm });
@@ -391,6 +393,18 @@ export default function Dashboard() {
     }
   };
 
+  const handleDeleteItem = async (itemId: number) => {
+    setDeletingItemId(itemId);
+    try {
+      await fetch(`/api/inventory/${itemId}`, { method: 'DELETE', credentials: 'include' });
+      setItems(prev => prev.filter(i => i.id !== itemId));
+      fetchStats();
+    } catch {} finally {
+      setDeletingItemId(null);
+      setConfirmDeleteItemId(null);
+    }
+  };
+
   const handleDeleteCategory = async (catId: number) => {
     try {
       await fetch(`/api/categories/${catId}`, { method: 'DELETE', credentials: 'include' });
@@ -589,10 +603,36 @@ export default function Dashboard() {
                           ${item.sale_price?.toFixed(2) || '0.00'}
                         </td>
                         <td className="px-6 py-4">
-                          <button onClick={() => openEditModal(item)}
-                            className="p-1.5 hover:bg-slate-200 rounded-lg text-slate-400 hover:text-navy-900 transition-colors">
-                            <Pencil size={15} />
-                          </button>
+                          <div className="flex items-center gap-1">
+                            {isOwner && (
+                              <button onClick={() => openEditModal(item)}
+                                className="p-1.5 hover:bg-slate-200 rounded-lg text-slate-400 hover:text-navy-900 transition-colors">
+                                <Pencil size={15} />
+                              </button>
+                            )}
+                            {isOwner && (confirmDeleteItemId === item.id ? (
+                              <div className="flex items-center gap-1">
+                                <button
+                                  onClick={() => handleDeleteItem(item.id)}
+                                  disabled={deletingItemId === item.id}
+                                  className="px-2 py-1 text-xs font-medium bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 transition-colors"
+                                >
+                                  {deletingItemId === item.id ? '…' : 'Delete'}
+                                </button>
+                                <button
+                                  onClick={() => setConfirmDeleteItemId(null)}
+                                  className="px-2 py-1 text-xs font-medium bg-slate-200 text-slate-600 rounded-lg hover:bg-slate-300 transition-colors"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            ) : (
+                              <button onClick={() => setConfirmDeleteItemId(item.id)}
+                                className="p-1.5 hover:bg-red-50 rounded-lg text-slate-400 hover:text-red-600 transition-colors">
+                                <Trash2 size={15} />
+                              </button>
+                            ))}
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -787,12 +827,38 @@ export default function Dashboard() {
                         </td>
                         <td className="px-6 py-4">
                           {isOwner && (
-                            <button
-                              onClick={() => openEditModal(item)}
-                              className="p-1.5 hover:bg-slate-200 rounded-lg text-slate-400 hover:text-navy-900 transition-colors"
-                            >
-                              <Pencil size={15} />
-                            </button>
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => openEditModal(item)}
+                                className="p-1.5 hover:bg-slate-200 rounded-lg text-slate-400 hover:text-navy-900 transition-colors"
+                              >
+                                <Pencil size={15} />
+                              </button>
+                              {confirmDeleteItemId === item.id ? (
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    onClick={() => handleDeleteItem(item.id)}
+                                    disabled={deletingItemId === item.id}
+                                    className="px-2 py-1 text-xs font-medium bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 transition-colors"
+                                  >
+                                    {deletingItemId === item.id ? '…' : 'Delete'}
+                                  </button>
+                                  <button
+                                    onClick={() => setConfirmDeleteItemId(null)}
+                                    className="px-2 py-1 text-xs font-medium bg-slate-200 text-slate-600 rounded-lg hover:bg-slate-300 transition-colors"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  onClick={() => setConfirmDeleteItemId(item.id)}
+                                  className="p-1.5 hover:bg-red-50 rounded-lg text-slate-400 hover:text-red-600 transition-colors"
+                                >
+                                  <Trash2 size={15} />
+                                </button>
+                              )}
+                            </div>
                           )}
                         </td>
                       </tr>

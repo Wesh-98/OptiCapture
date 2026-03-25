@@ -71,6 +71,8 @@ export default function Logs() {
   const [currentPage, setCurrentPage] = useState(1);
   const [fetchError, setFetchError] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
 
   const fetchLogs = useCallback(async () => {
     setIsLoading(true);
@@ -101,6 +103,7 @@ export default function Logs() {
 
   useEffect(() => { setCurrentPage(1); }, [actionFilter]);
   useEffect(() => { setCurrentPage(1); }, [search]);
+  useEffect(() => { setCurrentPage(1); }, [dateFrom, dateTo]);
 
   const filteredLogs = useMemo(() => {
     let filtered = logs;
@@ -119,8 +122,19 @@ export default function Logs() {
       );
     }
 
+    // Apply date range filter
+    if (dateFrom) {
+      const from = new Date(dateFrom);
+      filtered = filtered.filter(log => new Date(log.timestamp) >= from);
+    }
+    if (dateTo) {
+      const to = new Date(dateTo);
+      to.setHours(23, 59, 59, 999);
+      filtered = filtered.filter(log => new Date(log.timestamp) <= to);
+    }
+
     return filtered;
-  }, [logs, actionFilter, search]);
+  }, [logs, actionFilter, search, dateFrom, dateTo]);
 
   const totalPages = Math.max(1, Math.ceil(filteredLogs.length / pageSize));
   const pagedLogs = filteredLogs.slice((currentPage - 1) * pageSize, currentPage * pageSize);
@@ -134,10 +148,10 @@ export default function Logs() {
 
       {/* Search and Filter Controls */}
       <div className="space-y-4">
-        {/* Search and Filter in one row */}
-        <div className="flex items-center gap-3">
-          {/* Search — narrower, not full width */}
-          <div className="relative w-1/2">
+        {/* Search, Date range, and Filter in one row */}
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Search */}
+          <div className="relative flex-1 min-w-[180px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
             <input
               type="text"
@@ -146,6 +160,34 @@ export default function Logs() {
               onChange={(e) => setSearch(e.target.value)}
               className="w-full pl-9 pr-3 py-2 text-sm border border-slate-300 rounded-lg leading-5 bg-white placeholder-slate-500 focus:outline-none focus:placeholder-slate-400 focus:ring-1 focus:ring-navy-900 focus:border-navy-900"
             />
+          </div>
+          {/* Date range */}
+          <div className="flex items-center gap-2">
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={e => setDateFrom(e.target.value)}
+              className="px-2 py-2 text-sm border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-navy-900 focus:border-navy-900 text-slate-700"
+              title="From date"
+            />
+            <span className="text-slate-400 text-xs">to</span>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={e => setDateTo(e.target.value)}
+              min={dateFrom || undefined}
+              className="px-2 py-2 text-sm border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-navy-900 focus:border-navy-900 text-slate-700"
+              title="To date"
+            />
+            {(dateFrom || dateTo) && (
+              <button
+                onClick={() => { setDateFrom(''); setDateTo(''); }}
+                className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+                title="Clear dates"
+              >
+                <X size={14} />
+              </button>
+            )}
           </div>
 
           {/* Filter button */}

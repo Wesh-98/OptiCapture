@@ -709,7 +709,7 @@ app.post('/api/admin/users/:userId/reset-password', authenticateToken, (req: any
 
   const tempPassword = generateTempPassword();
   const hash = bcrypt.hashSync(tempPassword, 10);
-  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, userId);
+  db.prepare('UPDATE users SET password = ? WHERE id = ?').run(hash, userId);
 
   res.json({ tempPassword, username: user.username });
 });
