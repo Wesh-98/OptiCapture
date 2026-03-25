@@ -74,20 +74,20 @@ export default function Login() {
         <p className="text-slate-600 text-sm">© {new Date().getFullYear()} OptiCapture. All rights reserved.</p>
       </div>
 
-      {/* Right form panel */}
-      <div className="w-full lg:w-1/2 flex items-center justify-center p-4 sm:p-6 bg-slate-50 overflow-y-auto">
+      {/* Right form panel — navy on mobile, light on desktop */}
+      <div className="w-full lg:w-1/2 flex items-center justify-center p-4 sm:p-6 bg-navy-900 lg:bg-slate-50 overflow-y-auto">
         <motion.div
           initial={prefersReducedMotion ? false : { opacity: 0, y: 16 }}
           animate={prefersReducedMotion ? {} : { opacity: 1, y: 0 }}
           className="w-full max-w-md my-auto"
         >
-          {/* Mobile logo */}
+          {/* Mobile logo — white text on navy background */}
           <div className="lg:hidden text-center mb-4 sm:mb-8">
-            <h1 className="text-3xl font-bold tracking-tight text-navy-900">OptiCapture</h1>
-            <p className="text-slate-500 mt-1">Smart inventory for modern stores</p>
+            <h1 className="text-3xl font-bold tracking-tight text-white">OptiCapture</h1>
+            <p className="text-slate-400 mt-1">Smart inventory for modern stores</p>
           </div>
 
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 sm:p-8">
+          <div className="bg-white rounded-2xl shadow-xl lg:shadow-sm border border-slate-200 p-5 sm:p-8">
             <div className="mb-6">
               <h2 className="text-2xl font-bold text-slate-900">Welcome back</h2>
               <p className="text-slate-500 mt-1 text-sm">Sign in to your store account</p>
