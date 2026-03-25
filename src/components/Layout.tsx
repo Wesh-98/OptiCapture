@@ -1,24 +1,39 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, ScanLine, Upload, History, LogOut, Menu, X, ChevronRight, Store, Box } from 'lucide-react';
+import { LayoutDashboard, ScanLine, Upload, History, LogOut, Menu, X, ChevronRight, Store, Box, Settings, ChevronDown } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 
 export default function Layout({ children }: { children: React.ReactNode }) {
-  const { user, logout } = useAuth();
+  const { user, logout, myStores, switchStore } = useAuth();
   const location = useLocation();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
+  const [storeSwitcherOpen, setStoreSwitcherOpen] = useState(false);
+  const storeSwitcherRef = useRef<HTMLDivElement>(null);
+  const prefersReducedMotion = useReducedMotion();
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (storeSwitcherRef.current && !storeSwitcherRef.current.contains(e.target as Node)) {
+        setStoreSwitcherOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
 
   if (!user) return <>{children}</>;
 
-  const navItems = [
+  const allNavItems = [
     { href: '/', label: 'Dashboard', icon: LayoutDashboard },
-    { href: '/scan', label: 'Mobile Scan', icon: ScanLine },
-    { href: '/import', label: 'Import', icon: Upload },
+    { href: '/scan', label: 'Scan', icon: ScanLine },
+    { href: '/import', label: 'Import', icon: Upload, ownerOnly: true },
     { href: '/logs', label: 'Activity Logs', icon: History },
+    { href: '/settings', label: 'Store Settings', icon: Settings },
   ];
+  const navItems = allNavItems.filter(item => !item.ownerOnly || user?.role !== 'taker');
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row">
@@ -98,10 +113,61 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             <h1 className="text-lg font-bold text-navy-900">OptiCapture</h1>
           </div>
 
-          <div className="hidden md:flex items-center gap-2 text-navy-900 font-medium bg-slate-100 px-4 py-2 rounded-full">
-            <Store size={18} className="text-slate-500" />
-            <span>{user.store_name}</span>
-          </div>
+          {myStores && myStores.length > 1 ? (
+            <div ref={storeSwitcherRef} className="relative">
+              <button
+                onClick={() => setStoreSwitcherOpen(o => !o)}
+                className="hidden md:flex items-center gap-2 text-navy-900 font-medium bg-slate-100 px-4 py-2 rounded-full hover:bg-slate-200 transition-colors"
+              >
+                {user.store_logo
+                  ? <img src={user.store_logo} alt={user.store_name} className="w-7 h-7 rounded-full object-cover border border-slate-200" />
+                  : <Store size={18} className="text-slate-500" />
+                }
+                <span>{user.store_name}</span>
+                <ChevronDown size={14} className={cn("text-slate-400 transition-transform", storeSwitcherOpen && "rotate-180")} />
+              </button>
+
+              {storeSwitcherOpen && (
+                <div className="absolute top-full left-0 mt-2 w-64 bg-white rounded-xl shadow-lg border border-slate-200 py-1 z-50">
+                  <p className="px-3 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wider">Your Stores</p>
+                  {myStores.map(store => (
+                    <button
+                      key={store.id}
+                      onClick={async () => {
+                        setStoreSwitcherOpen(false);
+                        await switchStore(store.id);
+                        window.location.reload();
+                      }}
+                      className={cn(
+                        "w-full flex items-center gap-3 px-3 py-2.5 hover:bg-slate-50 transition-colors text-left",
+                        store.name === user.store_name && "bg-slate-50"
+                      )}
+                    >
+                      {store.logo
+                        ? <img src={store.logo} alt={store.name} className="w-8 h-8 rounded-lg object-cover border border-slate-200 flex-shrink-0" />
+                        : <div className="w-8 h-8 rounded-lg bg-navy-100 flex items-center justify-center text-navy-700 font-bold text-sm flex-shrink-0">{store.name.charAt(0)}</div>
+                      }
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-slate-800 truncate">{store.name}</p>
+                        <p className="text-xs text-slate-400 capitalize">{store.role}</p>
+                      </div>
+                      {store.name === user.store_name && (
+                        <div className="w-2 h-2 rounded-full bg-emerald-500 flex-shrink-0" />
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="hidden md:flex items-center gap-2 text-navy-900 font-medium bg-slate-100 px-4 py-2 rounded-full">
+              {user.store_logo
+                ? <img src={user.store_logo} alt={user.store_name} className="w-7 h-7 rounded-full object-cover border border-slate-200" />
+                : <Store size={18} className="text-slate-500" />
+              }
+              <span>{user.store_name}</span>
+            </div>
+          )}
 
           <div className="flex items-center gap-4">
             <div className="md:hidden">
@@ -125,16 +191,19 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <AnimatePresence>
           {isMobileMenuOpen && (
             <motion.div
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
+              initial={prefersReducedMotion ? false : { height: 0, opacity: 0 }}
+              animate={prefersReducedMotion ? {} : { height: 'auto', opacity: 1 }}
+              exit={prefersReducedMotion ? {} : { height: 0, opacity: 0 }}
               className="md:hidden bg-navy-900 text-slate-300 overflow-hidden absolute top-16 left-0 right-0 z-50 shadow-xl"
             >
               <nav className="p-4 space-y-2">
                 <div className="pb-4 mb-4 border-b border-navy-800">
                   <p className="text-sm text-slate-500 mb-1">Current Store</p>
                   <div className="flex items-center gap-2 text-white font-medium">
-                    <Store size={18} />
+                    {user.store_logo
+                      ? <img src={user.store_logo} alt={user.store_name} className="w-7 h-7 rounded-full object-cover border border-white" />
+                      : <Store size={18} />
+                    }
                     <span>{user.store_name}</span>
                   </div>
                 </div>
