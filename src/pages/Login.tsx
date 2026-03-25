@@ -75,19 +75,19 @@ export default function Login() {
       </div>
 
       {/* Right form panel */}
-      <div className="w-full lg:w-1/2 flex items-center justify-center p-6 bg-slate-50">
+      <div className="w-full lg:w-1/2 flex items-center justify-center p-4 sm:p-6 bg-slate-50 overflow-y-auto">
         <motion.div
           initial={prefersReducedMotion ? false : { opacity: 0, y: 16 }}
           animate={prefersReducedMotion ? {} : { opacity: 1, y: 0 }}
-          className="w-full max-w-md"
+          className="w-full max-w-md my-auto"
         >
           {/* Mobile logo */}
-          <div className="lg:hidden text-center mb-8">
+          <div className="lg:hidden text-center mb-4 sm:mb-8">
             <h1 className="text-3xl font-bold tracking-tight text-navy-900">OptiCapture</h1>
             <p className="text-slate-500 mt-1">Smart inventory for modern stores</p>
           </div>
 
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 sm:p-8">
             <div className="mb-6">
               <h2 className="text-2xl font-bold text-slate-900">Welcome back</h2>
               <p className="text-slate-500 mt-1 text-sm">Sign in to your store account</p>
