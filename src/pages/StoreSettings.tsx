@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Loader2, Upload, CheckCircle, Store, Lock, AlertTriangle } from 'lucide-react';
+import { Loader2, Upload, CheckCircle, Store, Lock, AlertTriangle, EyeOff } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 
 const validateZipcode = (v: string) => !v || /^\d{5}(-\d{4})?$/.test(v);
 const validatePhone = (v: string) => !v || /^\d{10}$/.test(v.replace(/\D/g, ''));
@@ -17,6 +18,8 @@ interface StoreInfo {
 }
 
 export default function StoreSettings() {
+  const { user } = useAuth();
+  const isTaker = user?.role === 'taker';
   const [storeInfo, setStoreInfo] = useState<StoreInfo>({
     name: '',
     street: '',
@@ -203,20 +206,35 @@ export default function StoreSettings() {
           </div>
           <div>
             <h2 className="text-base font-bold text-navy-900">Store Information</h2>
-            <p className="text-xs text-slate-500">Update your store name, address and contact details</p>
+            <p className="text-xs text-slate-500">
+              {isTaker ? 'View-only — contact the store owner to make changes' : 'Update your store name, address and contact details'}
+            </p>
           </div>
         </div>
 
-        <form onSubmit={handleStoreSubmit} className="space-y-4">
+        {isTaker && (
+          <div className="flex items-center gap-2 px-4 py-2.5 mb-4 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-500">
+            <EyeOff size={15} className="shrink-0" />
+            You have view-only access to store information. Only the store owner can make changes.
+          </div>
+        )}
+
+        <form onSubmit={isTaker ? e => e.preventDefault() : handleStoreSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-2">Store Logo</label>
             {storeInfo.logo ? (
               <div className="flex flex-col items-start gap-2">
                 <img src={storeInfo.logo} alt="Store logo" className="w-24 h-24 rounded-xl border border-slate-200 object-contain" />
-                <button type="button" onClick={() => setStoreInfo({...storeInfo, logo: ''})}
-                  className="text-xs text-red-500 hover:text-red-700 transition-colors">
-                  Remove
-                </button>
+                {!isTaker && (
+                  <button type="button" onClick={() => setStoreInfo({...storeInfo, logo: ''})}
+                    className="text-xs text-red-500 hover:text-red-700 transition-colors">
+                    Remove
+                  </button>
+                )}
+              </div>
+            ) : isTaker ? (
+              <div className="w-24 h-24 border border-slate-200 rounded-xl flex items-center justify-center text-slate-300 bg-slate-50">
+                <Store size={24} />
               </div>
             ) : (
               <div className="relative w-24 h-24">
@@ -236,40 +254,44 @@ export default function StoreSettings() {
             )}
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">
-              Store Name
-            </label>
-            <input
-              type="text"
-              value={storeInfo.name}
-              onChange={(e) => setStoreInfo({ ...storeInfo, name: e.target.value })}
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-navy-700 focus:border-transparent"
-              required
-            />
-            {infoErrors.name && <p className="text-xs text-red-500 mt-1">{infoErrors.name}</p>}
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Street Address</label>
-            <input type="text" value={storeInfo.street} onChange={e => setStoreInfo({...storeInfo, street: e.target.value})}
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-navy-700 focus:border-transparent"
-              placeholder="123 Main St" />
-          </div>
+          {[
+            { label: 'Store Name', value: storeInfo.name, key: 'name', type: 'text' },
+            { label: 'Street Address', value: storeInfo.street, key: 'street', type: 'text', placeholder: '123 Main St' },
+            { label: 'Phone', value: storeInfo.phone, key: 'phone', type: 'tel' },
+            { label: 'Email', value: storeInfo.email, key: 'email', type: 'email' },
+          ].map(({ label, value, key, type, placeholder }) => (
+            <div key={key}>
+              <label className="block text-sm font-medium text-slate-700 mb-1">{label}</label>
+              <input
+                type={type}
+                value={value}
+                readOnly={isTaker}
+                onChange={isTaker ? undefined : e => setStoreInfo({ ...storeInfo, [key]: e.target.value })}
+                placeholder={placeholder}
+                className={`w-full px-3 py-2 border rounded-lg text-sm ${isTaker ? 'bg-slate-50 border-slate-200 text-slate-600 cursor-default' : 'border-slate-300 focus:ring-2 focus:ring-navy-700 focus:border-transparent'}`}
+              />
+              {!isTaker && infoErrors[key] && <p className="text-xs text-red-500 mt-1">{infoErrors[key]}</p>}
+            </div>
+          ))}
 
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Zipcode</label>
-              <input type="text" value={storeInfo.zipcode} onChange={e => setStoreInfo({...storeInfo, zipcode: e.target.value.replace(/[^\d-]/g, '').slice(0, 10)})}
+              <input type="text" value={storeInfo.zipcode}
+                readOnly={isTaker}
+                onChange={isTaker ? undefined : e => setStoreInfo({...storeInfo, zipcode: e.target.value.replace(/[^\d-]/g, '').slice(0, 10)})}
                 maxLength={10}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-navy-700 focus:border-transparent"
-                placeholder="10001" />
-              {infoErrors.zipcode && <p className="text-xs text-red-500 mt-1">{infoErrors.zipcode}</p>}
+                placeholder="10001"
+                className={`w-full px-3 py-2 border rounded-lg text-sm ${isTaker ? 'bg-slate-50 border-slate-200 text-slate-600 cursor-default' : 'border-slate-300 focus:ring-2 focus:ring-navy-700 focus:border-transparent'}`}
+              />
+              {!isTaker && infoErrors.zipcode && <p className="text-xs text-red-500 mt-1">{infoErrors.zipcode}</p>}
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">State</label>
-              <select value={storeInfo.state} onChange={e => setStoreInfo({...storeInfo, state: e.target.value})}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-navy-700 focus:border-transparent bg-white">
+              <select value={storeInfo.state}
+                disabled={isTaker}
+                onChange={isTaker ? undefined : e => setStoreInfo({...storeInfo, state: e.target.value})}
+                className={`w-full px-3 py-2 border rounded-lg text-sm bg-white ${isTaker ? 'bg-slate-50 border-slate-200 text-slate-600 cursor-default' : 'border-slate-300 focus:ring-2 focus:ring-navy-700 focus:border-transparent'}`}>
                 <option value="">— Select State —</option>
                 {[['AL','Alabama'],['AK','Alaska'],['AZ','Arizona'],['AR','Arkansas'],['CA','California'],['CO','Colorado'],['CT','Connecticut'],['DE','Delaware'],['DC','District of Columbia'],['FL','Florida'],['GA','Georgia'],['HI','Hawaii'],['ID','Idaho'],['IL','Illinois'],['IN','Indiana'],['IA','Iowa'],['KS','Kansas'],['KY','Kentucky'],['LA','Louisiana'],['ME','Maine'],['MD','Maryland'],['MA','Massachusetts'],['MI','Michigan'],['MN','Minnesota'],['MS','Mississippi'],['MO','Missouri'],['MT','Montana'],['NE','Nebraska'],['NV','Nevada'],['NH','New Hampshire'],['NJ','New Jersey'],['NM','New Mexico'],['NY','New York'],['NC','North Carolina'],['ND','North Dakota'],['OH','Ohio'],['OK','Oklahoma'],['OR','Oregon'],['PA','Pennsylvania'],['RI','Rhode Island'],['SC','South Carolina'],['SD','South Dakota'],['TN','Tennessee'],['TX','Texas'],['UT','Utah'],['VT','Vermont'],['VA','Virginia'],['WA','Washington'],['WV','West Virginia'],['WI','Wisconsin'],['WY','Wyoming']].map(([val, label]) => (
                   <option key={val} value={val}>{label}</option>
@@ -278,54 +300,29 @@ export default function StoreSettings() {
             </div>
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">
-              Phone
-            </label>
-            <input
-              type="tel"
-              value={storeInfo.phone}
-              onChange={(e) => setStoreInfo({ ...storeInfo, phone: e.target.value.replace(/\D/g, '').slice(0, 10) })}
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-navy-700 focus:border-transparent"
-            />
-            {infoErrors.phone && <p className="text-xs text-red-500 mt-1">{infoErrors.phone}</p>}
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">
-              Email
-            </label>
-            <input
-              type="email"
-              value={storeInfo.email}
-              onChange={(e) => setStoreInfo({ ...storeInfo, email: e.target.value })}
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-navy-700 focus:border-transparent"
-            />
-            {infoErrors.email && <p className="text-xs text-red-500 mt-1">{infoErrors.email}</p>}
-          </div>
-
-          {storeSuccess && (
+          {!isTaker && storeSuccess && (
             <div className="flex items-center gap-2 px-4 py-2.5 bg-emerald-50 border border-emerald-200 rounded-xl text-sm text-emerald-700 font-medium">
               <CheckCircle size={16} className="shrink-0" />
               {storeSuccess}
             </div>
           )}
-
-          {storeError && (
+          {!isTaker && storeError && (
             <div className="flex items-center gap-2 px-4 py-2.5 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
               <AlertTriangle size={16} className="shrink-0" />
               {storeError}
             </div>
           )}
 
-          <button
-            type="submit"
-            disabled={storeSaving}
-            className="flex items-center gap-2 px-5 py-2.5 bg-navy-900 text-white rounded-xl text-sm font-semibold hover:bg-navy-800 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-          >
-            {storeSaving && <Loader2 className="animate-spin" size={16} />}
-            Save Changes
-          </button>
+          {!isTaker && (
+            <button
+              type="submit"
+              disabled={storeSaving}
+              className="flex items-center gap-2 px-5 py-2.5 bg-navy-900 text-white rounded-xl text-sm font-semibold hover:bg-navy-800 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              {storeSaving && <Loader2 className="animate-spin" size={16} />}
+              Save Changes
+            </button>
+          )}
         </form>
       </div>
 
