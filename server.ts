@@ -421,16 +421,17 @@ function getLocalIP() {
 }
 
 // Auth helpers
-function issueJwt(res: any, user: { id: number; username: string; role: string; store_name: string; store_id: number }) {
+function issueJwt(req: any, res: any, user: { id: number; username: string; role: string; store_name: string; store_id: number }) {
   const token = jwt.sign(
     { id: user.id, username: user.username, role: user.role, store_name: user.store_name, store_id: user.store_id },
     JWT_SECRET!,
     { expiresIn: '8h', algorithm: 'HS256', issuer: 'opticapture', audience: 'opticapture-app' }
   );
+  const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
   res.cookie('token', token, {
     httpOnly: true,
-    secure: true,
-    sameSite: 'strict',
+    secure: isHttps,
+    sameSite: isHttps ? 'strict' : 'lax',
     maxAge: 8 * 60 * 60 * 1000,
   });
   return token;
@@ -468,7 +469,7 @@ app.post('/api/auth/login', authLimiter, (req, res) => {
   // Reset failed attempts on successful login
   db.prepare('UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = ?').run(user.id);
 
-  issueJwt(res, user);
+  issueJwt(req, res, user);
   res.json({ id: user.id, username: user.username, role: user.role, store_name: user.store_name, store_id: user.store_id });
 });
 
@@ -525,7 +526,7 @@ app.get('/api/auth/google/callback', async (req: any, res) => {
     }
 
     if (user) {
-      issueJwt(res, user);
+      issueJwt(req, res, user);
       return res.redirect(user.role === 'superadmin' ? '/admin' : '/');
     }
 
@@ -612,7 +613,7 @@ app.post('/api/auth/register', authLimiter, (req, res) => {
     if (oauthEntry) {
       pendingOAuth.delete(oauth_key);
       const newUser = db.prepare("SELECT * FROM users WHERE store_id = ? AND role = 'owner'").get(storeId) as any;
-      issueJwt(res, newUser);
+      issueJwt(req, res, newUser);
       return res.status(201).json({ message: 'Store registered', store_id: storeId, redirect: '/' });
     }
     res.status(201).json({ message: 'Store registered successfully', store_id: storeId });
@@ -750,7 +751,7 @@ app.post('/api/auth/switch-store', authenticateToken, (req: any, res) => {
   user.store_id = store.id;
   user.store_name = store.name;
   user.role = access.role;
-  issueJwt(res, user);
+  issueJwt(req, res, user);
   res.json({ success: true, store_name: store.name, store_logo: store.logo || null });
 });
 
@@ -1129,9 +1130,19 @@ function generateOTP(length = 6): string {
 app.post('/api/session/create', authenticateToken, (req: any, res) => {
   const sessionId = randomUUID(); // C-4: cryptographically random
   const otp = generateOTP(6);
-  db.prepare('INSERT INTO scan_sessions (session_id, otp, user_id, store_id, expires_at) VALUES (?, ?, ?, ?, datetime("now", "+2 hours"))')
-    .run(sessionId, otp, req.user.id, req.user.store_id);
-  res.json({ sessionId, otp });
+  try {
+    db.prepare('INSERT INTO scan_sessions (session_id, otp, user_id, store_id) VALUES (?, ?, ?, ?)')
+      .run(sessionId, otp, req.user.id, req.user.store_id);
+    // Set expiry separately — column added by migration 3; safe to skip if not yet present
+    try {
+      db.prepare("UPDATE scan_sessions SET expires_at = datetime('now', '+2 hours') WHERE session_id = ?")
+        .run(sessionId);
+    } catch {}
+    res.json({ sessionId, otp });
+  } catch (err: any) {
+    console.error('Failed to create scan session:', err);
+    res.status(500).json({ error: 'Failed to create session' });
+  }
 });
 
 async function lookupProductByUpc(upc: string) {
@@ -1200,7 +1211,8 @@ app.get('/api/session/:id', authenticateToken, (req: any, res) => {
   const items = db.prepare(`
     SELECT si.id, si.session_id, si.upc, si.quantity, si.scanned_at,
            si.lookup_status, si.product_name, si.brand, si.image,
-           si.source, si.exists_in_inventory
+           si.source, si.exists_in_inventory,
+           si.sale_price, si.unit, si.tag_names
     FROM session_items si
     WHERE si.session_id = ?
     ORDER BY si.scanned_at DESC
