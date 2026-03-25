@@ -488,7 +488,6 @@ export default function SuperAdmin() {
                     value={editStore.name}
                     onChange={e => setEditStore({ ...editStore, name: e.target.value })}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-navy-700 focus:border-transparent"
-                    required
                   />
                   {editErrors.name && <p className="text-xs text-red-500 mt-1">{editErrors.name}</p>}
                 </div>
