@@ -474,8 +474,8 @@ export default function Dashboard() {
       {/* Main Content Area */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden min-h-[500px]">
         {/* Toolbar */}
-        <div className="p-4 border-b border-slate-200 flex items-center justify-between bg-slate-50/50">
-          <div className="flex items-center gap-4">
+        <div className="p-3 border-b border-slate-200 flex flex-wrap items-center gap-3 justify-between bg-slate-50/50">
+          <div className="flex items-center gap-3">
             {viewMode === 'items' && (
               <button
                 onClick={() => setViewMode('categories')}
@@ -493,9 +493,9 @@ export default function Dashboard() {
             </h2>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 flex-wrap">
             {viewMode === 'categories' && isOwner && (
-              <div className="flex items-center gap-2">
+              <>
                 <button
                   onClick={() => {
                     setEditingCategory(null);
@@ -503,21 +503,23 @@ export default function Dashboard() {
                     setCatError('');
                     setShowCatModal(true);
                   }}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-navy-900 hover:bg-navy-800 rounded-lg text-sm font-medium text-white transition-colors"
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 bg-navy-900 hover:bg-navy-800 rounded-lg text-xs font-medium text-white transition-colors whitespace-nowrap"
                 >
-                  <Plus size={15} />
-                  Add Category
+                  <Plus size={13} />
+                  <span className="hidden sm:inline">Add Category</span>
+                  <span className="sm:hidden">Category</span>
                 </button>
                 <button
                   onClick={() => setIsAddModalOpen(true)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-navy-900 hover:bg-navy-800 rounded-lg text-sm font-medium text-white transition-colors"
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 bg-navy-900 hover:bg-navy-800 rounded-lg text-xs font-medium text-white transition-colors whitespace-nowrap"
                 >
-                  <Plus size={15} />
-                  Add New Item
+                  <Plus size={13} />
+                  <span className="hidden sm:inline">Add New Item</span>
+                  <span className="sm:hidden">Item</span>
                 </button>
-              </div>
+              </>
             )}
-            <div className="relative w-64">
+            <div className="relative w-36 sm:w-48 md:w-56">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
               <input
                 type="text"

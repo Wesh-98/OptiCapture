@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
-import { Store, Users, Package, ShieldCheck, ShieldOff, LogOut, RefreshCw, Pencil, X, UserPlus, Trash2, Loader2, KeyRound, Copy, AlertTriangle } from 'lucide-react';
+import { Store, Users, Package, ShieldCheck, ShieldOff, LogOut, RefreshCw, Pencil, X, UserPlus, Trash2, Loader2, KeyRound, Copy, AlertTriangle, Search } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { US_STATES } from '../lib/constants';
 
@@ -57,6 +57,9 @@ export default function SuperAdmin() {
   const [resettingUserId, setResettingUserId] = useState<number | null>(null);
   const [actionError, setActionError] = useState('');
   const [confirmDeleteUserId, setConfirmDeleteUserId] = useState<number | null>(null);
+  const [storeSearch, setStoreSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'suspended'>('all');
+  const [joinedSort, setJoinedSort] = useState<'newest' | 'oldest'>('newest');
 
   useEffect(() => {
     fetchStores();
@@ -237,6 +240,18 @@ export default function SuperAdmin() {
   const suspended = stores.filter(s => s.status === 'suspended').length;
   const totalItems = stores.reduce((n, s) => n + (s.item_count || 0), 0);
 
+  const filteredStores = stores
+    .filter(s => {
+      const q = storeSearch.trim().toLowerCase();
+      if (q && !s.name.toLowerCase().includes(q) && !(s.email ?? '').toLowerCase().includes(q)) return false;
+      if (statusFilter !== 'all' && s.status !== statusFilter) return false;
+      return true;
+    })
+    .sort((a, b) => {
+      const diff = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+      return joinedSort === 'newest' ? -diff : diff;
+    });
+
   return (
     <div className="min-h-screen bg-slate-50">
       {/* Top nav */}
@@ -294,24 +309,61 @@ export default function SuperAdmin() {
 
         {/* Stores table */}
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-          <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50/50">
-            <h2 className="font-bold text-navy-900 flex items-center gap-2">
+          <div className="px-4 py-3 border-b border-slate-200 bg-slate-50/50 flex flex-wrap items-center gap-3 justify-between">
+            <h2 className="font-bold text-navy-900 flex items-center gap-2 shrink-0">
               <Store size={18} className="text-slate-400" />
               All Stores
+              {storeSearch || statusFilter !== 'all'
+                ? <span className="text-xs font-normal text-slate-400">({filteredStores.length} of {stores.length})</span>
+                : null}
             </h2>
-            <button
-              onClick={fetchStores}
-              className="p-2 hover:bg-slate-200 rounded-lg text-slate-400 transition-colors"
-              title="Refresh"
-            >
-              <RefreshCw size={16} />
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Search */}
+              <div className="relative">
+                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={storeSearch}
+                  onChange={e => setStoreSearch(e.target.value)}
+                  placeholder="Store name or email…"
+                  className="pl-8 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-navy-700 w-44"
+                />
+              </div>
+              {/* Status filter */}
+              <select
+                value={statusFilter}
+                onChange={e => setStatusFilter(e.target.value as 'all' | 'active' | 'suspended')}
+                className="px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-navy-700"
+              >
+                <option value="all">All Status</option>
+                <option value="active">Active</option>
+                <option value="suspended">Suspended</option>
+              </select>
+              {/* Joined sort */}
+              <select
+                value={joinedSort}
+                onChange={e => setJoinedSort(e.target.value as 'newest' | 'oldest')}
+                className="px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-navy-700"
+              >
+                <option value="newest">Newest First</option>
+                <option value="oldest">Oldest First</option>
+              </select>
+              <button
+                onClick={fetchStores}
+                className="p-1.5 hover:bg-slate-200 rounded-lg text-slate-400 transition-colors"
+                title="Refresh"
+              >
+                <RefreshCw size={15} />
+              </button>
+            </div>
           </div>
 
           {isLoading ? (
             <div className="p-12 text-center text-slate-400">Loading stores...</div>
           ) : stores.length === 0 ? (
             <div className="p-12 text-center text-slate-400">No stores registered yet.</div>
+          ) : filteredStores.length === 0 ? (
+            <div className="p-12 text-center text-slate-400">No stores match your filters.</div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-left">
@@ -323,7 +375,7 @@ export default function SuperAdmin() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {stores.map(store => (
+                  {filteredStores.map(store => (
                     <motion.tr
                       key={store.id}
                       initial={prefersReducedMotion ? false : { opacity: 0 }}

@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, ScanLine, Upload, History, LogOut, Menu, X, ChevronRight, Store, Box, Settings, ChevronDown } from 'lucide-react';
+import { LayoutDashboard, ScanLine, Upload, History, LogOut, Menu, X, ChevronRight, Store, Settings, ChevronDown } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 
@@ -237,7 +237,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         </AnimatePresence>
 
         {/* Main Content */}
-        <main className="flex-1 overflow-auto bg-slate-50 p-4 md:p-8">
+        <main className="flex-1 overflow-auto bg-slate-100 p-4 md:p-8">
           {children}
         </main>
       </div>
