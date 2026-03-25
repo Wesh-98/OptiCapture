@@ -29,8 +29,6 @@ interface SessionItem {
   lookup_status: string;
   source: string | null;
   exists_in_inventory: number;
-  reviewed: number;
-  approved: number;
   sale_price: number | null;
   unit: string | null;
 }
@@ -449,7 +447,7 @@ export default function Scan() {
       setSelectedIds(prev => new Set([...prev, editItem.id]));
       setEditItem(null);
     } catch {
-      window.alert('Failed to save changes.');
+      addToast('error', 'Failed to save changes.');
     } finally {
       setEditSaving(false);
     }
@@ -614,6 +612,19 @@ export default function Scan() {
                         </div>
                         <p className="text-emerald-400 font-semibold text-sm">Scanner Ready</p>
                         <p className="text-navy-300 text-xs">Pull the trigger to scan</p>
+                      </>
+                    ) : uiStatus === 'error' ? (
+                      <>
+                        <div className="w-10 h-10 rounded-full bg-red-500/20 flex items-center justify-center">
+                          <X size={20} className="text-red-400" />
+                        </div>
+                        <p className="text-red-400 font-semibold text-sm">Session failed to start</p>
+                        <button
+                          onClick={handleResetSession}
+                          className="mt-1 px-3 py-1.5 bg-navy-700 hover:bg-navy-600 text-white text-xs rounded-lg transition-colors"
+                        >
+                          Retry
+                        </button>
                       </>
                     ) : (
                       <>
