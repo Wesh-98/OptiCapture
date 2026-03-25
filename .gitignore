@@ -7,3 +7,5 @@ coverage/
 .env*
 !.env.example
 opticapture.db
+.tunnel-url
+uploads/
