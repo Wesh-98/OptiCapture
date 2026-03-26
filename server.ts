@@ -1210,14 +1210,15 @@ app.post('/api/session/create', authenticateToken, (req: any, res) => {
   `).get(req.user.id, req.user.store_id) as any;
 
   if (existing) {
-    // Bump expiry and return the existing session
-    db.prepare("UPDATE scan_sessions SET expires_at = datetime('now', '+8 hours') WHERE session_id = ?")
-      .run(existing.session_id);
-    return res.json({ sessionId: existing.session_id, otp: existing.otp });
+    // Upgrade OTP if it's in the old 6-digit format
+    const otp = existing.otp.length < 8 ? generateOTP() : existing.otp;
+    db.prepare("UPDATE scan_sessions SET otp = ?, expires_at = datetime('now', '+8 hours') WHERE session_id = ?")
+      .run(otp, existing.session_id);
+    return res.json({ sessionId: existing.session_id, otp });
   }
 
   const sessionId = randomUUID();
-  const otp = generateOTP(6);
+  const otp = generateOTP();
   try {
     db.prepare('INSERT INTO scan_sessions (session_id, otp, user_id, store_id) VALUES (?, ?, ?, ?)')
       .run(sessionId, otp, req.user.id, req.user.store_id);
