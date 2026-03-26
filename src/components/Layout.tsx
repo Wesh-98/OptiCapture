@@ -57,7 +57,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
         <button
           onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-          className="absolute -right-3.5 top-20 bg-white text-navy-900 p-1.5 rounded-full shadow-lg border-2 border-navy-700 hover:bg-navy-900 hover:text-white hover:border-navy-900 transition-all duration-200 z-10"
+          className="absolute -right-3.5 top-20 bg-navy-700 text-white p-1.5 rounded-full shadow-lg border-2 border-navy-800 hover:bg-navy-600 transition-all duration-200 z-10"
           title={isSidebarCollapsed ? 'Expand menu' : 'Collapse menu'}
         >
           <ChevronRight size={16} className={cn("transition-transform duration-300", !isSidebarCollapsed && "rotate-180")} />
