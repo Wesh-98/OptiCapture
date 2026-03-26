@@ -509,14 +509,15 @@ export default function Scan() {
         } catch {}
       }
 
-      // Before auto-creating, check for existing drafts
+      // Before auto-creating, check for the current user's own existing sessions
       try {
         const sessionsRes = await fetch('/api/sessions/active', { credentials: 'include' });
         if (sessionsRes.ok) {
           const sessions = await sessionsRes.json();
-          if (sessions.length > 0) {
-            // Show draft prompt instead of auto-creating
-            setExistingDraft(sessions[0]); // show the most recent
+          // Only prompt to resume sessions this user created — not other takers' sessions
+          const mine = sessions.filter((s: any) => s.created_by === user?.username);
+          if (mine.length > 0) {
+            setExistingDraft(mine[0]);
             setSessionLoading(false);
             return;
           }
