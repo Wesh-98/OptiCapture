@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
-import { Search, Package, Plus, X, MoreHorizontal, ArrowLeft, Box, Layers, Image as ImageIcon, Pencil, ChevronLeft, ChevronRight, CupSoda, Cookie, Cigarette, Home, Car, ShoppingCart, Shirt, Pill, Wrench, Coffee, Apple, Fish, Baby, Dumbbell, Tv, Smartphone, Book, Leaf, PawPrint, Wine, Beer, Beef, Pizza, Candy, Gamepad2, Headphones, Camera, Droplets, SprayCan, Briefcase, Gift, Truck, ChefHat, Flame, Grape, Carrot, Milk, Sandwich, Scissors, Music, Sparkles, Star, Banana, Egg, FlaskConical, Flower2, IceCream2, Popcorn, Paintbrush, LeafyGreen, Zap, BottleWine, Croissant, Newspaper, Eye, EyeOff, Trash2, Download, Loader2 } from 'lucide-react';
+import { Search, Package, Plus, X, MoreHorizontal, ArrowLeft, Box, Layers, Image as ImageIcon, Pencil, ChevronLeft, ChevronRight, ChevronDown, CupSoda, Cookie, Cigarette, Home, Car, ShoppingCart, Shirt, Pill, Wrench, Coffee, Apple, Fish, Baby, Dumbbell, Tv, Smartphone, Book, Leaf, PawPrint, Wine, Beer, Beef, Pizza, Candy, Gamepad2, Headphones, Camera, Droplets, SprayCan, Briefcase, Gift, Truck, ChefHat, Flame, Grape, Carrot, Milk, Sandwich, Scissors, Music, Sparkles, Star, Banana, Egg, FlaskConical, Flower2, IceCream2, Popcorn, Paintbrush, LeafyGreen, Zap, BottleWine, Croissant, Newspaper, Eye, EyeOff, Trash2, Download, Loader2 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useAuth } from '../context/AuthContext';
 
@@ -41,7 +41,7 @@ interface DashboardStats {
 
 interface ActiveSession {
   session_id: string;
-  status: 'active' | 'draft';
+  status: 'active' | 'draft' | 'completed';
   item_count: number;
   last_scan_at: string | null;
   created_at: string;
@@ -219,6 +219,7 @@ export default function Dashboard() {
   const [exporting, setExporting] = useState(false);
 
   const [activeSessions, setActiveSessions] = useState<ActiveSession[]>([]);
+  const [sessionsOpen, setSessionsOpen] = useState(false);
 
   // Global search state
   const [globalSearch, setGlobalSearch] = useState('');
@@ -275,6 +276,21 @@ export default function Dashboard() {
       const res = await fetch('/api/sessions/active', { credentials: 'include' });
       if (res.ok) setActiveSessions(await res.json());
     } catch { /* ignore */ }
+  };
+
+  const deleteSession = async (sessionId: string) => {
+    // Optimistic remove
+    setActiveSessions(prev => prev.filter(s => s.session_id !== sessionId));
+    try {
+      const res = await fetch(`/api/session/${sessionId}`, { method: 'DELETE', credentials: 'include' });
+      if (!res.ok) {
+        // Rollback — put it back and re-sync from server
+        await fetchActiveSessions();
+      }
+    } catch {
+      // Network error — re-sync
+      await fetchActiveSessions();
+    }
   };
 
   const fetchItems = async (categoryId: number) => {
@@ -493,53 +509,93 @@ export default function Dashboard() {
 
       {/* Scan Sessions */}
       {activeSessions.length > 0 && (
-        <div className="space-y-3">
-          <h3 className="text-sm font-semibold text-slate-700">Scan Sessions</h3>
-          <div className="flex flex-wrap gap-3">
-            {activeSessions.map(s => {
-              const isActive = s.status === 'active';
-              const itemWord = s.item_count === 1 ? 'item' : 'items';
-              const lastActivity = s.last_scan_at || s.created_at;
-              const diffMs = Date.now() - new Date(lastActivity).getTime();
-              const diffMin = Math.floor(diffMs / 60000);
-              const timeAgo = diffMin < 60
-                ? `${diffMin}m ago`
-                : diffMin < 1440
-                ? `${Math.floor(diffMin / 60)}h ago`
-                : `${Math.floor(diffMin / 1440)}d ago`;
-
-              return (
-                <div
-                  key={s.session_id}
-                  className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-2 min-w-[180px] max-w-[220px]"
-                >
-                  <div className="flex items-center gap-2">
-                    <div className={`w-2 h-2 rounded-full shrink-0 ${isActive ? 'bg-emerald-500 animate-pulse' : 'bg-amber-400'}`} />
-                    <span className={`text-xs font-semibold ${isActive ? 'text-emerald-700' : 'text-amber-700'}`}>
-                      {isActive ? 'Scanning' : 'Draft'}
-                    </span>
-                  </div>
-                  <div>
-                    {s.label && (
-                      <p className="text-sm font-semibold text-slate-700 truncate" title={s.label}>{s.label}</p>
-                    )}
-                    <p className="text-lg font-bold text-slate-900">{s.item_count} <span className="text-sm font-normal text-slate-500">{itemWord}</span></p>
-                    <p className="text-xs text-slate-400">by {s.created_by} · {timeAgo}</p>
-                  </div>
-                  <button
-                    onClick={() => navigate(`/scan?session=${s.session_id}`)}
-                    className={`mt-1 w-full py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                      isActive
-                        ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
-                        : 'bg-amber-50 text-amber-700 hover:bg-amber-100'
-                    }`}
-                  >
-                    {isActive ? 'Open' : 'Review'}
-                  </button>
-                </div>
-              );
-            })}
+        <div className="border border-slate-200 rounded-xl bg-white overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-3">
+            <button
+              onClick={() => setSessionsOpen(o => !o)}
+              className="flex items-center gap-2 flex-1"
+            >
+              <span className="text-sm font-semibold" style={{ color: '#1e3a5f' }}>Scan Sessions</span>
+              <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">{activeSessions.length}</span>
+              <ChevronDown size={16} className={`text-slate-400 transition-transform ${sessionsOpen ? 'rotate-180' : ''}`} />
+            </button>
+            <button
+              onClick={() => navigate('/scan')}
+              className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-[#1e3a5f] text-white hover:bg-[#16304f] transition-colors shrink-0"
+            >
+              + New Scan
+            </button>
           </div>
+
+          {sessionsOpen && (
+            <div className="px-4 pb-4 pt-1 flex flex-wrap gap-3 border-t border-slate-100">
+              {activeSessions.map(s => {
+                const isActive    = s.status === 'active';
+                const isCompleted = s.status === 'completed';
+                const itemWord = s.item_count === 1 ? 'item' : 'items';
+                const lastActivity = s.last_scan_at || s.created_at;
+                const diffMs = Date.now() - new Date(lastActivity).getTime();
+                const diffMin = Math.floor(diffMs / 60000);
+                const isToday = diffMs < 24 * 60 * 60 * 1000;
+                const timeAgo = diffMin < 60
+                  ? `${diffMin}m ago`
+                  : diffMin < 1440
+                  ? `${Math.floor(diffMin / 60)}h ago`
+                  : `${Math.floor(diffMin / 1440)}d ago`;
+
+                const cardClass = isCompleted
+                  ? 'bg-[#eef2f8] border border-[#b6c8e0] border-l-[#1e3a5f]'
+                  : !isToday
+                  ? 'bg-slate-50 border border-slate-200 border-l-slate-400 opacity-75'
+                  : isActive
+                  ? 'bg-emerald-50/60 border border-emerald-200 border-l-emerald-500'
+                  : 'bg-amber-50/60 border border-amber-200 border-l-amber-500';
+
+                const dotClass = isCompleted ? 'bg-[#1e3a5f]' : isActive ? 'bg-emerald-500 animate-pulse' : 'bg-amber-400';
+                const labelClass = isCompleted ? 'text-[#1e3a5f]' : isActive ? 'text-emerald-800' : 'text-amber-800';
+                const statusText = isCompleted ? 'Committed' : isActive ? 'Scanning' : 'Draft';
+                const btnClass = isCompleted
+                  ? 'bg-[#1e3a5f] text-white hover:bg-[#16304f]'
+                  : !isToday
+                  ? 'bg-slate-500 text-white hover:bg-slate-600'
+                  : isActive
+                  ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                  : 'bg-amber-500 text-white hover:bg-amber-600';
+                const btnLabel = isCompleted ? 'View' : isActive ? 'Open' : 'Review';
+
+                return (
+                  <div key={s.session_id} className={`relative rounded-xl p-3 flex flex-col gap-2 min-w-[160px] max-w-[200px] border-l-4 ${cardClass}`}>
+                    {!isCompleted && (
+                      <button
+                        onClick={() => deleteSession(s.session_id)}
+                        className="absolute top-2 right-2 text-slate-400 hover:text-red-500 transition-colors"
+                        title="Delete session"
+                      >
+                        <X size={13} />
+                      </button>
+                    )}
+                    <div className="flex items-center gap-2">
+                      <div className={`w-2 h-2 rounded-full shrink-0 ${dotClass}`} />
+                      <span className={`text-xs font-semibold ${labelClass}`}>{statusText}</span>
+                    </div>
+                    <div>
+                      {s.label && (
+                        <p className="text-xs font-semibold text-slate-700 truncate pr-4" title={s.label}>{s.label}</p>
+                      )}
+                      <p className="text-lg font-bold text-slate-900">{s.item_count} <span className="text-sm font-normal text-slate-600">{itemWord}</span></p>
+                      <p className="text-xs text-slate-500">{timeAgo}</p>
+                    </div>
+                    <button
+                      onClick={() => navigate(`/scan?session=${s.session_id}`)}
+                      className={`w-full py-1.5 rounded-lg text-xs font-semibold transition-colors ${btnClass}`}
+                    >
+                      {btnLabel}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 

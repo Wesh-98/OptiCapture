@@ -1,0 +1,844 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>OptiCapture — Project Brief</title>
+<style>
+  :root {
+    --navy: #1e3a5f;
+    --navy-light: #2d5182;
+    --navy-pale: #eef2f8;
+    --emerald: #059669;
+    --amber: #d97706;
+    --slate: #475569;
+    --border: #cbd5e1;
+    --text: #1e293b;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    font-size: 13px;
+    color: var(--text);
+    background: #fff;
+    line-height: 1.6;
+  }
+
+  /* ── Cover Page ── */
+  .cover {
+    background: var(--navy);
+    color: #fff;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 80px 100px;
+    page-break-after: always;
+  }
+  .cover-eyebrow {
+    font-size: 11px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: #93c5fd;
+    margin-bottom: 20px;
+  }
+  .cover h1 {
+    font-size: 58px;
+    font-weight: 800;
+    letter-spacing: -1px;
+    line-height: 1.05;
+    margin-bottom: 10px;
+  }
+  .cover h1 span { color: #34d399; }
+  .cover-sub {
+    font-size: 18px;
+    color: #94a3b8;
+    margin-bottom: 60px;
+    font-weight: 400;
+  }
+  .cover-meta {
+    font-size: 12px;
+    color: #64748b;
+    border-top: 1px solid #334155;
+    padding-top: 24px;
+    display: flex;
+    gap: 40px;
+  }
+  .cover-meta strong { color: #cbd5e1; display: block; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 2px; }
+
+  /* ── Page Layout ── */
+  .page {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 60px 80px;
+    page-break-after: always;
+  }
+  .page:last-child { page-break-after: auto; }
+
+  /* ── Section Headers ── */
+  .section-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--emerald);
+    margin-bottom: 6px;
+  }
+  h2 {
+    font-size: 26px;
+    font-weight: 800;
+    color: var(--navy);
+    margin-bottom: 20px;
+    line-height: 1.2;
+  }
+  h3 {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--navy);
+    margin-bottom: 10px;
+    margin-top: 24px;
+  }
+  p { margin-bottom: 14px; color: var(--slate); }
+
+  /* ── Divider ── */
+  .divider {
+    width: 48px;
+    height: 4px;
+    background: var(--emerald);
+    border-radius: 2px;
+    margin-bottom: 24px;
+  }
+
+  /* ── Highlight Box ── */
+  .highlight-box {
+    background: var(--navy-pale);
+    border-left: 4px solid var(--navy);
+    padding: 16px 20px;
+    border-radius: 0 8px 8px 0;
+    margin: 20px 0;
+  }
+  .highlight-box p { margin: 0; color: var(--navy); font-weight: 500; }
+
+  /* ── Tables ── */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0 24px;
+    font-size: 12px;
+  }
+  thead tr { background: var(--navy); color: #fff; }
+  thead th { padding: 10px 14px; text-align: left; font-weight: 600; font-size: 11px; letter-spacing: 0.5px; }
+  tbody tr:nth-child(even) { background: #f8fafc; }
+  tbody tr:hover { background: var(--navy-pale); }
+  tbody td { padding: 9px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tbody td:first-child { font-weight: 600; color: var(--navy); }
+
+  /* ── Before/After Table ── */
+  .before-after thead tr { background: transparent; }
+  .before-after th { color: var(--navy); border-bottom: 2px solid var(--border); background: #f8fafc; }
+  .before-after .col-before { color: #dc2626; }
+  .before-after .col-after { color: var(--emerald); }
+
+  /* ── Feature Grid ── */
+  .feature-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    margin: 20px 0;
+  }
+  .feature-card {
+    background: #f8fafc;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+  }
+  .feature-card .icon {
+    font-size: 22px;
+    margin-bottom: 8px;
+  }
+  .feature-card h4 {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--navy);
+    margin-bottom: 4px;
+  }
+  .feature-card p {
+    font-size: 11.5px;
+    margin: 0;
+    color: var(--slate);
+  }
+
+  /* ── Phase Roadmap ── */
+  .phases { display: flex; flex-direction: column; gap: 0; margin: 20px 0; }
+  .phase {
+    display: flex;
+    gap: 20px;
+    padding: 18px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .phase:last-child { border-bottom: none; }
+  .phase-num {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: var(--navy);
+    color: #fff;
+    font-weight: 800;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    shrink: 0;
+    flex-shrink: 0;
+  }
+  .phase-num.active { background: var(--emerald); }
+  .phase-content h4 { font-size: 13px; font-weight: 700; color: var(--navy); margin-bottom: 4px; }
+  .phase-content p { font-size: 12px; margin: 0; color: var(--slate); }
+  .phase-tag {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 20px;
+    margin-bottom: 6px;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+  .tag-now { background: #d1fae5; color: #065f46; }
+  .tag-next { background: #dbeafe; color: #1e40af; }
+  .tag-future { background: #f3e8ff; color: #6b21a8; }
+
+  /* ── Tech Pills ── */
+  .tech-pills { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+  .tech-pill {
+    background: var(--navy-pale);
+    color: var(--navy);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 5px 12px;
+    border-radius: 20px;
+    border: 1px solid #b6c8e0;
+  }
+
+  /* ── Flowchart ── */
+  .flowchart-wrap { margin: 20px 0; }
+  .flowchart-title {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--slate);
+    margin-bottom: 12px;
+  }
+
+  /* SVG Flowchart styles */
+  .fc-node rect { rx: 8; ry: 8; }
+  text { font-family: 'Segoe UI', system-ui, sans-serif; }
+
+  /* ── Pricing ── */
+  .pricing-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 16px;
+    margin: 20px 0;
+  }
+  .pricing-card {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    text-align: center;
+  }
+  .pricing-card.featured {
+    border-color: var(--navy);
+    background: var(--navy-pale);
+  }
+  .pricing-card .tier { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--slate); margin-bottom: 8px; }
+  .pricing-card .price { font-size: 28px; font-weight: 800; color: var(--navy); }
+  .pricing-card .price span { font-size: 13px; font-weight: 400; color: var(--slate); }
+  .pricing-card ul { list-style: none; margin-top: 14px; text-align: left; font-size: 12px; color: var(--slate); }
+  .pricing-card ul li { padding: 4px 0; border-bottom: 1px solid var(--border); }
+  .pricing-card ul li::before { content: "✓ "; color: var(--emerald); font-weight: 700; }
+
+  /* ── Improvements ── */
+  .improvements { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 16px 0; }
+  .improvement-item {
+    display: flex;
+    gap: 10px;
+    padding: 12px;
+    background: #f8fafc;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .improvement-item .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--navy);
+    margin-top: 5px;
+    flex-shrink: 0;
+  }
+  .improvement-item h4 { font-size: 12px; font-weight: 700; color: var(--navy); margin-bottom: 2px; }
+  .improvement-item p { font-size: 11px; margin: 0; color: var(--slate); }
+
+  /* ── Footer ── */
+  .footer {
+    text-align: center;
+    padding: 30px;
+    color: #94a3b8;
+    font-size: 11px;
+    border-top: 1px solid var(--border);
+  }
+
+  /* ── Print ── */
+  @media print {
+    body { font-size: 12px; }
+    .cover { min-height: 100vh; }
+    .page { padding: 50px 60px; }
+    .feature-grid { grid-template-columns: 1fr 1fr; }
+    a { color: inherit; text-decoration: none; }
+    .cover h1 { font-size: 48px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════ COVER ═══ -->
+<div class="cover">
+  <div class="cover-eyebrow">Internal Project Brief — Confidential</div>
+  <h1>Opti<span>Capture</span></h1>
+  <div class="cover-sub">Mobile-First Inventory Management — From Barcode to Balance Sheet</div>
+  <div class="cover-meta">
+    <div><strong>Version</strong>1.0 — Initial Release</div>
+    <div><strong>Date</strong>March 2026</div>
+    <div><strong>Classification</strong>Internal — Management Review</div>
+    <div><strong>Prepared by</strong>Development Team</div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════ PAGE 1 — SUMMARY + PROBLEM ═══ -->
+<div class="page">
+
+  <div class="section-label">01 — Executive Summary</div>
+  <h2>What Is OptiCapture?</h2>
+  <div class="divider"></div>
+  <p>
+    OptiCapture is a web-based inventory management platform built for small and mid-sized businesses that have outgrown spreadsheets but don't need the cost or complexity of enterprise ERP systems. It transforms the physical act of counting and recording stock into a fast, accurate, mobile-driven workflow — replacing clipboards, Excel files, and manual data entry with barcode scanning from any smartphone.
+  </p>
+  <div class="highlight-box">
+    <p>Any phone. Any browser. No app install required. Point, scan, done — inventory updated in real time.</p>
+  </div>
+  <p>
+    Designed for convenience stores, grocery retailers, warehouses, and any operation where staff walk the floor counting stock, OptiCapture provides the tools to scan, review, audit, and commit inventory — all from a single dashboard that works equally well on a desktop and a phone.
+  </p>
+
+  <h2 style="margin-top:40px;">The Problem We're Solving</h2>
+  <div class="divider"></div>
+
+  <div class="feature-grid">
+    <div class="feature-card">
+      <div class="icon">📋</div>
+      <h4>Manual Counting — Human Error</h4>
+      <p>Staff walk aisles with clipboards or phones, writing counts by hand. Misreads, skipped items, and transcription errors are inevitable and often invisible until it's too late.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">📊</div>
+      <h4>Excel as a Database — Not Built for This</h4>
+      <p>Spreadsheets weren't designed for multi-person live inventory. Conflicting edits, no audit trail, no barcode integration, and no real-time visibility across staff.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">🐢</div>
+      <h4>Slow Turnaround</h4>
+      <p>A full inventory count can take days to complete, collate, and upload. By the time the data is clean, it's already out of date.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">💸</div>
+      <h4>Legacy Systems Are Expensive</h4>
+      <p>Existing platforms like Petrosoft charge high monthly fees, require proprietary hardware, and offer limited flexibility for modern mobile workflows.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════ PAGE 2 — WHAT IT PROVIDES ═══ -->
+<div class="page">
+
+  <div class="section-label">02 — Capabilities</div>
+  <h2>What OptiCapture Provides</h2>
+  <div class="divider"></div>
+
+  <div class="feature-grid">
+    <div class="feature-card">
+      <div class="icon">📱</div>
+      <h4>Mobile Barcode Scanning</h4>
+      <p>Any smartphone camera becomes a barcode scanner. Staff scan a QR code to link their phone to a live session — no app download, no hardware purchase.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">🖥️</div>
+      <h4>Real-Time Desktop Feed</h4>
+      <p>The owner's desktop shows every scan as it happens. Multiple staff scanning simultaneously — each item appears instantly with product name, image, and status.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">📝</div>
+      <h4>Draft Sessions</h4>
+      <p>Scans are held in a draft before committing. Owners review, edit quantities, flag unknowns, and selectively commit — nothing hits the live inventory until approved.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">👥</div>
+      <h4>Role-Based Access</h4>
+      <p>Owners control, approve, and commit. Takers scan and save drafts. Permissions enforced at the server level — takers cannot modify committed inventory.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">🔍</div>
+      <h4>Auto Product Lookup</h4>
+      <p>Each barcode is automatically matched to a product name, brand, and image via external databases. Unknown items are flagged for manual review.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">📁</div>
+      <h4>Import &amp; Export</h4>
+      <p>Bulk-import existing inventory from Excel or CSV on day one. Export back to Excel, CSV, JSON, or PDF at any time — full interoperability with existing tools.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">🗂️</div>
+      <h4>Category Management</h4>
+      <p>Organise inventory into custom categories. Scanned items are assigned to categories on commit, keeping stock structured and searchable.</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">📜</div>
+      <h4>Full Audit Trail</h4>
+      <p>Every scan is logged — what was scanned, when, by whom, and what session it belonged to. Scan history is preserved even after sessions are closed.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════ PAGE 3 — BEFORE / AFTER ═══ -->
+<div class="page">
+
+  <div class="section-label">03 — Workflow Change</div>
+  <h2>Before &amp; After</h2>
+  <div class="divider"></div>
+  <p>OptiCapture doesn't require a full system replacement on day one. It sits alongside existing tools and takes over at the pace that works for the business.</p>
+
+  <table class="before-after">
+    <thead>
+      <tr>
+        <th>Task</th>
+        <th class="col-before">❌ Before (Excel / Manual)</th>
+        <th class="col-after">✅ After (OptiCapture)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Counting stock</td>
+        <td>Walking aisles with clipboard, writing counts by hand</td>
+        <td>Scanning barcodes with phone camera — no writing</td>
+      </tr>
+      <tr>
+        <td>Recording items</td>
+        <td>Manual Excel entry after the fact — prone to transcription errors</td>
+        <td>Auto-logged with product name, brand, and image at point of scan</td>
+      </tr>
+      <tr>
+        <td>Multi-person counts</td>
+        <td>One shared spreadsheet — conflicts, overwritten data</td>
+        <td>Each taker has a separate session — owner merges and commits</td>
+      </tr>
+      <tr>
+        <td>Reviewing counts</td>
+        <td>Owner manually re-checks spreadsheet after submission</td>
+        <td>Draft session — items shown with status (New / In Stock / Unknown)</td>
+      </tr>
+      <tr>
+        <td>Catching errors</td>
+        <td>Silent — spotted days or weeks later during reconciliation</td>
+        <td>Flagged at scan time — unknown barcodes, duplicate items highlighted</td>
+      </tr>
+      <tr>
+        <td>Product information</td>
+        <td>Staff manually type product names — inconsistent naming</td>
+        <td>Auto-fetched from product database by barcode — standardised</td>
+      </tr>
+      <tr>
+        <td>Audit trail</td>
+        <td>None — no record of who changed what or when</td>
+        <td>Full log — every scan timestamped, attributed to session and user</td>
+      </tr>
+      <tr>
+        <td>Data access</td>
+        <td>File on a local computer or shared drive — no live view</td>
+        <td>Web-based — accessible from any device, any location</td>
+      </tr>
+      <tr>
+        <td>Hardware required</td>
+        <td>None — but slower and error-prone</td>
+        <td>None — any smartphone camera works as a scanner</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="highlight-box">
+    <p>A full store count that previously took 2–3 days of counting, collating, and data entry can be completed in a single shift — with greater accuracy and a full digital record.</p>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════ PAGE 4 — FLOWCHARTS ═══ -->
+<div class="page">
+
+  <div class="section-label">04 — How It Works</div>
+  <h2>Process Flowcharts</h2>
+  <div class="divider"></div>
+
+  <!-- Flow A: Scan Session -->
+  <div class="flowchart-wrap">
+    <div class="flowchart-title">A — Scan Session Flow (Owner + Taker)</div>
+    <svg width="100%" viewBox="0 0 760 120" xmlns="http://www.w3.org/2000/svg" style="font-size:10.5px;">
+      <defs>
+        <marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L8,3 z" fill="#94a3b8"/>
+        </marker>
+      </defs>
+      <!-- Nodes -->
+      <rect x="2"   y="35" width="100" height="50" rx="8" fill="#1e3a5f"/>
+      <rect x="122" y="35" width="100" height="50" rx="8" fill="#1e3a5f"/>
+      <rect x="242" y="35" width="100" height="50" rx="8" fill="#059669"/>
+      <rect x="362" y="35" width="100" height="50" rx="8" fill="#059669"/>
+      <rect x="482" y="35" width="100" height="50" rx="8" fill="#d97706"/>
+      <rect x="602" y="35" width="100" height="50" rx="8" fill="#059669"/>
+      <!-- Text -->
+      <text x="52"  y="57" text-anchor="middle" fill="white" font-weight="600">Owner opens</text>
+      <text x="52"  y="72" text-anchor="middle" fill="#93c5fd">Scan page</text>
+      <text x="172" y="57" text-anchor="middle" fill="white" font-weight="600">QR code</text>
+      <text x="172" y="72" text-anchor="middle" fill="#93c5fd">generated</text>
+      <text x="292" y="57" text-anchor="middle" fill="white" font-weight="600">Taker scans</text>
+      <text x="292" y="72" text-anchor="middle" fill="#d1fae5">QR with phone</text>
+      <text x="412" y="57" text-anchor="middle" fill="white" font-weight="600">Taker walks</text>
+      <text x="412" y="72" text-anchor="middle" fill="#d1fae5">floor, scanning</text>
+      <text x="532" y="50" text-anchor="middle" fill="white" font-weight="600">Owner reviews</text>
+      <text x="532" y="65" text-anchor="middle" fill="#fef3c7">draft — edits,</text>
+      <text x="532" y="80" text-anchor="middle" fill="#fef3c7">removes items</text>
+      <text x="652" y="57" text-anchor="middle" fill="white" font-weight="600">Committed to</text>
+      <text x="652" y="72" text-anchor="middle" fill="#d1fae5">inventory ✓</text>
+      <!-- Arrows -->
+      <line x1="102" y1="60" x2="120" y2="60" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr)"/>
+      <line x1="222" y1="60" x2="240" y2="60" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr)"/>
+      <line x1="342" y1="60" x2="360" y2="60" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr)"/>
+      <line x1="462" y1="60" x2="480" y2="60" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr)"/>
+      <line x1="582" y1="60" x2="600" y2="60" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr)"/>
+      <!-- Labels -->
+      <text x="52"  y="100" text-anchor="middle" fill="#64748b" font-size="9">Desktop</text>
+      <text x="172" y="100" text-anchor="middle" fill="#64748b" font-size="9">Auto-generated</text>
+      <text x="292" y="100" text-anchor="middle" fill="#64748b" font-size="9">Phone camera</text>
+      <text x="412" y="100" text-anchor="middle" fill="#64748b" font-size="9">Live feed on desktop</text>
+      <text x="532" y="100" text-anchor="middle" fill="#64748b" font-size="9">Draft session</text>
+      <text x="652" y="100" text-anchor="middle" fill="#64748b" font-size="9">Live inventory</text>
+    </svg>
+  </div>
+
+  <!-- Flow B: Item Lifecycle -->
+  <div class="flowchart-wrap" style="margin-top:30px;">
+    <div class="flowchart-title">B — Item Lifecycle (Barcode to Inventory)</div>
+    <svg width="100%" viewBox="0 0 760 140" xmlns="http://www.w3.org/2000/svg" style="font-size:10.5px;">
+      <defs>
+        <marker id="arr2" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L8,3 z" fill="#94a3b8"/>
+        </marker>
+      </defs>
+      <rect x="2"   y="35" width="100" height="50" rx="8" fill="#1e3a5f"/>
+      <rect x="122" y="35" width="100" height="50" rx="8" fill="#2d5182"/>
+      <rect x="242" y="10" width="100" height="50" rx="8" fill="#059669"/>
+      <rect x="242" y="80" width="100" height="50" rx="8" fill="#b45309"/>
+      <rect x="362" y="35" width="100" height="50" rx="8" fill="#d97706"/>
+      <rect x="482" y="35" width="100" height="50" rx="8" fill="#1e3a5f"/>
+      <rect x="602" y="35" width="100" height="50" rx="8" fill="#059669"/>
+      <!-- Text -->
+      <text x="52"  y="57" text-anchor="middle" fill="white" font-weight="600">Barcode</text>
+      <text x="52"  y="72" text-anchor="middle" fill="#93c5fd">scanned</text>
+      <text x="172" y="57" text-anchor="middle" fill="white" font-weight="600">UPC lookup</text>
+      <text x="172" y="72" text-anchor="middle" fill="#bfdbfe">via database</text>
+      <text x="292" y="28" text-anchor="middle" fill="white" font-weight="600">Found →</text>
+      <text x="292" y="43" text-anchor="middle" fill="#d1fae5">Name, brand,</text>
+      <text x="292" y="58" text-anchor="middle" fill="#d1fae5">image resolved</text>
+      <text x="292" y="98" text-anchor="middle" fill="white" font-weight="600">Not found →</text>
+      <text x="292" y="113" text-anchor="middle" fill="#fef3c7">Flagged as</text>
+      <text x="292" y="125" text-anchor="middle" fill="#fef3c7">"Unknown"</text>
+      <text x="412" y="50" text-anchor="middle" fill="white" font-weight="600">Staged in</text>
+      <text x="412" y="65" text-anchor="middle" fill="#fef3c7">draft session</text>
+      <text x="412" y="80" text-anchor="middle" fill="#fef3c7">for review</text>
+      <text x="532" y="57" text-anchor="middle" fill="white" font-weight="600">Owner selects</text>
+      <text x="532" y="72" text-anchor="middle" fill="#93c5fd">+ assigns</text>
+      <text x="532" y="84" text-anchor="middle" fill="#93c5fd">category</text>
+      <text x="652" y="57" text-anchor="middle" fill="white" font-weight="600">Committed to</text>
+      <text x="652" y="72" text-anchor="middle" fill="#d1fae5">live inventory</text>
+      <!-- Arrows main -->
+      <line x1="102" y1="60"  x2="120" y2="60"  stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr2)"/>
+      <line x1="222" y1="50"  x2="240" y2="38"  stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr2)"/>
+      <line x1="222" y1="70"  x2="240" y2="95"  stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr2)"/>
+      <line x1="342" y1="35"  x2="360" y2="50"  stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr2)"/>
+      <line x1="342" y1="105" x2="360" y2="75"  stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr2)"/>
+      <line x1="462" y1="60"  x2="480" y2="60"  stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr2)"/>
+      <line x1="582" y1="60"  x2="600" y2="60"  stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr2)"/>
+    </svg>
+  </div>
+
+  <!-- Flow C: Integration Phases -->
+  <div class="flowchart-wrap" style="margin-top:30px;">
+    <div class="flowchart-title">C — Business Integration Phases</div>
+    <svg width="100%" viewBox="0 0 760 100" xmlns="http://www.w3.org/2000/svg" style="font-size:10.5px;">
+      <defs>
+        <marker id="arr3" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L8,3 z" fill="#94a3b8"/>
+        </marker>
+      </defs>
+      <rect x="2"   y="25" width="160" height="55" rx="8" fill="#059669"/>
+      <rect x="192" y="25" width="160" height="55" rx="8" fill="#1e3a5f"/>
+      <rect x="382" y="25" width="160" height="55" rx="8" fill="#2d5182"/>
+      <rect x="572" y="25" width="180" height="55" rx="8" fill="#1e3a5f"/>
+      <!-- Text -->
+      <text x="82"  y="46" text-anchor="middle" fill="white" font-weight="700">Phase 1 — Today</text>
+      <text x="82"  y="61" text-anchor="middle" fill="#d1fae5">Import Excel •</text>
+      <text x="82"  y="74" text-anchor="middle" fill="#d1fae5">Scan • Export CSV</text>
+      <text x="272" y="46" text-anchor="middle" fill="white" font-weight="700">Phase 2 — API</text>
+      <text x="272" y="61" text-anchor="middle" fill="#bfdbfe">API keys • POS reads</text>
+      <text x="272" y="74" text-anchor="middle" fill="#bfdbfe">inventory directly</text>
+      <text x="462" y="46" text-anchor="middle" fill="white" font-weight="700">Phase 3 — Webhooks</text>
+      <text x="462" y="61" text-anchor="middle" fill="#bfdbfe">Auto-push to QuickBooks</text>
+      <text x="462" y="74" text-anchor="middle" fill="#bfdbfe">Shopify • Xero</text>
+      <text x="662" y="46" text-anchor="middle" fill="white" font-weight="700">Phase 4 — Plugins</text>
+      <text x="662" y="61" text-anchor="middle" fill="#bfdbfe">1-click Square •</text>
+      <text x="662" y="74" text-anchor="middle" fill="#bfdbfe">Clover • Zapier</text>
+      <!-- Arrows -->
+      <line x1="162" y1="52" x2="190" y2="52" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr3)"/>
+      <line x1="352" y1="52" x2="380" y2="52" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr3)"/>
+      <line x1="542" y1="52" x2="570" y2="52" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr3)"/>
+    </svg>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════ PAGE 5 — INTEGRATION ═══ -->
+<div class="page">
+
+  <div class="section-label">05 — Integration</div>
+  <h2>Integrating with Existing &amp; New Systems</h2>
+  <div class="divider"></div>
+
+  <p>OptiCapture is designed as the <strong>source of truth for physical inventory</strong>. External systems — POS, accounting, e-commerce — read from it. The import/export layer means zero forced migration: businesses run OptiCapture alongside existing tools and cut over at their own pace.</p>
+
+  <h3>Current System Compatibility (Available Now)</h3>
+  <table>
+    <thead><tr><th>System</th><th>Integration Method</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td>Excel / CSV Spreadsheets</td><td>Bulk import on day one; export back anytime in original format</td><td>✅ Live</td></tr>
+      <tr><td>Petrosoft / Legacy POS</td><td>Export CSV from Petrosoft → import into OptiCapture (one-time migration)</td><td>✅ Via CSV</td></tr>
+      <tr><td>Google Accounts</td><td>Google OAuth — staff log in with existing Google credentials, no new passwords</td><td>✅ Live</td></tr>
+      <tr><td>Any CSV-Compatible System</td><td>OptiCapture exports standard CSV — readable by virtually any software</td><td>✅ Live</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Planned Integrations</h3>
+  <table>
+    <thead><tr><th>System</th><th>Purpose</th><th>Phase</th></tr></thead>
+    <tbody>
+      <tr><td>Square / Clover / Shopify POS</td><td>Sync inventory counts after each commit — what's scanned matches what's on the register</td><td>Phase 4</td></tr>
+      <tr><td>QuickBooks / Xero</td><td>Push inventory value and cost data for automated financial reporting</td><td>Phase 3</td></tr>
+      <tr><td>Shopify / WooCommerce</td><td>Keep online store stock levels in sync with physical inventory counts</td><td>Phase 3</td></tr>
+      <tr><td>Supplier / Vendor Portals</td><td>Auto-generate purchase orders when stock falls below configurable thresholds</td><td>Future</td></tr>
+      <tr><td>GoUPC / Barcodelookup API</td><td>Higher quality product names, images, and descriptions per barcode scan</td><td>Phase 2</td></tr>
+      <tr><td>Zapier / Make (no-code)</td><td>Connect OptiCapture to 5,000+ apps without developer involvement</td><td>Phase 4</td></tr>
+      <tr><td>Cloud Backup (Google Drive)</td><td>Scheduled automated database exports for business continuity</td><td>Phase 2</td></tr>
+      <tr><td>Email / SMS Notifications</td><td>Alerts for long scan sessions, idle drafts, and low stock thresholds</td><td>Phase 2</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Business Onboarding — Phase Roadmap</h3>
+  <div class="phases">
+    <div class="phase">
+      <div class="phase-num active">1</div>
+      <div class="phase-content">
+        <span class="phase-tag tag-now">Available Now</span>
+        <h4>File-Based Integration</h4>
+        <p>Import existing Excel/CSV inventory on day one. Staff scan with phones, owner reviews and commits. Export back to Excel or CSV after each count. Zero technical setup — works with any system that reads spreadsheets. Enough to run a full inventory operation from day one.</p>
+      </div>
+    </div>
+    <div class="phase">
+      <div class="phase-num">2</div>
+      <div class="phase-content">
+        <span class="phase-tag tag-next">Next</span>
+        <h4>API Access + Premium Lookups</h4>
+        <p>API keys enable machine-to-machine auth — the business's POS or custom system can call OptiCapture directly to read inventory without a browser session. Premium product lookup APIs (GoUPC, Barcodelookup) unlock richer product images and descriptions per barcode. Cloud backup and notification alerts also ship in this phase.</p>
+      </div>
+    </div>
+    <div class="phase">
+      <div class="phase-num">3</div>
+      <div class="phase-content">
+        <span class="phase-tag tag-next">Near Future</span>
+        <h4>Webhooks + Accounting Sync</h4>
+        <p>When inventory is committed, OptiCapture fires a webhook to notify external systems automatically — no manual exports. QuickBooks and Xero receive inventory value updates. Shopify and WooCommerce stock levels update in real time. No developer needed on the business side once configured.</p>
+      </div>
+    </div>
+    <div class="phase">
+      <div class="phase-num">4</div>
+      <div class="phase-content">
+        <span class="phase-tag tag-future">Future</span>
+        <h4>Pre-Built Connectors + Zapier</h4>
+        <p>One-click "Connect to Square" or "Connect to Clover" buttons in Store Settings. A Zapier connector opens OptiCapture to 5,000+ third-party apps with no code. Full bidirectional sync with major POS systems. Franchise and multi-location management with centralised reporting.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════ PAGE 6 — TECH + IMPROVEMENTS ═══ -->
+<div class="page">
+
+  <div class="section-label">06 — Technology</div>
+  <h2>Technology Stack</h2>
+  <div class="divider"></div>
+  <p>OptiCapture is built on a modern, proven web stack — no proprietary platforms, no vendor lock-in, deployable to any standard cloud host.</p>
+
+  <table>
+    <thead><tr><th>Layer</th><th>Technology</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td>Frontend</td><td>React 19 + TypeScript</td><td>Industry-standard UI framework — fast, component-based, strong type safety</td></tr>
+      <tr><td>Styling</td><td>Tailwind CSS v4</td><td>Utility-first CSS — consistent design system, responsive out of the box</td></tr>
+      <tr><td>Animations</td><td>Motion (Framer)</td><td>Smooth transitions improve perceived performance and usability</td></tr>
+      <tr><td>Backend</td><td>Express + TypeScript</td><td>Lightweight, fast Node.js server — handles all API routes and business logic</td></tr>
+      <tr><td>Database</td><td>SQLite (better-sqlite3)</td><td>Zero-config, file-based — sufficient for SMB scale, upgradeable to Postgres</td></tr>
+      <tr><td>Authentication</td><td>JWT + httpOnly Cookies</td><td>Secure session management — tokens never exposed to JavaScript</td></tr>
+      <tr><td>Barcode Scanning</td><td>@zxing/browser</td><td>Open-source library — decodes UPC/EAN/Code128 directly in the browser camera</td></tr>
+      <tr><td>Product Lookup</td><td>Open Food Facts + UPCitemDB</td><td>Free-tier APIs for product name, brand, and image resolution by barcode</td></tr>
+      <tr><td>Deployment</td><td>Hostinger Horizons</td><td>Target cloud host — simple, cost-effective, scales with usage</td></tr>
+    </tbody>
+  </table>
+
+  <div class="section-label" style="margin-top:40px;">07 — Roadmap</div>
+  <h2>Planned Improvements</h2>
+  <div class="divider"></div>
+
+  <div class="improvements">
+    <div class="improvement-item">
+      <div class="dot"></div>
+      <div>
+        <h4>Premium Product Lookup APIs</h4>
+        <p>Replace free-tier lookups with GoUPC or Barcodelookup — significantly better image quality, more accurate descriptions, and broader retail barcode coverage. Offered as a per-store premium upgrade.</p>
+      </div>
+    </div>
+    <div class="improvement-item">
+      <div class="dot"></div>
+      <div>
+        <h4>Reporting &amp; Analytics Dashboard</h4>
+        <p>Inventory value over time, scan velocity by taker, category breakdowns, and stock movement reports. Visual charts for management-level review.</p>
+      </div>
+    </div>
+    <div class="improvement-item">
+      <div class="dot"></div>
+      <div>
+        <h4>Low Stock Alerts</h4>
+        <p>Configurable minimum stock thresholds per item or category. Automatic email or SMS notification when stock falls below threshold — proactive reordering.</p>
+      </div>
+    </div>
+    <div class="improvement-item">
+      <div class="dot"></div>
+      <div>
+        <h4>UI Refinements</h4>
+        <p>Ongoing improvements based on real-world usage feedback — mobile scan interface, dashboard layout, item card design, and accessibility improvements.</p>
+      </div>
+    </div>
+    <div class="improvement-item">
+      <div class="dot"></div>
+      <div>
+        <h4>Database Upgrade Path</h4>
+        <p>Migration path from SQLite to PostgreSQL for high-volume stores or multi-location deployments requiring concurrent write performance.</p>
+      </div>
+    </div>
+    <div class="improvement-item">
+      <div class="dot"></div>
+      <div>
+        <h4>Multi-Location Management</h4>
+        <p>Centralised dashboard for franchise or chain operations — view inventory across all locations, transfer stock between stores, unified reporting.</p>
+      </div>
+    </div>
+    <div class="improvement-item">
+      <div class="dot"></div>
+      <div>
+        <h4>Offline Mode</h4>
+        <p>Queue scans locally when network drops during a scan session. Sync to server automatically when reconnected — no lost data in low-connectivity environments.</p>
+      </div>
+    </div>
+    <div class="improvement-item">
+      <div class="dot"></div>
+      <div>
+        <h4>Supplier Purchase Orders</h4>
+        <p>Auto-generate purchase orders from committed inventory counts. Send directly to supplier portals or export as PDF for manual submission.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════ PAGE 7 — PRICING ═══ -->
+<div class="page">
+
+  <div class="section-label">08 — Business Model</div>
+  <h2>Pricing &amp; Tiers</h2>
+  <div class="divider"></div>
+  <p>OptiCapture is offered as a monthly SaaS subscription. All tiers include core scanning, drafts, and inventory management. Higher tiers unlock integrations, premium lookups, and enterprise support.</p>
+
+  <div class="pricing-grid">
+    <div class="pricing-card">
+      <div class="tier">Starter</div>
+      <div class="price">$0 <span>/ month</span></div>
+      <ul>
+        <li>1 store location</li>
+        <li>Up to 2 taker accounts</li>
+        <li>Mobile barcode scanning</li>
+        <li>Draft sessions</li>
+        <li>Excel import / export</li>
+        <li>Basic product lookup</li>
+        <li>Community support</li>
+      </ul>
+    </div>
+    <div class="pricing-card featured">
+      <div class="tier">Professional</div>
+      <div class="price">$49 <span>/ month</span></div>
+      <ul>
+        <li>1 store location</li>
+        <li>Unlimited taker accounts</li>
+        <li>Everything in Starter</li>
+        <li>Premium product lookup API</li>
+        <li>API access + webhooks</li>
+        <li>QuickBooks / Xero sync</li>
+        <li>Low stock alerts</li>
+        <li>Priority support</li>
+      </ul>
+    </div>
+    <div class="pricing-card">
+      <div class="tier">Enterprise</div>
+      <div class="price">$199 <span>/ month</span></div>
+      <ul>
+        <li>Multiple locations</li>
+        <li>Unlimited everything</li>
+        <li>Everything in Professional</li>
+        <li>POS connector (Square etc.)</li>
+        <li>Zapier integration</li>
+        <li>Multi-location dashboard</li>
+        <li>Custom onboarding</li>
+        <li>Dedicated support</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="highlight-box" style="margin-top:30px;">
+    <p>For businesses currently paying $200–$400/month for legacy inventory systems like Petrosoft, OptiCapture's Professional tier delivers equal or greater capability at a fraction of the cost — with a modern mobile-first experience built for the way staff actually work.</p>
+  </div>
+
+  <div style="margin-top:40px; padding:24px; background:#f8fafc; border-radius:12px; border:1px solid var(--border);">
+    <h3 style="margin-top:0; margin-bottom:12px;">Summary</h3>
+    <p style="margin-bottom:8px;">OptiCapture replaces a slow, error-prone manual process with a fast, accurate, mobile-driven workflow that any business can adopt incrementally — starting with a simple CSV import and growing into full API-driven integration with POS, accounting, and e-commerce systems.</p>
+    <p style="margin:0;">The result: fewer counting errors, faster inventory cycles, a full audit trail, and a platform that grows with the business rather than holding it back.</p>
+  </div>
+</div>
+
+<div class="footer">
+  OptiCapture — Internal Project Brief — March 2026 &nbsp;·&nbsp; Confidential — For Management Review Only
+</div>
+
+</body>
+</html>

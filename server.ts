@@ -24,6 +24,12 @@ const db = new Database('opticapture.db');
 db.pragma('journal_mode = WAL');
 // Wait up to 5 s instead of throwing SQLITE_BUSY immediately under write contention
 db.pragma('busy_timeout = 5000');
+
+// UPC lookup cache — avoids hitting external APIs for barcodes already resolved.
+// TTL: 7 days. Cleared on server restart (intentional — forces fresh data periodically).
+interface UpcCacheEntry { product_name: string | null; brand: string | null; image: string | null; source: string; ts: number; }
+const upcCache = new Map<string, UpcCacheEntry>();
+const UPC_CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
 const app = express();
 const PORT = 3000;
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -336,11 +342,27 @@ runMigration(7, () => {
   const cols = (db.prepare('PRAGMA table_info(scan_sessions)').all() as any[]).map((c: any) => c.name);
   if (!cols.includes('label')) db.prepare("ALTER TABLE scan_sessions ADD COLUMN label TEXT DEFAULT NULL").run();
 });
+
+// Migration 8: expire legacy sessions that have no expires_at (created before migration 3)
+// Sets them to expired so they no longer appear in the active sessions list
+runMigration(8, () => {
+  db.prepare(`
+    UPDATE scan_sessions
+    SET expires_at = datetime('now', '-1 second')
+    WHERE expires_at IS NULL AND status IN ('active', 'draft')
+  `).run();
+});
 db.prepare(`
   CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oauth
   ON users(oauth_provider, oauth_id)
   WHERE oauth_provider IS NOT NULL
 `).run();
+
+// Performance indexes
+db.prepare('CREATE INDEX IF NOT EXISTS idx_session_items_session_upc ON session_items(session_id, upc)').run();
+db.prepare('CREATE INDEX IF NOT EXISTS idx_session_items_session_at  ON session_items(session_id, scanned_at DESC)').run();
+db.prepare('CREATE INDEX IF NOT EXISTS idx_inventory_upc_store        ON inventory(upc, store_id)').run();
+db.prepare('CREATE INDEX IF NOT EXISTS idx_scan_sessions_store_status ON scan_sessions(store_id, status, expires_at)').run();
 
 // One-time migration: convert old uc?export=view Drive URLs to thumbnail format
 db.prepare(`
@@ -1140,12 +1162,28 @@ function generateOTP(length = 6): string {
 }
 
 app.post('/api/session/create', authenticateToken, (req: any, res) => {
-  const sessionId = randomUUID(); // C-4: cryptographically random
+  // Reuse an existing active empty session for this user — prevents a new session
+  // being registered every time the Scan page is opened without scanning anything
+  const existing = db.prepare(`
+    SELECT session_id, otp FROM scan_sessions
+    WHERE user_id = ? AND store_id = ? AND status = 'active'
+      AND (expires_at IS NULL OR expires_at > datetime('now'))
+      AND session_id NOT IN (SELECT DISTINCT session_id FROM session_items)
+    ORDER BY created_at DESC LIMIT 1
+  `).get(req.user.id, req.user.store_id) as any;
+
+  if (existing) {
+    // Bump expiry and return the existing session
+    db.prepare("UPDATE scan_sessions SET expires_at = datetime('now', '+8 hours') WHERE session_id = ?")
+      .run(existing.session_id);
+    return res.json({ sessionId: existing.session_id, otp: existing.otp });
+  }
+
+  const sessionId = randomUUID();
   const otp = generateOTP(6);
   try {
     db.prepare('INSERT INTO scan_sessions (session_id, otp, user_id, store_id) VALUES (?, ?, ?, ?)')
       .run(sessionId, otp, req.user.id, req.user.store_id);
-    // Set expiry separately — column added by migration 3; safe to skip if not yet present
     try {
       db.prepare("UPDATE scan_sessions SET expires_at = datetime('now', '+8 hours') WHERE session_id = ?")
         .run(sessionId);
@@ -1224,8 +1262,11 @@ app.get('/api/sessions/active', authenticateToken, (req: any, res: any) => {
     LEFT JOIN session_items si ON si.session_id = s.session_id
     LEFT JOIN users u ON u.id = s.user_id
     WHERE s.store_id = ? AND s.status IN ('active', 'draft')
+      AND s.expires_at > datetime('now')
     GROUP BY s.session_id
+    HAVING item_count > 0
     ORDER BY s.created_at DESC
+    LIMIT 10
   `).all(req.user.store_id);
   res.json(sessions);
 });
@@ -1256,6 +1297,25 @@ app.patch('/api/session/:id/status', authenticateToken, (req: any, res: any) => 
   }
 
   res.json({ success: true, status });
+});
+
+app.delete('/api/session/:id', authenticateToken, (req: any, res: any) => {
+  const { id: sessionId } = req.params;
+  const session = db.prepare('SELECT * FROM scan_sessions WHERE session_id = ? AND store_id = ?')
+    .get(sessionId, req.user.store_id) as any;
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  if (session.status === 'completed') return res.status(403).json({ error: 'Cannot delete a committed session.' });
+  // Only remove the session record — session_items kept as audit trail
+  db.prepare('DELETE FROM scan_sessions WHERE session_id = ?').run(sessionId);
+  res.json({ success: true });
+});
+
+app.get('/api/session/:id/meta', authenticateToken, (req: any, res: any) => {
+  const session = db.prepare(
+    'SELECT session_id, status, label, created_at, otp FROM scan_sessions WHERE session_id = ? AND store_id = ?'
+  ).get(req.params.id, req.user.store_id) as any;
+  if (!session) return res.status(404).json({ error: 'Not found' });
+  res.json(session);
 });
 
 app.get('/api/session/:id/items', (req: any, res: any) => {
@@ -1351,41 +1411,43 @@ app.post('/api/session/:id/scan', async (req, res) => {
     SELECT id, item_name, image FROM inventory WHERE upc = ? AND store_id = ? LIMIT 1
   `).get(cleanUpc, session.store_id) as any;
 
-  const existingSessionItem = db.prepare(`
-    SELECT * FROM session_items WHERE session_id = ? AND upc = ?
-  `).get(id, cleanUpc) as any;
-
+  // --- Resolve product info (cache-first, non-blocking for external lookups) ---
   let lookupStatus = 'unknown';
   let productName: string | null = null;
   let brand: string | null = null;
   let image: string | null = null;
   let source = 'scan_only';
   let existsInInventory = 0;
+  let needsBackgroundLookup = false;
 
   if (inventoryMatch) {
+    // Already in this store's inventory — fastest path
     lookupStatus = 'existing';
     productName = inventoryMatch.item_name || null;
     image = inventoryMatch.image || null;
     source = 'inventory';
     existsInInventory = 1;
+  } else if (item_name) {
+    // Taker manually typed a name — use it immediately, no API needed
+    productName = String(item_name).trim() || null;
+    if (productName) lookupStatus = 'new_candidate';
+    source = 'manual';
   } else {
-    const lookupResult = await lookupProductByUpc(cleanUpc);
-    if (lookupResult?.product_name) {
-      lookupStatus = 'new_candidate';
-      productName = lookupResult.product_name;
-      brand = lookupResult.brand || null;
-      image = lookupResult.image || null;
-      source = lookupResult.source || 'lookup';
-    }
-    // Use manually entered item name as fallback when lookup finds nothing
-    if (!productName && item_name) {
-      productName = String(item_name).trim() || null;
-      if (productName) lookupStatus = 'new_candidate';
+    // Check in-memory cache before hitting external APIs
+    const cached = upcCache.get(cleanUpc);
+    if (cached && Date.now() - cached.ts < UPC_CACHE_TTL) {
+      lookupStatus = cached.product_name ? 'new_candidate' : 'unknown';
+      productName = cached.product_name;
+      brand = cached.brand;
+      image = cached.image;
+      source = cached.source;
+    } else {
+      // Cache miss — write what we have now, resolve in background
+      needsBackgroundLookup = true;
     }
   }
 
-  // Atomic upsert — re-check inside a transaction so concurrent phones scanning
-  // the same UPC at the same time cannot both INSERT (TOCTOU race condition)
+  // --- Atomic upsert (respond immediately — no waiting for external API) ---
   const upsertScan = db.transaction(() => {
     const existing = db.prepare(
       'SELECT * FROM session_items WHERE session_id = ? AND upc = ?'
@@ -1417,7 +1479,35 @@ app.post('/api/session/:id/scan', async (req, res) => {
 
   const updatedItem = upsertScan();
 
+  // Respond immediately — phone is unblocked
   res.json({ success: true, item: updatedItem });
+
+  // Background lookup — fires after response is sent, result visible on next poll
+  if (needsBackgroundLookup) {
+    lookupProductByUpc(cleanUpc).then(result => {
+      const resolvedName    = result?.product_name || null;
+      const resolvedBrand   = result?.brand || null;
+      const resolvedImage   = result?.image || null;
+      const resolvedSource  = result?.source || 'scan_only';
+      const resolvedStatus  = resolvedName ? 'new_candidate' : 'unknown';
+
+      // Update cache regardless of whether we found anything
+      upcCache.set(cleanUpc, { product_name: resolvedName, brand: resolvedBrand, image: resolvedImage, source: resolvedSource, ts: Date.now() });
+
+      // Only update DB if we actually got something useful
+      if (resolvedName) {
+        db.prepare(`
+          UPDATE session_items
+          SET lookup_status = ?, product_name = COALESCE(?, product_name),
+              brand = COALESCE(?, brand), image = COALESCE(?, image), source = ?
+          WHERE session_id = ? AND upc = ?
+        `).run(resolvedStatus, resolvedName, resolvedBrand, resolvedImage, resolvedSource, id, cleanUpc);
+      }
+    }).catch(() => {
+      // External API failed — cache as unknown so we don't retry until TTL expires
+      upcCache.set(cleanUpc, { product_name: null, brand: null, image: null, source: 'scan_only', ts: Date.now() });
+    });
+  }
 });
 
 app.patch('/api/session/:id/items/:itemId', authenticateToken, (req: any, res) => {
