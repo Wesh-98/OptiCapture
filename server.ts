@@ -325,6 +325,12 @@ runMigration(6, () => {
   if (!usersCols.includes('oauth_id'))       db.prepare("ALTER TABLE users ADD COLUMN oauth_id TEXT DEFAULT NULL").run();
   if (!usersCols.includes('email'))          db.prepare("ALTER TABLE users ADD COLUMN email TEXT DEFAULT NULL").run();
 });
+
+// Migrate scan_sessions table — add label column for named drafts
+runMigration(7, () => {
+  const cols = (db.prepare('PRAGMA table_info(scan_sessions)').all() as any[]).map((c: any) => c.name);
+  if (!cols.includes('label')) db.prepare("ALTER TABLE scan_sessions ADD COLUMN label TEXT DEFAULT NULL").run();
+});
 db.prepare(`
   CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oauth
   ON users(oauth_provider, oauth_id)
@@ -1205,7 +1211,7 @@ async function lookupProductByUpc(upc: string) {
 
 app.get('/api/sessions/active', authenticateToken, (req: any, res: any) => {
   const sessions = db.prepare(`
-    SELECT s.session_id, s.status, s.created_at, s.expires_at, s.otp,
+    SELECT s.session_id, s.status, s.created_at, s.expires_at, s.otp, s.label,
            COUNT(si.id) AS item_count,
            MAX(si.scanned_at) AS last_scan_at,
            u.username AS created_by
@@ -1221,7 +1227,7 @@ app.get('/api/sessions/active', authenticateToken, (req: any, res: any) => {
 
 app.patch('/api/session/:id/status', authenticateToken, (req: any, res: any) => {
   const { id: sessionId } = req.params;
-  const { status } = req.body;
+  const { status, label } = req.body;
 
   if (!['draft', 'active'].includes(status)) {
     return res.status(400).json({ error: 'Invalid status. Must be draft or active.' });
@@ -1240,8 +1246,8 @@ app.patch('/api/session/:id/status', authenticateToken, (req: any, res: any) => 
     ).run(sessionId);
   } else {
     db.prepare(
-      "UPDATE scan_sessions SET status = ? WHERE session_id = ?"
-    ).run(status, sessionId);
+      "UPDATE scan_sessions SET status = ?, label = COALESCE(?, label) WHERE session_id = ?"
+    ).run(status, label ?? null, sessionId);
   }
 
   res.json({ success: true, status });
@@ -1426,7 +1432,7 @@ app.delete('/api/session/:id/items/:itemId', authenticateToken, (req: any, res) 
   res.json({ success: true });
 });
 
-app.post('/api/session/:id/commit', authenticateToken, (req: any, res) => {
+app.post('/api/session/:id/commit', authenticateToken, requireOwner, (req: any, res) => {
   const { id } = req.params;
   const { selectedIds, category_id } = req.body as { selectedIds?: number[]; category_id?: number };
   const user = req.user;
