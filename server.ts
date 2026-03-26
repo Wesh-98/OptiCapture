@@ -91,6 +91,15 @@ const apiLimiter = rateLimit({
   message: { error: 'Too many requests, please try again later.' },
 });
 
+// Unauthenticated scan endpoints: stricter limit to prevent OTP brute-force across sessions
+const scanLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many scan requests. Please wait a moment.' },
+});
+
 app.use(express.json({ limit: '5mb' }));
 app.use(cookieParser());
 app.use('/uploads', express.static(UPLOADS_DIR));
@@ -550,10 +559,13 @@ app.get('/api/auth/google/callback', async (req: any, res) => {
     // 1. Look up by oauth_id
     let user = db.prepare("SELECT * FROM users WHERE oauth_provider = 'google' AND oauth_id = ?").get(googleId) as any;
 
-    // 2. Fall back to matching by email (auto-link existing account)
-    if (!user && email) {
+    // 2. Fall back to matching by email — only safe to auto-link if:
+    //    a) Google verified the email, AND
+    //    b) The existing account has no password (was created via OAuth/invite only)
+    //    Accounts with passwords must not be silently takeable via Google OAuth.
+    if (!user && email && payload.email_verified) {
       const byEmail = db.prepare('SELECT * FROM users WHERE email = ?').get(email) as any;
-      if (byEmail) {
+      if (byEmail && !byEmail.password) {
         db.prepare("UPDATE users SET oauth_provider = 'google', oauth_id = ? WHERE id = ?").run(googleId, byEmail.id);
         user = { ...byEmail, oauth_provider: 'google', oauth_id: googleId };
       }
@@ -821,7 +833,7 @@ app.put('/api/store/password', authenticateToken, (req: any, res) => {
   if (!user || !bcrypt.compareSync(current_password, user.password))
     return res.status(401).json({ error: 'Current password is incorrect' });
 
-  db.prepare('UPDATE users SET password = ? WHERE id = ?')
+  db.prepare('UPDATE users SET password = ?, failed_login_attempts = 0, locked_until = NULL WHERE id = ?')
     .run(bcrypt.hashSync(new_password, 10), req.user.id);
   res.json({ success: true });
 });
@@ -964,7 +976,9 @@ app.get('/api/inventory/export', authenticateToken, requireOwner, async (req: an
   const COLS = ['item_name','description','quantity','unit','sale_price','tax_percent','upc','number','tag_names','status','category','created_at'];
 
   if (fmt === 'csv') {
-    const csv = [COLS.join(','), ...rows.map(r => COLS.map(c => JSON.stringify(r[c] ?? '')).join(','))].join('\n');
+    // Force-quote every value so leading-zero UPCs and numeric strings survive Excel import
+    const csvCell = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const csv = [COLS.map(csvCell).join(','), ...rows.map(r => COLS.map(c => csvCell(r[c])).join(','))].join('\n');
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}.csv"`);
     return res.send(csv);
@@ -1058,9 +1072,13 @@ app.put('/api/inventory/:id', authenticateToken, requireOwner, (req: any, res) =
     db.prepare('INSERT INTO logs (action, details, user_id, store_id) VALUES (?, ?, ?, ?)')
       .run('UPDATE', `Updated item ${id}`, user.id, user.store_id);
 
+    // Invalidate UPC cache so mobile scanners see the updated product name immediately
+    const effectiveUpc = upc || (db.prepare('SELECT upc FROM inventory WHERE id = ? AND store_id = ?').get(id, user.store_id) as any)?.upc;
+    if (effectiveUpc) upcCache.delete(String(effectiveUpc));
+
     res.json({ success: true });
   } catch (err: any) {
-    console.error('[]', err);
+    console.error('[inventory:update]', err);
     res.status(500).json({ error: 'An internal error occurred' });
   }
 });
@@ -1157,8 +1175,14 @@ app.get('/api/server-info', authenticateToken, (_req, res) => {
 });
 
 // C-4: Use CSPRNG for both session IDs and OTPs
-function generateOTP(length = 6): string {
-  return randomBytes(4).readUInt32BE(0).toString(10).slice(-length).padStart(length, '0');
+function generateOTP(length = 8): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // 32 chars, no ambiguous 0/O/I/1
+  let result = '';
+  const bytes = randomBytes(length);
+  for (let i = 0; i < length; i++) {
+    result += chars[bytes[i] % chars.length];
+  }
+  return result;
 }
 
 app.post('/api/session/create', authenticateToken, (req: any, res) => {
@@ -1318,7 +1342,7 @@ app.get('/api/session/:id/meta', authenticateToken, (req: any, res: any) => {
   res.json(session);
 });
 
-app.get('/api/session/:id/items', (req: any, res: any) => {
+app.get('/api/session/:id/items', scanLimiter, (req: any, res: any) => {
   const { id: sessionId } = req.params;
   const { otp } = req.query;
 
@@ -1366,7 +1390,7 @@ app.get('/api/session/:id', authenticateToken, (req: any, res) => {
   res.json(items);
 });
 
-app.post('/api/session/:id/scan', async (req, res) => {
+app.post('/api/session/:id/scan', scanLimiter, async (req, res) => {
   const { id } = req.params;
   const { upc, otp, item_name } = req.body;
 
