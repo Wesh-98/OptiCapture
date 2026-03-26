@@ -19,6 +19,11 @@ import rateLimit from 'express-rate-limit';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const db = new Database('opticapture.db');
+// WAL mode: allows concurrent reads while a write is in progress — critical for
+// multiple phones scanning simultaneously into the same session
+db.pragma('journal_mode = WAL');
+// Wait up to 5 s instead of throwing SQLITE_BUSY immediately under write contention
+db.pragma('busy_timeout = 5000');
 const app = express();
 const PORT = 3000;
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -1379,28 +1384,38 @@ app.post('/api/session/:id/scan', async (req, res) => {
     }
   }
 
-  if (existingSessionItem) {
-    db.prepare(`
-      UPDATE session_items
-      SET quantity = quantity + 1, scanned_at = CURRENT_TIMESTAMP,
-          lookup_status = ?, product_name = COALESCE(?, product_name),
-          brand = COALESCE(?, brand), image = COALESCE(?, image),
-          source = ?, exists_in_inventory = ?
-      WHERE id = ?
-    `).run(lookupStatus, productName, brand, image, source, existsInInventory, existingSessionItem.id);
-  } else {
-    db.prepare(`
-      INSERT INTO session_items (session_id, upc, quantity, lookup_status, product_name, brand, image, source, exists_in_inventory)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, cleanUpc, 1, lookupStatus, productName, brand, image, source, existsInInventory);
-  }
+  // Atomic upsert — re-check inside a transaction so concurrent phones scanning
+  // the same UPC at the same time cannot both INSERT (TOCTOU race condition)
+  const upsertScan = db.transaction(() => {
+    const existing = db.prepare(
+      'SELECT * FROM session_items WHERE session_id = ? AND upc = ?'
+    ).get(id, cleanUpc) as any;
 
-  const updatedItem = db.prepare(`
-    SELECT id, session_id, upc, quantity, scanned_at, lookup_status, product_name, brand, image, source, exists_in_inventory
-    FROM session_items WHERE session_id = ? AND upc = ?
-  `).get(id, cleanUpc);
+    if (existing) {
+      db.prepare(`
+        UPDATE session_items
+        SET quantity = quantity + 1, scanned_at = CURRENT_TIMESTAMP,
+            lookup_status = ?, product_name = COALESCE(?, product_name),
+            brand = COALESCE(?, brand), image = COALESCE(?, image),
+            source = ?, exists_in_inventory = ?
+        WHERE id = ?
+      `).run(lookupStatus, productName, brand, image, source, existsInInventory, existing.id);
+    } else {
+      db.prepare(`
+        INSERT INTO session_items (session_id, upc, quantity, lookup_status, product_name, brand, image, source, exists_in_inventory)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(id, cleanUpc, 1, lookupStatus, productName, brand, image, source, existsInInventory);
+    }
 
-  db.prepare("UPDATE scan_sessions SET expires_at = datetime('now', '+8 hours') WHERE session_id = ?").run(id);
+    db.prepare("UPDATE scan_sessions SET expires_at = datetime('now', '+8 hours') WHERE session_id = ?").run(id);
+
+    return db.prepare(`
+      SELECT id, session_id, upc, quantity, scanned_at, lookup_status, product_name, brand, image, source, exists_in_inventory
+      FROM session_items WHERE session_id = ? AND upc = ?
+    `).get(id, cleanUpc);
+  });
+
+  const updatedItem = upsertScan();
 
   res.json({ success: true, item: updatedItem });
 });
