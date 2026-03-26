@@ -109,7 +109,7 @@ export default function Scan() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [otp, setOtp] = useState<string | null>(null);
   const [items, setItems] = useState<SessionItem[]>([]);
-  const [sessionStatus, setSessionStatus] = useState<'active' | 'draft' | null>(null);
+  const [sessionStatus, setSessionStatus] = useState<'active' | 'draft' | 'completed' | null>(null);
   const [sessionLabel, setSessionLabel] = useState<string | null>(null);
   const [showDraftPopover, setShowDraftPopover] = useState(false);
   const [draftNameInput, setDraftNameInput] = useState('');
@@ -156,7 +156,7 @@ export default function Scan() {
   const lastItemAddedAtRef = useRef<number | null>(null);
   const idleAlertFiredRef = useRef(false);
   const lastLongSessionAlertRef = useRef<number | null>(null);
-  const sessionStatusRef = useRef<'active' | 'draft' | null>(null);
+  const sessionStatusRef = useRef<'active' | 'draft' | 'completed' | null>(null);
 
   const addToast = useCallback((type: 'success' | 'error' | 'warning', message: string) => {
     const id = Math.random().toString(36).substr(2, 9);
@@ -458,11 +458,24 @@ export default function Scan() {
               setOtp(found.otp);
               setSessionStatus(found.status);
               setSessionLabel(found.label ?? null);
-              sessionStorage.setItem('scan_session_id', found.session_id);
-              sessionStorage.setItem('scan_otp', found.otp);
+              if (found.status !== 'completed') {
+                sessionStorage.setItem('scan_session_id', found.session_id);
+                sessionStorage.setItem('scan_otp', found.otp);
+              }
               sessionStartTimeRef.current = Date.now();
               lastItemAddedAtRef.current = Date.now();
-              // fetchSessionItems will be called by the sessionId useEffect
+              return;
+            }
+          }
+          // Not in active/draft list — check if it's a completed session
+          const metaRes = await fetch(`/api/session/${paramSessionId}/meta`, { credentials: 'include' });
+          if (metaRes.ok) {
+            const meta = await metaRes.json();
+            if (meta.status === 'completed') {
+              setSessionId(paramSessionId);
+              setSessionStatus('completed');
+              setSessionLabel(meta.label ?? null);
+              setSessionLoading(false);
               return;
             }
           }
@@ -868,7 +881,7 @@ export default function Scan() {
         )}
 
         {/* Feed Panel */}
-        <div className="lg:col-span-2 flex flex-col h-[600px] bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+        <div className="lg:col-span-2 flex flex-col h-[780px] bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
           {/* Feed header */}
           <div className="p-4 border-b border-slate-200 flex justify-between items-center bg-slate-50/50">
             <div className="flex items-center gap-3">
@@ -897,7 +910,7 @@ export default function Scan() {
                 <div className="relative">
                   <button
                     onClick={() => { setDraftNameInput(sessionLabel ?? defaultDraftName()); setShowDraftPopover(true); }}
-                    className="px-4 py-2 border border-slate-300 text-slate-600 rounded-xl text-sm font-semibold hover:bg-slate-50 transition-colors"
+                    className="px-4 py-2 bg-[#1e3a5f] text-white rounded-xl text-sm font-semibold hover:bg-[#16304f] transition-colors"
                   >
                     Save as Draft
                   </button>
@@ -961,9 +974,9 @@ export default function Scan() {
                 >
                   {allSelected ? 'Deselect All' : 'Select All'}
                 </button>
-                <span className="text-xs text-emerald-700 font-medium">New: {newItems.length}</span>
-                <span className="text-xs text-slate-500 font-medium">In Stock: {inStockItems.length}</span>
-                <span className="text-xs text-amber-600 font-medium">Unknown: {unknownItems.length}</span>
+                <span className="text-xs text-emerald-700 font-semibold">New: {newItems.length}</span>
+                <span className="text-xs text-slate-600 font-semibold">In Stock: {inStockItems.length}</span>
+                <span className="text-xs text-amber-700 font-semibold">Unknown: {unknownItems.length}</span>
               </>
             )}
             {pollError && (
@@ -990,6 +1003,18 @@ export default function Scan() {
               >
                 ×
               </button>
+            </div>
+          )}
+
+          {/* Committed (read-only) banner */}
+          {sessionStatus === 'completed' && (
+            <div className="flex items-center gap-3 px-4 py-3 rounded-xl text-sm mx-4" style={{ background: '#eef2f8', border: '1px solid #b6c8e0', color: '#1e3a5f' }}>
+              <span className="text-lg">✅</span>
+              <span className="flex-1">
+                {sessionLabel
+                  ? <><strong>{sessionLabel}</strong> — committed to inventory. View only.</>
+                  : 'This session has been committed to inventory — view only.'}
+              </span>
             </div>
           )}
 
@@ -1046,12 +1071,12 @@ export default function Scan() {
                       layout
                       className={cn(
                         'bg-white rounded-xl border transition-all',
-                        selected && item.exists_in_inventory ? 'border-slate-300 shadow-sm'
-                        : selected ? 'border-emerald-300 shadow-sm shadow-emerald-50 ring-1 ring-emerald-100'
-                        : 'border-dashed border-slate-200 opacity-60'
+                        selected && item.exists_in_inventory ? 'border-slate-400 shadow-sm'
+                        : selected ? 'border-emerald-400 shadow-sm shadow-emerald-50 ring-1 ring-emerald-100'
+                        : 'border-slate-300'
                       )}
                     >
-                      <div className="flex items-start gap-3 p-3">
+                      <div className="flex items-start gap-2 p-2">
                         {/* Checkbox */}
                         <input
                           type="checkbox"
@@ -1061,11 +1086,11 @@ export default function Scan() {
                         />
 
                         {/* Image */}
-                        <div className="w-14 h-14 rounded-lg bg-slate-100 flex items-center justify-center overflow-hidden border border-slate-200 shrink-0">
+                        <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center overflow-hidden border border-slate-200 shrink-0">
                           {item.image ? (
                             <img src={item.image} alt="" className="w-full h-full object-cover" />
                           ) : (
-                            <ImageIcon size={20} className="text-slate-400" />
+                            <ImageIcon size={16} className="text-slate-400" />
                           )}
                         </div>
 
@@ -1079,20 +1104,22 @@ export default function Scan() {
                             </p>
                             <div className="flex items-center gap-2 shrink-0">
                               <StatusBadge item={item} />
-                              <button
-                                onClick={() => openEdit(item)}
-                                className="p-1 text-slate-400 hover:text-navy-700 hover:bg-slate-100 rounded transition-colors"
-                                title="Edit item"
-                              >
-                                <Pencil size={13} />
-                              </button>
-                              <button
-                                onClick={() => deleteItem(item.id)}
-                                className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
-                                title="Remove from session"
-                              >
-                                <Trash2 size={13} />
-                              </button>
+                              {sessionStatus !== 'completed' && (<>
+                                <button
+                                  onClick={() => openEdit(item)}
+                                  className="p-1 text-slate-400 hover:text-navy-700 hover:bg-slate-100 rounded transition-colors"
+                                  title="Edit item"
+                                >
+                                  <Pencil size={13} />
+                                </button>
+                                <button
+                                  onClick={() => deleteItem(item.id)}
+                                  className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+                                  title="Remove from session"
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              </>)}
                             </div>
                           </div>
 
@@ -1106,11 +1133,11 @@ export default function Scan() {
 
                           <div className="grid grid-cols-2 gap-x-4 mt-1.5 text-xs text-slate-500">
                             <div>
-                              <span className="text-slate-400 uppercase text-[10px] font-semibold tracking-wider">UPC</span>
+                              <span className="text-slate-600 uppercase text-[10px] font-semibold tracking-wider">UPC</span>
                               <p className="font-mono text-slate-700 truncate">{item.upc}</p>
                             </div>
                             <div>
-                              <span className="text-slate-400 uppercase text-[10px] font-semibold tracking-wider">Scanned</span>
+                              <span className="text-slate-600 uppercase text-[10px] font-semibold tracking-wider">Scanned</span>
                               <p className="text-slate-700">{new Date(item.scanned_at).toLocaleTimeString()}</p>
                             </div>
                           </div>
