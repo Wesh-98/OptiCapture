@@ -70,10 +70,11 @@ app.use(helmet({
 // Auth endpoints: max 20 requests per 15 min per IP
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 20, standardHeaders: true, legacyHeaders: false });
 
-// General API limiter: max 300 requests per 15 min per IP
+// General API limiter: max 2000 requests per 15 min per IP
+// 1000-item scan sessions require ~500 scan POSTs + ~450 poll GETs per IP per 15-min window
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 300,
+  max: 2000,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many requests, please try again later.' },
@@ -1267,19 +1268,30 @@ app.get('/api/session/:id/items', (req: any, res: any) => {
 
 app.get('/api/session/:id', authenticateToken, (req: any, res) => {
   const { id } = req.params;
+  const { since } = req.query; // ISO timestamp — if provided, return only newer items
   const session = db.prepare("SELECT * FROM scan_sessions WHERE session_id = ? AND store_id = ?")
     .get(id, req.user.store_id) as any;
   if (!session) return res.status(403).json({ error: 'Forbidden' });
 
-  const items = db.prepare(`
-    SELECT si.id, si.session_id, si.upc, si.quantity, si.scanned_at,
-           si.lookup_status, si.product_name, si.brand, si.image,
-           si.source, si.exists_in_inventory,
-           si.sale_price, si.unit, si.tag_names
-    FROM session_items si
-    WHERE si.session_id = ?
-    ORDER BY si.scanned_at DESC
-  `).all(id);
+  const items = since
+    ? db.prepare(`
+        SELECT si.id, si.session_id, si.upc, si.quantity, si.scanned_at,
+               si.lookup_status, si.product_name, si.brand, si.image,
+               si.source, si.exists_in_inventory,
+               si.sale_price, si.unit, si.tag_names
+        FROM session_items si
+        WHERE si.session_id = ? AND si.scanned_at > ?
+        ORDER BY si.scanned_at DESC
+      `).all(id, since)
+    : db.prepare(`
+        SELECT si.id, si.session_id, si.upc, si.quantity, si.scanned_at,
+               si.lookup_status, si.product_name, si.brand, si.image,
+               si.source, si.exists_in_inventory,
+               si.sale_price, si.unit, si.tag_names
+        FROM session_items si
+        WHERE si.session_id = ?
+        ORDER BY si.scanned_at DESC
+      `).all(id);
   res.json(items);
 });
 

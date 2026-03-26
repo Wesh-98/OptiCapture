@@ -138,6 +138,7 @@ export default function Scan() {
   const pollIntervalRef = useRef<number | null>(null);
   const isBusyRef = useRef(false);
   const pollFailCountRef = useRef(0);
+  const lastPollAtRef = useRef<string | null>(null); // ISO timestamp of most recent item seen
   const manuallyDeselectedRef = useRef<Set<number>>(new Set());
   const sessionStartTimeRef = useRef<number | null>(null);
   const lastItemAddedAtRef = useRef<number | null>(null);
@@ -288,19 +289,39 @@ export default function Scan() {
     }
   };
 
-  const fetchSessionItems = useCallback(async () => {
+  const fetchSessionItems = useCallback(async (fullRefresh = false) => {
     if (!sessionId) return;
     try {
-      const res = await fetch(`/api/session/${sessionId}`, { credentials: 'include' });
+      const since = fullRefresh ? null : lastPollAtRef.current;
+      const url = since
+        ? `/api/session/${sessionId}?since=${encodeURIComponent(since)}`
+        : `/api/session/${sessionId}`;
+      const res = await fetch(url, { credentials: 'include' });
       if (!res.ok) throw new Error(`Polling failed: ${res.status}`);
       const data: SessionItem[] = await res.json();
       pollFailCountRef.current = 0;
+
+      if (data.length > 0) {
+        // Track most recent scanned_at to use as next delta cursor
+        const newest = data.reduce((a, b) => (a.scanned_at > b.scanned_at ? a : b));
+        lastPollAtRef.current = newest.scanned_at;
+      }
+
       setItems(prevItems => {
-        // Update lastItemAddedAtRef if new items were added
-        if (data.length > prevItems.length) {
-          lastItemAddedAtRef.current = Date.now();
+        if (fullRefresh || !since) {
+          // Full replace on first load
+          if (data.length > prevItems.length) lastItemAddedAtRef.current = Date.now();
+          return data;
         }
-        return data;
+        if (data.length === 0) return prevItems; // nothing new
+        // Delta: prepend new items, update any that changed (e.g. quantity bumped)
+        lastItemAddedAtRef.current = Date.now();
+        const incomingIds = new Set(data.map(i => i.id));
+        const merged = [
+          ...data,
+          ...prevItems.filter(i => !incomingIds.has(i.id)),
+        ];
+        return merged;
       });
       // Auto-select new items that aren't already in inventory
       setSelectedIds(prev => {
@@ -461,7 +482,8 @@ export default function Scan() {
 
   useEffect(() => {
     if (!sessionId) { stopPolling(); return; }
-    fetchSessionItems();
+    lastPollAtRef.current = null; // reset delta cursor on new session
+    fetchSessionItems(true);      // full load first
     startPolling();
     return () => { stopPolling(); };
   }, [sessionId, fetchSessionItems, startPolling, stopPolling]);
@@ -621,6 +643,10 @@ export default function Scan() {
   const inStockItems = items.filter(i => i.exists_in_inventory === 1);
   const unknownItems = items.filter(i => i.lookup_status !== 'new_candidate' && !i.exists_in_inventory);
   const allSelected = items.length > 0 && items.every(i => selectedIds.has(i.id));
+
+  // Render at most 150 rows — all 1000+ items stay in state for commit, just don't put them all in the DOM
+  const RENDER_LIMIT = 150;
+  const visibleItems = useMemo(() => items.slice(0, RENDER_LIMIT), [items]);
 
   return (
     <div className="space-y-6">
@@ -972,7 +998,7 @@ export default function Scan() {
                   )}
                 </div>
               ) : (
-                items.map(item => {
+                visibleItems.map(item => {
                   const selected = selectedIds.has(item.id);
                   return (
                     <motion.div
@@ -1063,6 +1089,11 @@ export default function Scan() {
                 })
               )}
             </AnimatePresence>
+            {items.length > RENDER_LIMIT && (
+              <div className="py-3 text-center text-xs text-slate-400">
+                Showing {RENDER_LIMIT} of {items.length} items — all items included in commit
+              </div>
+            )}
           </div>
         </div>
       </div>
