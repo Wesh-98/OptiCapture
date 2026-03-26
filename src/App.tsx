@@ -43,7 +43,7 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, Error
             >
               Reload Page
             </button>
-            {process.env.NODE_ENV === 'development' && this.state.error && (
+            {import.meta.env.DEV && this.state.error && (
               <pre className="mt-4 text-left text-xs bg-slate-100 rounded-lg p-3 text-red-600 overflow-auto max-h-32">
                 {this.state.error.message}
               </pre>

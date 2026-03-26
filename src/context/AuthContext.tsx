@@ -1,5 +1,5 @@
-import { createContext, useContext, useEffect, useState } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 interface User {
   id: number;
@@ -28,12 +28,11 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
+export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [myStores, setMyStores] = useState<StoreAccess[]>([]);
   const navigate = useNavigate();
-  const location = useLocation();
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -67,7 +66,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       body: JSON.stringify({ store_id: storeId }),
     });
     if (!res.ok) throw new Error('Failed to switch store');
-    const data = await res.json();
+    await res.json();
     // Re-fetch user to get updated JWT context
     const meRes = await fetch('/api/auth/me', { credentials: 'include' });
     if (meRes.ok) {

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
-import { Search, AlertTriangle, CheckCircle, Package, Plus, X, MoreHorizontal, ArrowLeft, Box, Layers, Archive, Image as ImageIcon, Pencil, ChevronLeft, ChevronRight, CupSoda, Cookie, Cigarette, Home, Car, ShoppingCart, Shirt, Pill, Wrench, Coffee, Apple, Fish, Baby, Dumbbell, Tv, Smartphone, Book, Leaf, PawPrint, Wine, Beer, Beef, Pizza, Candy, Gamepad2, Headphones, Camera, Droplets, SprayCan, Briefcase, Gift, Truck, ChefHat, Flame, Grape, Carrot, Milk, Sandwich, Scissors, Music, Sparkles, Star, Banana, Egg, FlaskConical, Flower2, IceCream2, Popcorn, Paintbrush, LeafyGreen, Zap, BottleWine, Croissant, Newspaper, Eye, EyeOff, Trash2, Download, Loader2 } from 'lucide-react';
+import { Search, Package, Plus, X, MoreHorizontal, ArrowLeft, Box, Layers, Image as ImageIcon, Pencil, ChevronLeft, ChevronRight, CupSoda, Cookie, Cigarette, Home, Car, ShoppingCart, Shirt, Pill, Wrench, Coffee, Apple, Fish, Baby, Dumbbell, Tv, Smartphone, Book, Leaf, PawPrint, Wine, Beer, Beef, Pizza, Candy, Gamepad2, Headphones, Camera, Droplets, SprayCan, Briefcase, Gift, Truck, ChefHat, Flame, Grape, Carrot, Milk, Sandwich, Scissors, Music, Sparkles, Star, Banana, Egg, FlaskConical, Flower2, IceCream2, Popcorn, Paintbrush, LeafyGreen, Zap, BottleWine, Croissant, Newspaper, Eye, EyeOff, Trash2, Download, Loader2 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useAuth } from '../context/AuthContext';
 

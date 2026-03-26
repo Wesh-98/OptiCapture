@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Loader2, Upload, CheckCircle, Store, Lock, AlertTriangle, EyeOff } from 'lucide-react';
+import { Loader2, CheckCircle, Store, Lock, AlertTriangle, EyeOff } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 const validateZipcode = (v: string) => !v || /^\d{5}(-\d{4})?$/.test(v);
@@ -69,22 +69,6 @@ export default function StoreSettings() {
   useEffect(() => {
     fetchStoreSettings();
   }, [fetchStoreSettings]);
-
-  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const base64String = event.target?.result as string;
-      setStoreInfo({ ...storeInfo, logo: base64String });
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const handleRemoveLogo = () => {
-    setStoreInfo({ ...storeInfo, logo: '' });
-  };
 
   const handleStoreSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

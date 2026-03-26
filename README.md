@@ -1,24 +1,66 @@
 # OptiCapture
 
-**Mobile-first inventory management for modern retail stores.**
+**Modern inventory management built for speed, accuracy, and scale.**
 
-OptiCapture lets store staff scan barcodes from any phone, auto-fill product names and images from a live product database, and commit items to a live inventory dashboard — no dedicated hardware, no Excel, no manual data entry.
+OptiCapture replaces manual spreadsheets and legacy tools with a fast, multi-tenant SaaS platform. Store staff scan barcodes from any phone or USB/Bluetooth scanner, products are auto-filled from a live database, and inventory syncs instantly across the team — no dedicated hardware required.
 
-Built for convenience stores, grocery stores, and small retail — as a direct alternative to legacy tools like Petrosoft and manual spreadsheets.
+---
+
+## Overview
+
+| | |
+|---|---|
+| **Type** | Multi-tenant SaaS (white-label ready) |
+| **Target** | Convenience stores, grocery, small retail |
+| **Replaces** | Petrosoft, manual Excel, paper logs |
+| **Access** | Web — desktop + mobile, any browser |
 
 ---
 
 ## Features
 
-- **Barcode scan via phone camera** — QR code links desktop session to any mobile device; scans sync in real time
-- **Product auto-lookup** — UPC → product name, brand, and image via Open Food Facts + UPCitemDB
-- **Inventory dashboard** — category grid, item search, edit, delete, stock counts
-- **Bulk import wizard** — drag-and-drop Excel (.xlsx), CSV, or JSON; auto-detects column headers; multi-sheet support (each sheet = one category)
-- **Activity audit log** — every CREATE, UPDATE, DELETE, IMPORT, LOGIN tracked with timestamp and user
-- **Multi-store support** — one account can access multiple store locations; switch from the header
-- **Store settings** — store name, address, logo, password change
-- **Google OAuth** — sign up and sign in with Google
-- **SuperAdmin panel** — manage all stores, activate/suspend, adjust plan tiers (`/admin`)
+### Inventory
+- Category grid with custom icons and stock counters
+- Per-item tracking: name, UPC, quantity, price, tax, tags, image
+- Inline edit and delete with two-step confirmation
+- Global search across all inventory
+- Pagination (50 / 100 / 200 items per page)
+- Export to PDF or CSV
+
+### Barcode Scanning
+- **Mobile camera** — QR code links any phone to the desktop session in seconds
+- **USB / Bluetooth scanner** — plug-and-play HID keyboard-wedge, no drivers or pairing required
+- **Product auto-lookup** — UPC resolves to name, brand, and image via Open Food Facts + UPCitemDB
+- OTP-secured scan sessions with 2-hour expiry and attempt lockout
+
+### Bulk Import
+- Drag-and-drop Excel (.xlsx / .xls), CSV, or JSON
+- Auto-detects column headers — no rigid template required
+- Multi-sheet Excel: each sheet maps to a category automatically
+
+### Access Control
+- Three roles: **SuperAdmin**, **Owner**, **Taker**
+- Owners manage store settings, inventory, categories, and team
+- Takers scan and view — read-only on settings, no destructive actions
+- SuperAdmin manages all stores and users across the platform
+
+### Security
+- JWT authentication via httpOnly cookies (8-hour expiry)
+- Login lockout after 5 failed attempts (15-minute cooldown)
+- Rate limiting on all API routes (300 req / 15 min)
+- MIME-type validation on all file uploads
+- Helmet security headers on every response
+- Google OAuth 2.0 sign-in
+
+### Operations
+- Full audit log: every CREATE, UPDATE, DELETE, IMPORT, LOGIN with user and timestamp
+- Filter logs by action type, keyword, and date range
+- All activity scoped and isolated per store tenant
+
+### Multi-Store
+- One account, multiple store locations
+- Switch stores from the header — no re-login required
+- Complete data isolation: every record scoped to `store_id`
 
 ---
 
@@ -27,35 +69,57 @@ Built for convenience stores, grocery stores, and small retail — as a direct a
 | Layer | Technology |
 |---|---|
 | Frontend | React 19, React Router v7, Tailwind CSS v4, Motion |
-| Backend | Express + TypeScript |
-| Database | better-sqlite3 (SQLite) |
-| Auth | JWT (httpOnly cookies), bcryptjs, Google OAuth |
-| Barcode | @zxing/browser (camera), qrcode.react (QR linking) |
+| Backend | Express, TypeScript, tsx |
+| Database | SQLite via better-sqlite3 |
+| Auth | JWT (httpOnly cookies), bcryptjs, Google OAuth 2.0 |
+| Scanning | @zxing/browser (camera), HID keyboard-wedge (hardware) |
 | Import | xlsx, papaparse |
 | Security | helmet, express-rate-limit |
+| CI | GitHub Actions — type-check + build on every push |
 
 ---
 
-## Getting Started
+## Roles
+
+| Role | Dashboard | Scan | Import | Logs | Store Settings | SuperAdmin |
+|---|---|---|---|---|---|---|
+| **SuperAdmin** | — | — | — | — | — | Full access |
+| **Owner** | Full | Full | Full | Full | Full | — |
+| **Taker** | View | Scan only | — | View | View only | — |
+
+---
+
+## Quick Start
 
 **Prerequisites:** Node.js 18+
 
-1. Install dependencies:
-   ```bash
-   npm install
-   ```
+```bash
+# 1. Install dependencies
+npm install
 
-2. Copy the environment file and fill in your values:
-   ```bash
-   cp .env.example .env
-   ```
+# 2. Configure environment
+cp .env.example .env
+# Edit .env — set JWT_SECRET at minimum
 
-3. Start the dev server:
-   ```bash
-   npm run dev
-   ```
+# 3. Start the development server
+npm run dev
+```
 
-The app runs at `https://localhost:3000` (self-signed cert generated automatically on first run).
+App runs at `https://localhost:3000`. A self-signed SSL certificate is generated automatically on first run.
+
+---
+
+## Mobile Scanning
+
+Camera access requires HTTPS with a valid certificate. For phone testing across any network:
+
+```bash
+npm run dev:scan   # starts dev server + Cloudflare tunnel together
+```
+
+The Scan page auto-detects the tunnel URL and updates the QR code automatically. No configuration needed.
+
+> Requires `cloudflared` — [Download](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)
 
 ---
 
@@ -63,54 +127,58 @@ The app runs at `https://localhost:3000` (self-signed cert generated automatical
 
 | Variable | Required | Description |
 |---|---|---|
-| `JWT_SECRET` | **Yes** | Random secret for signing JWTs. Generate with: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
-| `GOOGLE_CLIENT_ID` | No | Google OAuth client ID (from Google Cloud Console) |
+| `JWT_SECRET` | **Yes** | Random 32-byte hex — `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
+| `GOOGLE_CLIENT_ID` | No | Google OAuth client ID (Google Cloud Console) |
 | `GOOGLE_CLIENT_SECRET` | No | Google OAuth client secret |
-| `GOOGLE_REDIRECT_URI` | No | OAuth callback URL (default: `http://localhost:3000/api/auth/google/callback`) |
-| `UPCITEMDB_API_KEY` | No | UPCitemDB API key for fallback product lookup (Open Food Facts is used first, free) |
-| `NODE_ENV` | No | Set to `production` to disable demo seed accounts |
-
----
-
-## Mobile Scanning
-
-Camera access requires HTTPS. For local development on a phone:
-
-1. Start the Cloudflare tunnel alongside the dev server:
-   ```bash
-   npm run dev:scan
-   ```
-
-2. The tunnel URL appears on the Scan page as a QR code — scan it with your phone to open the mobile scanner.
-
-> The tunnel requires `cloudflared` to be installed: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
+| `GOOGLE_REDIRECT_URI` | No | OAuth callback URL (default: `https://localhost:3000/api/auth/google/callback`) |
+| `UPCITEMDB_API_KEY` | No | UPCitemDB key for extended product lookup |
+| `NODE_ENV` | No | Set to `production` to disable demo accounts and enable production hardening |
 
 ---
 
 ## Scripts
 
-| Script | Description |
+| Command | Description |
 |---|---|
-| `npm run dev` | Start dev server (HTTPS on localhost:3000) |
+| `npm run dev` | Dev server — HTTPS on localhost:3000 |
 | `npm run dev:scan` | Dev server + Cloudflare tunnel for mobile scanning |
-| `npm run tunnel` | Start tunnel only |
-| `npm run build` | Build frontend for production |
+| `npm run tunnel` | Tunnel only |
+| `npm run build` | Production frontend build |
 | `npm run lint` | TypeScript type check |
+| `npm run lint:eslint` | ESLint |
+| `npm run format` | Prettier format |
 
 ---
 
-## Demo Accounts (development only)
+## Demo Accounts
 
-Seeded automatically when `NODE_ENV` is not `production`:
+Seeded automatically when `NODE_ENV !== production`:
 
 | Username | Password | Role |
 |---|---|---|
-| `admin` | `admin123` | Owner (store 1) |
-| `taker` | `taker123` | Taker (store 1) |
+| `admin` | `admin123` | Owner |
+| `taker` | `taker123` | Taker |
 | `superadmin` | `superadmin123` | SuperAdmin |
+
+---
+
+## Scaling Roadmap
+
+OptiCapture is built to grow. Planned for v2:
+
+| Feature | Notes |
+|---|---|
+| Email password reset | Self-service, no superadmin dependency |
+| Google OAuth account linking | Merge existing accounts with Google sign-in |
+| API versioning (`/api/v1/`) | Stable contracts for third-party integrations |
+| Postgres migration | Drop-in swap via a single DB adapter — all queries already parameterised |
+| Webhook events | Inventory changes pushed to ERP / POS systems |
+| Full test suite | Vitest unit + Playwright end-to-end |
+| White-label theming | Per-store brand colours and logo in the UI shell |
+| Mobile app | React Native wrapper around the existing scan flow |
 
 ---
 
 ## License
 
-Private. All rights reserved.
+Private. All rights reserved. © 2026 OptiCapture.
