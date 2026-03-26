@@ -111,6 +111,8 @@ export default function Scan() {
   const [items, setItems] = useState<SessionItem[]>([]);
   const [sessionStatus, setSessionStatus] = useState<'active' | 'draft' | 'completed' | null>(null);
   const [sessionLabel, setSessionLabel] = useState<string | null>(null);
+  const [sessionExpiresAt, setSessionExpiresAt] = useState<string | null>(null);
+  const expiryWarnedRef = useRef(false);
   const [showDraftPopover, setShowDraftPopover] = useState(false);
   const [draftNameInput, setDraftNameInput] = useState('');
   const [draftAlert, setDraftAlert] = useState<{ message: string; visible: boolean }>({ message: '', visible: false });
@@ -157,6 +159,8 @@ export default function Scan() {
   const idleAlertFiredRef = useRef(false);
   const lastLongSessionAlertRef = useRef<number | null>(null);
   const sessionStatusRef = useRef<'active' | 'draft' | 'completed' | null>(null);
+  const lastScannedUpcRef = useRef<string | null>(null);
+  const lastScannedAtRef = useRef<number>(0);
 
   const addToast = useCallback((type: 'success' | 'error' | 'warning', message: string) => {
     const id = Math.random().toString(36).substr(2, 9);
@@ -166,8 +170,30 @@ export default function Scan() {
     }, 3000);
   }, []);
 
+  // Warn user when session expires in < 30 min
+  useEffect(() => {
+    if (!sessionExpiresAt || sessionStatus !== 'active') return;
+    expiryWarnedRef.current = false;
+    const check = () => {
+      if (expiryWarnedRef.current) return;
+      const msLeft = new Date(sessionExpiresAt).getTime() - Date.now();
+      if (msLeft > 0 && msLeft < 30 * 60 * 1000) {
+        expiryWarnedRef.current = true;
+        addToast('warning', `Session expires in ${Math.ceil(msLeft / 60000)} min — save as draft or commit soon`);
+      }
+    };
+    check();
+    const id = window.setInterval(check, 60_000);
+    return () => window.clearInterval(id);
+  }, [sessionExpiresAt, sessionStatus, addToast]);
+
   const submitHardwareScan = useCallback(async (upc: string) => {
     if (!sessionId || !otp) return;
+    // Dedup: ignore the same UPC scanned within 1.5 s (hardware scanners often fire twice)
+    const now = Date.now();
+    if (upc === lastScannedUpcRef.current && now - lastScannedAtRef.current < 1500) return;
+    lastScannedUpcRef.current = upc;
+    lastScannedAtRef.current = now;
     setLastHardwareScan(upc);
     try {
       const res = await fetch(`/api/session/${sessionId}/scan`, {
@@ -340,7 +366,12 @@ export default function Scan() {
         : `/api/session/${sessionId}`;
       const res = await fetch(url, { credentials: 'include' });
       if (!res.ok) throw new Error(`Polling failed: ${res.status}`);
-      const data: SessionItem[] = await res.json();
+      const raw = await res.json();
+      // Support both legacy array and new { items, expires_at } envelope
+      const data: SessionItem[] = Array.isArray(raw) ? raw : (raw.items ?? []);
+      if (!Array.isArray(raw) && raw.expires_at) {
+        setSessionExpiresAt(raw.expires_at);
+      }
       pollFailCountRef.current = 0;
 
       if (data.length > 0) {
@@ -443,6 +474,7 @@ export default function Scan() {
 
   useEffect(() => {
     fetchServerInfo();
+    const serverInfoInterval = window.setInterval(fetchServerInfo, 30_000);
 
     (async () => {
       // Check for ?session= param
@@ -495,7 +527,12 @@ export default function Scan() {
 
           const res = await fetch(`/api/session/${savedId}`, { credentials: 'include' });
           if (res.ok) {
-            const data = await res.json();
+            const raw = await res.json();
+            // Support both legacy array and new { items, expires_at } envelope
+            const data: SessionItem[] = Array.isArray(raw) ? raw : (raw.items ?? []);
+            if (!Array.isArray(raw) && raw.expires_at) {
+              setSessionExpiresAt(raw.expires_at);
+            }
             // data is an array of session items — session still exists
             setSessionId(savedId);
             setOtp(savedOtp);
@@ -528,7 +565,7 @@ export default function Scan() {
       createSession();
     })();
 
-    return () => { stopPolling(); };
+    return () => { stopPolling(); window.clearInterval(serverInfoInterval); };
   }, [fetchServerInfo, createSession, stopPolling, searchParams]);
 
   useEffect(() => {

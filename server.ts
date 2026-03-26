@@ -1387,7 +1387,7 @@ app.get('/api/session/:id', authenticateToken, (req: any, res) => {
         WHERE si.session_id = ?
         ORDER BY si.scanned_at DESC
       `).all(id);
-  res.json(items);
+  res.json({ items, expires_at: session.expires_at ?? null });
 });
 
 app.post('/api/session/:id/scan', scanLimiter, async (req, res) => {
@@ -1866,14 +1866,25 @@ app.post('/api/inventory/batch-confirm', authenticateToken, requireOwner, expres
 // Logs
 app.get('/api/logs', authenticateToken, (req: any, res) => {
   const storeId = req.user.store_id;
+  const { from, to, limit: limitParam } = req.query as { from?: string; to?: string; limit?: string };
+  const limit = Math.min(Number(limitParam) || 1000, 5000);
+
+  const conditions: string[] = ['logs.store_id = ?'];
+  const params: any[] = [storeId];
+
+  if (from) { conditions.push("logs.timestamp >= ?"); params.push(from); }
+  if (to)   { conditions.push("logs.timestamp <= ?"); params.push(to + 'T23:59:59'); }
+
+  params.push(limit);
+
   const logs = db.prepare(`
     SELECT logs.*, users.username
     FROM logs
     JOIN users ON logs.user_id = users.id
-    WHERE logs.store_id = ?
+    WHERE ${conditions.join(' AND ')}
     ORDER BY timestamp DESC
-    LIMIT 100
-  `).all(storeId);
+    LIMIT ?
+  `).all(...params);
   res.json(logs);
 });
 
