@@ -1,11 +1,18 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
-import { CheckCircle, Barcode, AlertTriangle, Camera, Keyboard } from 'lucide-react';
+import { CheckCircle, AlertTriangle, Camera, Keyboard } from 'lucide-react';
 import { BrowserMultiFormatReader } from '@zxing/browser';
 import { BarcodeFormat, DecodeHintType } from '@zxing/library';
 
-type ScanStatus = 'idle' | 'scanning' | 'success' | 'error';
+const IDLE_TIMEOUT_MS = 60_000;
+
+interface ScannedItem {
+  id: number;
+  name: string;
+  upc: string;
+  ts: Date;
+}
 
 export default function MobileScan() {
   const prefersReducedMotion = useReducedMotion();
@@ -17,54 +24,50 @@ export default function MobileScan() {
   const scannerElementId = 'mobile-reader';
   const codeReaderRef = useRef<BrowserMultiFormatReader | null>(null);
   const activeControlsRef = useRef<any>(null);
-  const unlockTimerRef = useRef<number | null>(null);
   const lastScanRef = useRef<{ code: string; time: number } | null>(null);
   const toastTimerRef = useRef<number | null>(null);
+  const isProcessingRef = useRef<boolean>(false);
+  const idleDeadlineRef = useRef<number>(0);
+  const idleIntervalRef = useRef<number | null>(null);
+  const onScanRef = useRef<(code: string) => Promise<void>>(async () => {});
 
   const [inputMode, setInputMode] = useState<'camera' | 'manual'>('camera');
-  const [status, setStatus] = useState<ScanStatus>('idle');
-  const [statusMessage, setStatusMessage] = useState('Ready to scan');
   const [isProcessing, setIsProcessing] = useState(false);
   const [manualInput, setManualInput] = useState('');
   const [manualItemName, setManualItemName] = useState('');
   const [scanCount, setScanCount] = useState(0);
-  const [lastScanned, setLastScanned] = useState<string | null>(null);
-  const [recentScans, setRecentScans] = useState<string[]>([]);
-  const [cameraReady, setCameraReady] = useState(false);
-  const [showRetry, setShowRetry] = useState(false);
+  const [scannedItems, setScannedItems] = useState<ScannedItem[]>([]);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [cameraIdle, setCameraIdle] = useState(false);
+  const [idleProgress, setIdleProgress] = useState(1);
   const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [isConnected, setIsConnected] = useState(true);
   const [reconnectAttempts, setReconnectAttempts] = useState(0);
 
+  const formatTime = (date: Date): string => {
+    return date.toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
   const showToast = useCallback((type: 'success' | 'error', message: string) => {
     setToast({ type, message });
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
-    toastTimerRef.current = window.setTimeout(() => setToast(null), 2000);
+    toastTimerRef.current = window.setTimeout(() => setToast(null), 3000);
   }, []);
 
-  const addRecentScan = useCallback((code: string) => {
-    setRecentScans((prev) => [code, ...prev.filter((item) => item !== code)].slice(0, 5));
+  const resetIdleTimer = useCallback(() => {
+    idleDeadlineRef.current = Date.now() + IDLE_TIMEOUT_MS;
+    setCameraIdle(false);
+    setIdleProgress(1);
   }, []);
-
-  const resetProcessingAfterDelay = useCallback(
-    (nextStatus: ScanStatus, message: string, delay = 1200) => {
-      if (unlockTimerRef.current) {
-        window.clearTimeout(unlockTimerRef.current);
-      }
-
-      unlockTimerRef.current = window.setTimeout(() => {
-        setStatus(nextStatus);
-        setStatusMessage(message);
-        setIsProcessing(false);
-      }, delay);
-    },
-    []
-  );
 
   const submitScan = useCallback(
     async (upc: string, itemName?: string) => {
       if (!sessionId) {
         showToast('error', 'Missing session ID');
+        isProcessingRef.current = false;
         setIsProcessing(false);
         return;
       }
@@ -91,54 +94,89 @@ export default function MobileScan() {
             typeof payload === 'object' && payload?.error
               ? payload.error
               : 'Could not add barcode';
-
           showToast('error', message);
-          setIsProcessing(false);
           return;
         }
 
         setIsConnected(true);
         setReconnectAttempts(0);
-        setLastScanned(upc);
-        setScanCount((prev) => prev + 1);
-        addRecentScan(upc);
+
+        const productName = payload?.item?.product_name || upc;
+        const newItem: ScannedItem = {
+          id: Date.now(),
+          name: productName,
+          upc,
+          ts: new Date()
+        };
+
+        setScannedItems(prev => [newItem, ...prev]);
+        setScanCount(prev => prev + 1);
+
         if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
-        showToast('success', payload?.item?.product_name ? `✓ ${payload.item.product_name}` : `✓ Scanned: ${upc}`);
-        setIsProcessing(false);
+        showToast('success', productName);
       } catch (error) {
         console.error('Submit scan error:', error);
         setIsConnected(false);
         setReconnectAttempts(prev => prev + 1);
         showToast('error', 'Network error while submitting scan');
+      } finally {
+        isProcessingRef.current = false;
         setIsProcessing(false);
       }
     },
-    [sessionId, otp, addRecentScan, showToast]
+    [sessionId, otp, showToast]
   );
 
-  const handleScanSuccess = useCallback(
-    async (decodedText: string) => {
-      const code = decodedText.trim();
-      if (!code || isProcessing) return;
+  // Update scan callback ref
+  useEffect(() => {
+    onScanRef.current = async (code: string) => {
+      const cleanCode = code.trim();
+      if (!cleanCode || isProcessingRef.current) return;
 
       const now = Date.now();
       if (
         lastScanRef.current &&
-        lastScanRef.current.code === code &&
+        lastScanRef.current.code === cleanCode &&
         now - lastScanRef.current.time < 2000
       ) {
         return;
       }
 
-      if (import.meta.env.DEV) console.log('SCANNED CODE:', code);
+      if (import.meta.env.DEV) console.log('SCANNED CODE:', cleanCode);
 
-      lastScanRef.current = { code, time: now };
+      lastScanRef.current = { code: cleanCode, time: now };
+      isProcessingRef.current = true;
       setIsProcessing(true);
+      resetIdleTimer();
 
-      await submitScan(code);
-    },
-    [isProcessing, submitScan]
-  );
+      await submitScan(cleanCode);
+    };
+  }, [submitScan, resetIdleTimer]);
+
+  // Idle timer ticker
+  useEffect(() => {
+    if (inputMode !== 'camera' || cameraIdle) return;
+
+    idleIntervalRef.current = window.setInterval(() => {
+      if (!idleDeadlineRef.current) return;
+
+      const remaining = idleDeadlineRef.current - Date.now();
+      const progress = Math.max(0, Math.min(1, remaining / IDLE_TIMEOUT_MS));
+
+      setIdleProgress(progress);
+
+      if (progress === 0 && !cameraIdle) {
+        setCameraIdle(true);
+      }
+    }, 250);
+
+    return () => {
+      if (idleIntervalRef.current) {
+        window.clearInterval(idleIntervalRef.current);
+        idleIntervalRef.current = null;
+      }
+    };
+  }, [inputMode, cameraIdle]);
 
   const stopScanner = useCallback(async () => {
     try {
@@ -164,26 +202,20 @@ export default function MobileScan() {
       videoEl.srcObject = null;
     }
 
-    setCameraReady(false);
+    setCameraError(null);
   }, []);
 
   const startScanner = useCallback(async () => {
     if (inputMode !== 'camera' || codeReaderRef.current) return;
 
-    setShowRetry(false);
+    setCameraError(null);
 
     if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
-      setStatus('error');
-      setStatusMessage('Camera requires HTTPS. Open the tunnel URL, not the LAN IP.');
-      setCameraReady(false);
-      setShowRetry(true);
+      setCameraError('Camera requires HTTPS. Open the tunnel URL, not the LAN IP.');
       return;
     }
 
     try {
-      setStatus('scanning');
-      setStatusMessage('Starting rear camera...');
-
       const hints = new Map();
       hints.set(DecodeHintType.POSSIBLE_FORMATS, [
         BarcodeFormat.UPC_A,
@@ -208,15 +240,13 @@ export default function MobileScan() {
         async (result, error) => {
           if (result) {
             const code = result.getText();
-            await handleScanSuccess(code);
+            await onScanRef.current(code);
           }
         }
       );
 
       activeControlsRef.current = controls;
-      setCameraReady(true);
-      setStatus('scanning');
-      setStatusMessage('Point camera at barcode');
+      resetIdleTimer();
     } catch (error: any) {
       console.error('Camera start error:', error);
 
@@ -236,20 +266,15 @@ export default function MobileScan() {
         message = `Camera error: ${error.message}`;
       }
 
-      setStatus('error');
-      setStatusMessage(message);
-      setCameraReady(false);
-      setShowRetry(true);
+      setCameraError(message);
     }
-  }, [inputMode, handleScanSuccess]);
+  }, [inputMode, resetIdleTimer]);
 
   useEffect(() => {
     if (inputMode === 'camera') {
       startScanner();
     } else {
       stopScanner();
-      setStatus('idle');
-      setStatusMessage('Manual entry mode');
     }
 
     return () => {
@@ -257,24 +282,32 @@ export default function MobileScan() {
     };
   }, [inputMode, startScanner, stopScanner]);
 
+  // Stop camera when idle timer expires
+  useEffect(() => {
+    if (cameraIdle && inputMode === 'camera') {
+      stopScanner();
+    }
+  }, [cameraIdle, inputMode, stopScanner]);
+
   useEffect(() => {
     return () => {
-      if (unlockTimerRef.current) {
-        window.clearTimeout(unlockTimerRef.current);
-      }
       if (toastTimerRef.current) {
         window.clearTimeout(toastTimerRef.current);
+      }
+      if (idleIntervalRef.current) {
+        window.clearInterval(idleIntervalRef.current);
       }
       stopScanner();
     };
   }, [stopScanner]);
 
-  const handleManualSubmit = async (e: React.FormEvent) => {
+  const handleManualSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
 
     const upc = manualInput.trim();
-    if (!upc || isProcessing) return;
+    if (!upc || isProcessingRef.current) return;
 
+    isProcessingRef.current = true;
     setIsProcessing(true);
 
     await submitScan(upc, manualItemName.trim() || undefined);
@@ -282,45 +315,179 @@ export default function MobileScan() {
     setManualItemName('');
   };
 
+  const handleResumeCamera = useCallback(async () => {
+    setCameraIdle(false);
+    resetIdleTimer();
+    await startScanner();
+  }, [resetIdleTimer, startScanner]);
+
   return (
-    <div className="min-h-screen bg-black text-white flex flex-col">
-      {/* Header bar */}
-      <div className="flex items-center justify-between px-4 py-3 bg-[#0a192f] border-b border-white/10">
-        {/* Left: session indicator */}
+    <div className="fixed inset-0 flex flex-col overflow-hidden bg-[#0d1117] text-white">
+      {/* Header */}
+      <div className="shrink-0 flex items-center px-4 py-3">
+        {/* Left: connection dot + session ID */}
         <div className="flex items-center gap-2">
-          <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400 animate-pulse'}`} />
-          <span className={`text-xs font-mono ${isConnected ? 'text-emerald-400' : 'text-amber-400'}`}>{sessionId?.slice(0,8)}…</span>
+          <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-400 animate-pulse' : 'bg-red-400 animate-pulse'}`} />
+          <span className="text-xs font-mono text-slate-400">{sessionId?.slice(0, 8) || 'unknown'}</span>
         </div>
-        {/* Center: scan count badge */}
-        <div className="flex items-center gap-1.5 bg-white/10 px-3 py-1 rounded-full">
-          <Barcode size={12} className="text-slate-300" />
-          <span className="text-xs font-bold text-white">{scanCount}</span>
-          <span className="text-xs text-slate-400">scanned</span>
+
+        {/* Center: big scan count */}
+        <div className="flex-1 flex flex-col items-center">
+          <span className="text-4xl font-black text-white">{scanCount}</span>
+          <span className="text-xs text-slate-600">items scanned</span>
         </div>
-        {/* Right: mode toggle */}
-        <div className="flex bg-white/10 rounded-xl p-1 gap-1">
-          <button
-            onClick={() => setInputMode('camera')}
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold transition-colors ${
-              inputMode === 'camera' ? 'bg-emerald-500 text-white' : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            <Camera size={16} /> Camera
-          </button>
-          <button
-            onClick={() => setInputMode('manual')}
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold transition-colors ${
-              inputMode === 'manual' ? 'bg-emerald-500 text-white' : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            <Keyboard size={16} /> Manual
-          </button>
-        </div>
+
+        {/* Right: spacer */}
+        <div className="w-16"></div>
       </div>
 
-      {/* Connection status banner */}
+      {/* Camera box */}
+      <div className="shrink-0 mx-4 mt-2 rounded-2xl overflow-hidden relative bg-black" style={{ height: '42vh' }}>
+        <video id="mobile-reader" className="w-full h-full object-cover" autoPlay muted playsInline />
+
+        {/* Scan guide overlay */}
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <div className="w-3/4 h-28 relative">
+            {/* Corner brackets */}
+            <div className="absolute -top-1 -left-1 w-6 h-6 border-t-2 border-l-2 border-emerald-400" />
+            <div className="absolute -top-1 -right-1 w-6 h-6 border-t-2 border-r-2 border-emerald-400" />
+            <div className="absolute -bottom-1 -left-1 w-6 h-6 border-b-2 border-l-2 border-emerald-400" />
+            <div className="absolute -bottom-1 -right-1 w-6 h-6 border-b-2 border-r-2 border-emerald-400" />
+
+            {/* Red scan line */}
+            <div className="absolute inset-x-4 top-1/2 -translate-y-1/2 h-0.5 bg-red-400/80 shadow-[0_0_8px_rgba(248,113,113,0.8)] animate-pulse" />
+          </div>
+        </div>
+
+        {/* Processing flash */}
+        {isProcessing && (
+          <div className="absolute inset-0 bg-emerald-400/10 pointer-events-none" />
+        )}
+
+        {/* Idle overlay */}
+        {inputMode === 'camera' && cameraIdle && (
+          <div
+            className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 gap-4 cursor-pointer"
+            onClick={handleResumeCamera}
+          >
+            <Camera size={40} className="text-white" />
+            <p className="text-white text-lg font-medium">Tap to resume</p>
+          </div>
+        )}
+
+        {/* Error overlay */}
+        {inputMode === 'camera' && cameraError && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 gap-4 px-6">
+            <AlertTriangle size={40} className="text-red-400" />
+            <p className="text-white text-sm text-center">{cameraError}</p>
+            <button
+              onClick={() => {
+                setCameraError(null);
+                startScanner();
+              }}
+              className="px-6 py-3 bg-emerald-600 text-white rounded-xl font-bold text-sm"
+            >
+              Try Again
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Idle progress bar */}
+      {inputMode === 'camera' && !cameraIdle && (
+        <div className="shrink-0 mx-4 mt-1.5 h-0.5 bg-white/5 rounded-full overflow-hidden">
+          <div
+            className="h-full bg-emerald-400 transition-all duration-300 ease-linear"
+            style={{ width: `${idleProgress * 100}%` }}
+          />
+        </div>
+      )}
+
+      {/* Mode toggle */}
+      <div className="shrink-0 mx-4 mt-3 flex bg-white/5 rounded-2xl p-1">
+        <button
+          onClick={() => setInputMode('camera')}
+          className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-semibold transition-colors ${
+            inputMode === 'camera' ? 'bg-emerald-600 text-white' : 'text-slate-500'
+          }`}
+        >
+          <Camera size={16} />
+          Camera
+        </button>
+        <button
+          onClick={() => setInputMode('manual')}
+          className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-semibold transition-colors ${
+            inputMode === 'manual' ? 'bg-emerald-600 text-white' : 'text-slate-500'
+          }`}
+        >
+          <Keyboard size={16} />
+          Manual
+        </button>
+      </div>
+
+      {/* Manual form */}
+      {inputMode === 'manual' && (
+        <div className="shrink-0 mx-4 mt-3 space-y-3">
+          <form onSubmit={handleManualSubmit} className="space-y-3">
+            <input
+              type="text"
+              value={manualItemName}
+              onChange={e => setManualItemName(e.target.value)}
+              placeholder="Item name (optional)"
+              className="w-full px-4 py-3 bg-white/[0.08] border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              disabled={isProcessing}
+            />
+            <input
+              type="text"
+              inputMode="numeric"
+              value={manualInput}
+              onChange={e => setManualInput(e.target.value)}
+              placeholder="UPC / Barcode *"
+              className="w-full px-4 py-3 bg-white/[0.08] border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono"
+              disabled={isProcessing}
+              autoFocus
+            />
+            <button
+              type="submit"
+              disabled={!manualInput.trim() || isProcessing}
+              className="w-full py-3 bg-emerald-600 text-white rounded-xl font-bold disabled:opacity-50 transition-colors"
+            >
+              {isProcessing ? 'Adding…' : 'Add Item'}
+            </button>
+          </form>
+        </div>
+      )}
+
+      {/* Scanned items list */}
+      <div className="flex-1 overflow-y-auto mx-4 mt-3 pb-2 min-h-0">
+        {scannedItems.length === 0 ? (
+          <div className="flex items-center justify-center h-full">
+            <p className="text-slate-700 text-sm">No items scanned yet</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <AnimatePresence>
+              {scannedItems.map((item) => (
+                <motion.div
+                  key={item.id}
+                  initial={prefersReducedMotion ? false : { opacity: 0, height: 0 }}
+                  animate={prefersReducedMotion ? {} : { opacity: 1, height: 'auto' }}
+                  exit={prefersReducedMotion ? {} : { opacity: 0, height: 0 }}
+                  className="flex items-center gap-3 px-3 py-2.5 bg-white/5 rounded-xl"
+                >
+                  <CheckCircle size={16} className="text-emerald-400 shrink-0" />
+                  <span className="flex-1 text-white text-sm truncate">{item.name}</span>
+                  <span className="text-slate-600 text-xs shrink-0">{formatTime(item.ts)}</span>
+                </motion.div>
+              ))}
+            </AnimatePresence>
+          </div>
+        )}
+      </div>
+
+      {/* Connection lost banner */}
       {!isConnected && (
-        <div className="flex items-center gap-2 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-700 mx-4 mt-3 mb-3">
+        <div className="shrink-0 mx-4 mb-2 flex items-center gap-2 px-3 py-2 bg-amber-500/20 border border-amber-500/30 rounded-xl text-sm text-amber-300">
           <div className="w-2 h-2 rounded-full bg-amber-400 animate-pulse shrink-0" />
           <span className="flex-1">
             {reconnectAttempts < 3 ? 'Connection lost — reconnecting...' : 'Unable to reach server. Check your network.'}
@@ -328,95 +495,12 @@ export default function MobileScan() {
           {reconnectAttempts >= 3 && (
             <button
               onClick={() => { setReconnectAttempts(0); setIsConnected(true); }}
-              className="text-xs font-semibold underline underline-offset-2 text-amber-700 hover:text-amber-900"
+              className="text-xs font-semibold underline underline-offset-2 text-amber-300"
             >
               Retry now
             </button>
           )}
         </div>
-      )}
-
-      {/* Main area - flex-1 */}
-      <div className="flex-1 flex flex-col">
-        {inputMode === 'camera' && (
-          <div className={`relative flex-1 overflow-hidden ${status === 'error' && !showRetry ? 'ring-2 ring-red-400' : ''}`}>
-            <video id="mobile-reader" className="w-full h-full object-cover" autoPlay muted playsInline />
-            {/* Scan guide overlay — always visible */}
-            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-              <div className="w-3/4 h-28 border-2 border-white/60 rounded-xl relative">
-                <div className="absolute -top-0.5 -left-0.5 w-5 h-5 border-t-2 border-l-2 border-emerald-400 rounded-tl-xl" />
-                <div className="absolute -top-0.5 -right-0.5 w-5 h-5 border-t-2 border-r-2 border-emerald-400 rounded-tr-xl" />
-                <div className="absolute -bottom-0.5 -left-0.5 w-5 h-5 border-b-2 border-l-2 border-emerald-400 rounded-bl-xl" />
-                <div className="absolute -bottom-0.5 -right-0.5 w-5 h-5 border-b-2 border-r-2 border-emerald-400 rounded-br-xl" />
-                <div className="absolute inset-x-4 top-1/2 -translate-y-1/2 h-0.5 bg-red-400/80 shadow-[0_0_8px_rgba(248,113,113,0.8)] animate-pulse" />
-              </div>
-            </div>
-            {/* HTTPS error with retry */}
-            {status === 'error' && showRetry && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 gap-4 px-6">
-                <AlertTriangle size={40} className="text-red-400" />
-                <p className="text-white text-sm text-center">{statusMessage}</p>
-                <button onClick={() => { setShowRetry(false); setStatus('idle'); startScanner(); }}
-                  className="px-6 py-3 bg-emerald-600 text-white rounded-xl font-bold text-sm">
-                  Try Again
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-
-        {inputMode === 'manual' && (
-          <div className="flex-1 flex flex-col justify-center gap-4 px-4 py-6">
-            <div className="text-center mb-2">
-              <Barcode size={36} className="text-emerald-400 mx-auto mb-2" />
-              <h3 className="text-lg font-bold text-white">Manual Entry</h3>
-              <p className="text-sm text-slate-400">Enter item details below</p>
-            </div>
-            <form onSubmit={handleManualSubmit} className="space-y-3">
-              <input
-                type="text"
-                value={manualItemName}
-                onChange={e => setManualItemName(e.target.value)}
-                placeholder="Item name (optional)"
-                className="w-full px-4 py-3.5 bg-white/10 border border-white/20 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-base"
-                disabled={isProcessing}
-              />
-              <input
-                type="text"
-                inputMode="numeric"
-                value={manualInput}
-                onChange={e => setManualInput(e.target.value)}
-                placeholder="UPC / Barcode *"
-                className="w-full px-4 py-3.5 bg-white/10 border border-white/20 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono text-base"
-                disabled={isProcessing}
-                autoFocus
-              />
-              <button type="submit" disabled={!manualInput.trim() || isProcessing}
-                className="w-full py-4 bg-emerald-600 text-white rounded-xl font-bold text-base disabled:opacity-50 transition-colors active:bg-emerald-700">
-                {isProcessing ? 'Adding…' : 'Add Item'}
-              </button>
-            </form>
-          </div>
-        )}
-      </div>
-
-      {/* Recent scans strip (camera mode only) */}
-      {inputMode === 'camera' && recentScans.length > 0 && (
-        <div className="bg-[#0a192f] border-t border-white/10 px-4 py-2 space-y-1">
-          {recentScans.slice(0, 3).map((code, i) => (
-            <div key={i} className="flex items-center justify-between">
-              <span className="font-mono text-xs text-slate-300 truncate">{code}</span>
-              <span className="text-xs text-emerald-400 font-semibold ml-2 shrink-0">✓</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Camera tip */}
-      {inputMode === 'camera' && (
-        <p className="text-center text-xs text-slate-600 py-2">
-          Center barcode in frame · Items sync instantly
-        </p>
       )}
 
       {/* Toast */}
