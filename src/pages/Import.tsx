@@ -195,6 +195,14 @@ export default function Import() {
 
   return (
     <div className="space-y-6">
+      <style>{`
+        @keyframes importProgress {
+          0%   { transform: translateX(-100%); }
+          50%  { transform: translateX(0%); }
+          100% { transform: translateX(100%); }
+        }
+        .animate-import-progress { animation: importProgress 1.6s ease-in-out infinite; }
+      `}</style>
       <div>
         <h2 className="text-2xl font-bold text-navy-900">Import Wizard</h2>
         <p className="text-slate-500">Upload Excel, CSV, or JSON files to bulk sync inventory</p>
@@ -420,6 +428,22 @@ export default function Import() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+            </div>
+          )}
+
+          {/* Importing progress banner */}
+          {state.step === 'importing' && (
+            <div className="mx-5 mb-4 rounded-xl border border-navy-200 bg-navy-50 p-4">
+              <div className="flex items-center gap-3 mb-3">
+                <Loader2 size={18} className="animate-spin text-navy-700 shrink-0" />
+                <div>
+                  <p className="text-sm font-semibold text-navy-900">Importing {totalRows} row{totalRows !== 1 ? 's' : ''}…</p>
+                  <p className="text-xs text-navy-600 mt-0.5">Please wait — do not close this tab</p>
+                </div>
+              </div>
+              <div className="h-2 w-full rounded-full bg-navy-200 overflow-hidden">
+                <div className="h-full w-1/2 rounded-full bg-navy-700 animate-import-progress" />
               </div>
             </div>
           )}
