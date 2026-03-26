@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import { Search, Package, Plus, X, MoreHorizontal, ArrowLeft, Box, Layers, Image as ImageIcon, Pencil, ChevronLeft, ChevronRight, CupSoda, Cookie, Cigarette, Home, Car, ShoppingCart, Shirt, Pill, Wrench, Coffee, Apple, Fish, Baby, Dumbbell, Tv, Smartphone, Book, Leaf, PawPrint, Wine, Beer, Beef, Pizza, Candy, Gamepad2, Headphones, Camera, Droplets, SprayCan, Briefcase, Gift, Truck, ChefHat, Flame, Grape, Carrot, Milk, Sandwich, Scissors, Music, Sparkles, Star, Banana, Egg, FlaskConical, Flower2, IceCream2, Popcorn, Paintbrush, LeafyGreen, Zap, BottleWine, Croissant, Newspaper, Eye, EyeOff, Trash2, Download, Loader2 } from 'lucide-react';
 import { cn } from '../lib/utils';
@@ -36,6 +37,16 @@ interface DashboardStats {
   totalItems: number;
   inStock: number;
   outOfStock: number;
+}
+
+interface ActiveSession {
+  session_id: string;
+  status: 'active' | 'draft';
+  item_count: number;
+  last_scan_at: string | null;
+  created_at: string;
+  created_by: string;
+  otp: string;
 }
 
 const iconMap: Record<string, React.ElementType> = {
@@ -172,6 +183,7 @@ const emptyForm = {
 
 export default function Dashboard() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const isOwner = user?.role !== 'taker';
   const prefersReducedMotion = useReducedMotion();
   const [viewMode, setViewMode] = useState<'categories' | 'items'>('categories');
@@ -205,6 +217,8 @@ export default function Dashboard() {
   const [exportFormat, setExportFormat] = useState<'xlsx'|'csv'|'json'|'pdf'>('xlsx');
   const [exporting, setExporting] = useState(false);
 
+  const [activeSessions, setActiveSessions] = useState<ActiveSession[]>([]);
+
   // Global search state
   const [globalSearch, setGlobalSearch] = useState('');
   const [searchResults, setSearchResults] = useState<InventoryItem[]>([]);
@@ -218,6 +232,7 @@ export default function Dashboard() {
   useEffect(() => {
     fetchStats();
     fetchCategories();
+    fetchActiveSessions();
   }, []);
 
   useEffect(() => {
@@ -252,6 +267,13 @@ export default function Dashboard() {
   const fetchCategories = async () => {
     const res = await fetch('/api/categories', { credentials: 'include' });
     if (res.ok) setCategories(await res.json());
+  };
+
+  const fetchActiveSessions = async () => {
+    try {
+      const res = await fetch('/api/sessions/active', { credentials: 'include' });
+      if (res.ok) setActiveSessions(await res.json());
+    } catch { /* ignore */ }
   };
 
   const fetchItems = async (categoryId: number) => {
@@ -467,6 +489,55 @@ export default function Dashboard() {
           </button>
         )}
       </div>
+
+      {/* Scan Sessions */}
+      {activeSessions.length > 0 && (
+        <div className="space-y-3">
+          <h3 className="text-sm font-semibold text-slate-700">Scan Sessions</h3>
+          <div className="flex flex-wrap gap-3">
+            {activeSessions.map(s => {
+              const isActive = s.status === 'active';
+              const itemWord = s.item_count === 1 ? 'item' : 'items';
+              const lastActivity = s.last_scan_at || s.created_at;
+              const diffMs = Date.now() - new Date(lastActivity).getTime();
+              const diffMin = Math.floor(diffMs / 60000);
+              const timeAgo = diffMin < 60
+                ? `${diffMin}m ago`
+                : diffMin < 1440
+                ? `${Math.floor(diffMin / 60)}h ago`
+                : `${Math.floor(diffMin / 1440)}d ago`;
+
+              return (
+                <div
+                  key={s.session_id}
+                  className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col gap-2 min-w-[180px] max-w-[220px]"
+                >
+                  <div className="flex items-center gap-2">
+                    <div className={`w-2 h-2 rounded-full shrink-0 ${isActive ? 'bg-emerald-500 animate-pulse' : 'bg-amber-400'}`} />
+                    <span className={`text-xs font-semibold ${isActive ? 'text-emerald-700' : 'text-amber-700'}`}>
+                      {isActive ? 'Scanning' : 'Draft'}
+                    </span>
+                  </div>
+                  <div>
+                    <p className="text-lg font-bold text-slate-900">{s.item_count} <span className="text-sm font-normal text-slate-500">{itemWord}</span></p>
+                    <p className="text-xs text-slate-400">by {s.created_by} · {timeAgo}</p>
+                  </div>
+                  <button
+                    onClick={() => navigate(`/scan?session=${s.session_id}`)}
+                    className={`mt-1 w-full py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                      isActive
+                        ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                        : 'bg-amber-50 text-amber-700 hover:bg-amber-100'
+                    }`}
+                  >
+                    {isActive ? 'Open' : 'Review'}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Global Search */}
       <div className="relative">

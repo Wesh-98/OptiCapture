@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import {
@@ -93,10 +94,14 @@ function SourcePill({ source }: { source: string | null }) {
 
 export default function Scan() {
   const prefersReducedMotion = useReducedMotion();
+  const [searchParams] = useSearchParams();
 
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [otp, setOtp] = useState<string | null>(null);
   const [items, setItems] = useState<SessionItem[]>([]);
+  const [sessionStatus, setSessionStatus] = useState<'active' | 'draft' | null>(null);
+  const [draftAlert, setDraftAlert] = useState<{ message: string; visible: boolean }>({ message: '', visible: false });
+  const [existingDraft, setExistingDraft] = useState<{ session_id: string; item_count: number; status: string } | null>(null);
   const [serverInfo, setServerInfo] = useState<ServerInfo | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
 
@@ -126,10 +131,19 @@ export default function Scan() {
     sessionStorage.setItem('scan_input_mode', scanInputMode);
   }, [scanInputMode]);
 
+  useEffect(() => {
+    sessionStatusRef.current = sessionStatus;
+  }, [sessionStatus]);
+
   const pollIntervalRef = useRef<number | null>(null);
   const isBusyRef = useRef(false);
   const pollFailCountRef = useRef(0);
   const manuallyDeselectedRef = useRef<Set<number>>(new Set());
+  const sessionStartTimeRef = useRef<number | null>(null);
+  const lastItemAddedAtRef = useRef<number | null>(null);
+  const idleAlertFiredRef = useRef(false);
+  const lastLongSessionAlertRef = useRef<number | null>(null);
+  const sessionStatusRef = useRef<'active' | 'draft' | null>(null);
 
   const addToast = useCallback((type: 'success' | 'error' | 'warning', message: string) => {
     const id = Math.random().toString(36).substr(2, 9);
@@ -211,6 +225,11 @@ export default function Scan() {
       const data = await res.json();
       setSessionId(data.sessionId);
       setOtp(data.otp);
+      setSessionStatus('active');
+      sessionStartTimeRef.current = Date.now();
+      lastItemAddedAtRef.current = Date.now();
+      idleAlertFiredRef.current = false;
+      lastLongSessionAlertRef.current = null;
       setItems([]);
       setUiStatus('ready');
       setStatusMessage('Session ready. Scan the QR code with your phone.');
@@ -230,6 +249,45 @@ export default function Scan() {
     }
   }, []);
 
+  const handleSaveDraft = async () => {
+    if (!sessionId) return;
+    try {
+      const res = await fetch(`/api/session/${sessionId}/status`, {
+        method: 'PATCH', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'draft' }),
+      });
+      if (res.ok) {
+        setSessionStatus('draft');
+        setDraftAlert({ message: '', visible: false });
+        addToast('success', 'Session saved as draft — scanning paused');
+      }
+    } catch {
+      addToast('error', 'Failed to save draft');
+    }
+  };
+
+  const handleResumeScan = async () => {
+    if (!sessionId) return;
+    try {
+      const res = await fetch(`/api/session/${sessionId}/status`, {
+        method: 'PATCH', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'active' }),
+      });
+      if (res.ok) {
+        setSessionStatus('active');
+        sessionStartTimeRef.current = Date.now();
+        idleAlertFiredRef.current = false;
+        lastLongSessionAlertRef.current = null;
+        setDraftAlert({ message: '', visible: false });
+        addToast('success', 'Scanning resumed — phone can now scan again');
+      }
+    } catch {
+      addToast('error', 'Failed to resume scanning');
+    }
+  };
+
   const fetchSessionItems = useCallback(async () => {
     if (!sessionId) return;
     try {
@@ -237,7 +295,13 @@ export default function Scan() {
       if (!res.ok) throw new Error(`Polling failed: ${res.status}`);
       const data: SessionItem[] = await res.json();
       pollFailCountRef.current = 0;
-      setItems(data);
+      setItems(prevItems => {
+        // Update lastItemAddedAtRef if new items were added
+        if (data.length > prevItems.length) {
+          lastItemAddedAtRef.current = Date.now();
+        }
+        return data;
+      });
       // Auto-select new items that aren't already in inventory
       setSelectedIds(prev => {
         const next = new Set(prev);
@@ -248,6 +312,42 @@ export default function Scan() {
         });
         return next;
       });
+
+      // Auto-alert: long session (every 30 min)
+      if (
+        sessionStatusRef.current === 'active' &&
+        sessionStartTimeRef.current &&
+        data.length > 0
+      ) {
+        const sessionAge = Date.now() - sessionStartTimeRef.current;
+        const thirtyMin = 30 * 60 * 1000;
+        if (
+          sessionAge >= thirtyMin &&
+          (!lastLongSessionAlertRef.current || Date.now() - lastLongSessionAlertRef.current >= thirtyMin)
+        ) {
+          lastLongSessionAlertRef.current = Date.now();
+          setDraftAlert({
+            message: `You've been scanning for ${Math.floor(sessionAge / 60000)} min — save as draft to protect your progress.`,
+            visible: true,
+          });
+        }
+      }
+
+      // Auto-alert: idle desktop (10 min no new items)
+      if (
+        sessionStatusRef.current === 'active' &&
+        lastItemAddedAtRef.current &&
+        data.length > 0 &&
+        !idleAlertFiredRef.current &&
+        Date.now() - lastItemAddedAtRef.current > 10 * 60 * 1000
+      ) {
+        idleAlertFiredRef.current = true;
+        setDraftAlert({
+          message: 'No new items scanned for 10 min — save as draft to protect your progress.',
+          visible: true,
+        });
+      }
+
       setPollError(null);
     } catch {
       pollFailCountRef.current += 1;
@@ -280,11 +380,36 @@ export default function Scan() {
 
   useEffect(() => {
     fetchServerInfo();
-    const savedId = sessionStorage.getItem('scan_session_id');
-    const savedOtp = sessionStorage.getItem('scan_otp');
-    if (savedId && savedOtp) {
-      // Try to resume the existing session
-      (async () => {
+
+    (async () => {
+      // Check for ?session= param
+      const paramSessionId = searchParams.get('session');
+      if (paramSessionId) {
+        try {
+          const sessionsRes = await fetch('/api/sessions/active', { credentials: 'include' });
+          if (sessionsRes.ok) {
+            const sessions = await sessionsRes.json();
+            const found = sessions.find((s: any) => s.session_id === paramSessionId);
+            if (found) {
+              setSessionId(found.session_id);
+              setOtp(found.otp);
+              setSessionStatus(found.status);
+              sessionStorage.setItem('scan_session_id', found.session_id);
+              sessionStorage.setItem('scan_otp', found.otp);
+              sessionStartTimeRef.current = Date.now();
+              lastItemAddedAtRef.current = Date.now();
+              // fetchSessionItems will be called by the sessionId useEffect
+              return;
+            }
+          }
+        } catch {}
+      }
+
+      // Check sessionStorage for existing session
+      const savedId = sessionStorage.getItem('scan_session_id');
+      const savedOtp = sessionStorage.getItem('scan_otp');
+      if (savedId && savedOtp) {
+        // Try to resume the existing session
         try {
           const res = await fetch(`/api/session/${savedId}`, { credentials: 'include' });
           if (res.ok) {
@@ -292,30 +417,47 @@ export default function Scan() {
             // data is an array of session items — session still exists
             setSessionId(savedId);
             setOtp(savedOtp);
+            setSessionStatus('active');
             setItems(data);
             setUiStatus('ready');
             setStatusMessage('Session resumed. Scan the QR code with your phone.');
+            sessionStartTimeRef.current = Date.now();
+            lastItemAddedAtRef.current = Date.now();
             // Auto-select new candidates
             setSelectedIds(new Set(
               data
                 .filter((i: any) => i.lookup_status === 'new_candidate' && !i.exists_in_inventory)
                 .map((i: any) => i.id)
             ));
+            return;
           } else {
-            // Session expired or not found — create fresh
+            // Session expired or not found — check for drafts
             sessionStorage.removeItem('scan_session_id');
             sessionStorage.removeItem('scan_otp');
-            createSession();
           }
-        } catch {
-          createSession();
+        } catch {}
+      }
+
+      // Before auto-creating, check for existing drafts
+      try {
+        const sessionsRes = await fetch('/api/sessions/active', { credentials: 'include' });
+        if (sessionsRes.ok) {
+          const sessions = await sessionsRes.json();
+          if (sessions.length > 0) {
+            // Show draft prompt instead of auto-creating
+            setExistingDraft(sessions[0]); // show the most recent
+            setSessionLoading(false);
+            return;
+          }
         }
-      })();
-    } else {
+      } catch {}
+
+      // No existing sessions — auto-create
       createSession();
-    }
+    })();
+
     return () => { stopPolling(); };
-  }, [fetchServerInfo, createSession, stopPolling]);
+  }, [fetchServerInfo, createSession, stopPolling, searchParams]);
 
   useEffect(() => {
     if (!sessionId) { stopPolling(); return; }
@@ -499,9 +641,47 @@ export default function Scan() {
         </button>
       </div>
 
+      {existingDraft && !sessionId && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-6 flex items-center justify-between">
+          <div>
+            <p className="font-semibold text-amber-900">Unfinished draft session</p>
+            <p className="text-sm text-amber-700 mt-0.5">{existingDraft.item_count} items scanned · {existingDraft.status === 'draft' ? 'Saved as draft' : 'Scanning in progress'}</p>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={async () => {
+                const res = await fetch('/api/sessions/active', { credentials: 'include' });
+                if (res.ok) {
+                  const sessions = await res.json();
+                  const found = sessions.find((s: any) => s.session_id === existingDraft.session_id);
+                  if (found) {
+                    setSessionId(found.session_id);
+                    setOtp(found.otp);
+                    setSessionStatus(found.status);
+                    sessionStorage.setItem('scan_session_id', found.session_id);
+                    sessionStorage.setItem('scan_otp', found.otp);
+                    setExistingDraft(null);
+                  }
+                }
+              }}
+              className="px-4 py-2 bg-amber-600 text-white rounded-xl text-sm font-semibold hover:bg-amber-700"
+            >
+              Resume Draft
+            </button>
+            <button
+              onClick={() => { setExistingDraft(null); createSession(); }}
+              className="px-4 py-2 border border-slate-300 text-slate-700 rounded-xl text-sm font-semibold hover:bg-slate-50"
+            >
+              Start New
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Scanner Panel */}
-        <div className="lg:col-span-1">
+        {sessionStatus !== 'draft' && (
+          <div className="lg:col-span-1">
           <div className="bg-navy-900 text-white rounded-2xl shadow-xl overflow-hidden relative">
             <div className="absolute top-0 right-0 p-32 bg-navy-800 rounded-full blur-3xl -mr-16 -mt-16 opacity-50 pointer-events-none" />
 
@@ -656,6 +836,7 @@ export default function Scan() {
             </div>
           </div>
         </div>
+        )}
 
         {/* Feed Panel */}
         <div className="lg:col-span-2 flex flex-col h-[600px] bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
@@ -668,20 +849,38 @@ export default function Scan() {
                 <p className="text-xs text-slate-500">{items.length} items scanned</p>
               </div>
             </div>
-            {selectedIds.size > 0 && (
-              <button
-                onClick={openCommitModal}
-                disabled={uiStatus === 'committing'}
-                className="flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-lg hover:bg-emerald-700 transition-colors shadow-lg shadow-emerald-900/20 disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                {uiStatus === 'committing' ? (
-                  <Loader2 size={18} className="animate-spin" />
-                ) : (
-                  <Save size={18} />
-                )}
-                Commit Selected ({selectedIds.size})
-              </button>
-            )}
+            <div className="flex items-center gap-2">
+              {selectedIds.size > 0 && (
+                <button
+                  onClick={openCommitModal}
+                  disabled={uiStatus === 'committing'}
+                  className="flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-lg hover:bg-emerald-700 transition-colors shadow-lg shadow-emerald-900/20 disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {uiStatus === 'committing' ? (
+                    <Loader2 size={18} className="animate-spin" />
+                  ) : (
+                    <Save size={18} />
+                  )}
+                  Commit Selected ({selectedIds.size})
+                </button>
+              )}
+              {sessionStatus === 'active' && items.length > 0 && (
+                <button
+                  onClick={handleSaveDraft}
+                  className="px-4 py-2 border border-slate-300 text-slate-600 rounded-xl text-sm font-semibold hover:bg-slate-50 transition-colors"
+                >
+                  Save as Draft
+                </button>
+              )}
+              {sessionStatus === 'draft' && (
+                <button
+                  onClick={handleResumeScan}
+                  className="px-4 py-2 border border-amber-300 text-amber-700 rounded-xl text-sm font-semibold hover:bg-amber-50 transition-colors"
+                >
+                  Resume Scanning
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Status + counts bar */}
@@ -715,6 +914,39 @@ export default function Scan() {
               </span>
             )}
           </div>
+
+          {/* Draft alert banner */}
+          {draftAlert.visible && (
+            <div className="flex items-center gap-3 px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-800 mx-4">
+              <span className="flex-1">{draftAlert.message}</span>
+              <button
+                onClick={handleSaveDraft}
+                className="px-3 py-1.5 bg-amber-600 text-white rounded-lg text-xs font-semibold hover:bg-amber-700 shrink-0"
+              >
+                Save as Draft
+              </button>
+              <button
+                onClick={() => setDraftAlert({ message: '', visible: false })}
+                className="text-amber-600 hover:text-amber-800 shrink-0 text-lg leading-none"
+              >
+                ×
+              </button>
+            </div>
+          )}
+
+          {/* Draft mode banner */}
+          {sessionStatus === 'draft' && (
+            <div className="flex items-center gap-3 px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-800 mx-4">
+              <span className="text-lg">🔒</span>
+              <span className="flex-1">Draft — scanning paused. Edit items below, then commit or resume scanning.</span>
+              <button
+                onClick={handleResumeScan}
+                className="px-3 py-1.5 bg-amber-600 text-white rounded-lg text-xs font-semibold hover:bg-amber-700 shrink-0"
+              >
+                Resume Scanning
+              </button>
+            </div>
+          )}
 
           {/* Item list */}
           <div className="flex-1 overflow-y-auto p-4 space-y-2 bg-slate-50">
