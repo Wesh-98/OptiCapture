@@ -43,6 +43,7 @@ export default function MobileScan() {
   const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [isConnected, setIsConnected] = useState(true);
   const [reconnectAttempts, setReconnectAttempts] = useState(0);
+  const [sessionDraft, setSessionDraft] = useState(false);
 
   const formatTime = (date: Date): string => {
     return date.toLocaleTimeString([], {
@@ -126,6 +127,29 @@ export default function MobileScan() {
     },
     [sessionId, otp, showToast]
   );
+
+  // Reconnect: fetch existing items + draft status on mount (handles screen lock)
+  useEffect(() => {
+    if (!sessionId || !otp) return;
+    fetch(`/api/session/${sessionId}/items?otp=${otp}`)
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (!data) return;
+        const { items: existing, status } = data;
+        if (Array.isArray(existing) && existing.length > 0) {
+          const loaded: ScannedItem[] = existing.map((item: any) => ({
+            id: item.id,
+            name: item.product_name || item.upc,
+            upc: item.upc,
+            ts: new Date(item.scanned_at),
+          }));
+          setScannedItems(loaded);
+          setScanCount(loaded.length);
+        }
+        if (status === 'draft') setSessionDraft(true);
+      })
+      .catch(() => { /* ignore */ });
+  }, [sessionId, otp]);
 
   // Update scan callback ref
   useEffect(() => {
@@ -320,6 +344,25 @@ export default function MobileScan() {
     resetIdleTimer();
     await startScanner();
   }, [resetIdleTimer, startScanner]);
+
+  // Draft mode: no camera, no scanning
+  if (sessionDraft) {
+    return (
+      <div className="fixed inset-0 flex flex-col items-center justify-center bg-[#0d1117] text-white px-6 gap-6">
+        <div className="w-14 h-14 rounded-full bg-amber-500/20 flex items-center justify-center">
+          <span className="text-amber-400 text-2xl">🔒</span>
+        </div>
+        <div className="text-center">
+          <p className="text-lg font-bold text-white mb-1">Session in review mode</p>
+          <p className="text-sm text-slate-400">Scanning paused by the store owner.</p>
+        </div>
+        <div className="px-6 py-3 bg-white/5 rounded-2xl text-center">
+          <p className="text-3xl font-black text-white">{scanCount}</p>
+          <p className="text-xs text-slate-500 mt-0.5">items scanned</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 flex flex-col overflow-hidden bg-[#0d1117] text-white">

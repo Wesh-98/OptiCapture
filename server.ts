@@ -1135,7 +1135,7 @@ app.post('/api/session/create', authenticateToken, (req: any, res) => {
       .run(sessionId, otp, req.user.id, req.user.store_id);
     // Set expiry separately — column added by migration 3; safe to skip if not yet present
     try {
-      db.prepare("UPDATE scan_sessions SET expires_at = datetime('now', '+2 hours') WHERE session_id = ?")
+      db.prepare("UPDATE scan_sessions SET expires_at = datetime('now', '+8 hours') WHERE session_id = ?")
         .run(sessionId);
     } catch {}
     res.json({ sessionId, otp });
@@ -1202,6 +1202,69 @@ async function lookupProductByUpc(upc: string) {
   return null;
 }
 
+app.get('/api/sessions/active', authenticateToken, (req: any, res: any) => {
+  const sessions = db.prepare(`
+    SELECT s.session_id, s.status, s.created_at, s.expires_at, s.otp,
+           COUNT(si.id) AS item_count,
+           MAX(si.scanned_at) AS last_scan_at,
+           u.username AS created_by
+    FROM scan_sessions s
+    LEFT JOIN session_items si ON si.session_id = s.session_id
+    LEFT JOIN users u ON u.id = s.user_id
+    WHERE s.store_id = ? AND s.status IN ('active', 'draft')
+    GROUP BY s.session_id
+    ORDER BY s.created_at DESC
+  `).all(req.user.store_id);
+  res.json(sessions);
+});
+
+app.patch('/api/session/:id/status', authenticateToken, (req: any, res: any) => {
+  const { id: sessionId } = req.params;
+  const { status } = req.body;
+
+  if (!['draft', 'active'].includes(status)) {
+    return res.status(400).json({ error: 'Invalid status. Must be draft or active.' });
+  }
+
+  const session = db.prepare(
+    'SELECT * FROM scan_sessions WHERE session_id = ? AND store_id = ?'
+  ).get(sessionId, req.user.store_id) as any;
+
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+
+  if (status === 'active') {
+    // Resume: reset expiry
+    db.prepare(
+      "UPDATE scan_sessions SET status = 'active', expires_at = datetime('now', '+8 hours') WHERE session_id = ?"
+    ).run(sessionId);
+  } else {
+    db.prepare(
+      "UPDATE scan_sessions SET status = ? WHERE session_id = ?"
+    ).run(status, sessionId);
+  }
+
+  res.json({ success: true, status });
+});
+
+app.get('/api/session/:id/items', (req: any, res: any) => {
+  const { id: sessionId } = req.params;
+  const { otp } = req.query;
+
+  if (!otp) return res.status(400).json({ error: 'OTP required' });
+
+  const session = db.prepare(
+    'SELECT * FROM scan_sessions WHERE session_id = ? AND otp = ?'
+  ).get(sessionId, otp) as any;
+
+  if (!session) return res.status(403).json({ error: 'Invalid session or OTP' });
+
+  const items = db.prepare(
+    'SELECT * FROM session_items WHERE session_id = ? ORDER BY scanned_at ASC'
+  ).all(sessionId) as any[];
+
+  res.json({ status: session.status, items });
+});
+
 app.get('/api/session/:id', authenticateToken, (req: any, res) => {
   const { id } = req.params;
   const session = db.prepare("SELECT * FROM scan_sessions WHERE session_id = ? AND store_id = ?")
@@ -1230,10 +1293,18 @@ app.post('/api/session/:id/scan', async (req, res) => {
   }
 
   const session = db.prepare(
-    "SELECT * FROM scan_sessions WHERE session_id = ? AND status = 'active'"
+    "SELECT * FROM scan_sessions WHERE session_id = ?"
   ).get(id) as any;
 
   if (!session) {
+    return res.status(404).json({ error: 'Session not found or inactive' });
+  }
+
+  if (session.status === 'draft') {
+    return res.status(403).json({ error: 'Session is saved as draft. Resume scanning first.' });
+  }
+
+  if (session.status !== 'active') {
     return res.status(404).json({ error: 'Session not found or inactive' });
   }
 
@@ -1310,6 +1381,8 @@ app.post('/api/session/:id/scan', async (req, res) => {
     SELECT id, session_id, upc, quantity, scanned_at, lookup_status, product_name, brand, image, source, exists_in_inventory
     FROM session_items WHERE session_id = ? AND upc = ?
   `).get(id, cleanUpc);
+
+  db.prepare("UPDATE scan_sessions SET expires_at = datetime('now', '+8 hours') WHERE session_id = ?").run(id);
 
   res.json({ success: true, item: updatedItem });
 });
