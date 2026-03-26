@@ -664,7 +664,7 @@ app.post('/api/auth/register', authLimiter, (req, res) => {
     }
     res.status(201).json({ message: 'Store registered successfully', store_id: storeId });
   } catch (err: any) {
-    console.error('[]', err);
+    console.error('[auth:register]', err);
     res.status(500).json({ error: 'An internal error occurred' });
   }
 });
@@ -1032,6 +1032,11 @@ app.post('/api/inventory', authenticateToken, requireOwner, (req: any, res) => {
   const { item_name, quantity, category_id, status, image, unit, sale_price, tax_percent, description, tag_names, upc } = req.body;
   const user = req.user;
 
+  if (!item_name || typeof item_name !== 'string' || item_name.trim().length === 0)
+    return res.status(400).json({ error: 'Item name is required' });
+  if (item_name.length > 500) return res.status(400).json({ error: 'Item name must be 500 characters or fewer' });
+  if (description && String(description).length > 2000) return res.status(400).json({ error: 'Description must be 2000 characters or fewer' });
+
   const existing = db.prepare('SELECT id FROM inventory WHERE item_name = ? AND store_id = ?').get(item_name, user.store_id);
   if (existing) {
     return res.status(409).json({ error: 'Item with this name already exists' });
@@ -1049,7 +1054,7 @@ app.post('/api/inventory', authenticateToken, requireOwner, (req: any, res) => {
 
     res.json({ id: info.lastInsertRowid });
   } catch (err: any) {
-    console.error('[]', err);
+    console.error('[inventory:create]', err);
     res.status(500).json({ error: 'An internal error occurred' });
   }
 });
@@ -1058,6 +1063,11 @@ app.put('/api/inventory/:id', authenticateToken, requireOwner, (req: any, res) =
   const { item_name, quantity, category_id, status, unit, sale_price, tax_percent, description, tag_names, image, upc } = req.body;
   const { id } = req.params;
   const user = req.user;
+
+  if (item_name !== undefined && (typeof item_name !== 'string' || item_name.length > 500))
+    return res.status(400).json({ error: 'Item name must be 500 characters or fewer' });
+  if (description !== undefined && String(description).length > 2000)
+    return res.status(400).json({ error: 'Description must be 2000 characters or fewer' });
 
   try {
     const savedImage = image ? saveBase64Image(image) : null;
@@ -1143,7 +1153,7 @@ app.post('/api/inventory/batch', authenticateToken, requireOwner, (req: any, res
       .run('BATCH', `Processed ${items.length} items`, user.id, user.store_id);
     res.json(results);
   } catch (err: any) {
-    console.error('[]', err);
+    console.error('[inventory:batch]', err);
     res.status(500).json({ error: 'An internal error occurred' });
   }
 });
@@ -1173,6 +1183,9 @@ app.get('/api/server-info', authenticateToken, (_req, res) => {
     tunnelUrl: tunnelUrl ?? null,
   });
 });
+
+const SESSION_STATUS = { ACTIVE: 'active', DRAFT: 'draft', COMPLETED: 'completed' } as const;
+type SessionStatus = typeof SESSION_STATUS[keyof typeof SESSION_STATUS];
 
 // C-4: Use CSPRNG for both session IDs and OTPs
 function generateOTP(length = 8): string {
@@ -1309,7 +1322,7 @@ app.patch('/api/session/:id/status', authenticateToken, (req: any, res: any) => 
 
   if (!session) return res.status(404).json({ error: 'Session not found' });
 
-  if (status === 'active') {
+  if (status === SESSION_STATUS.ACTIVE) {
     // Resume: reset expiry
     db.prepare(
       "UPDATE scan_sessions SET status = 'active', expires_at = datetime('now', '+8 hours') WHERE session_id = ?"
@@ -1328,7 +1341,7 @@ app.delete('/api/session/:id', authenticateToken, (req: any, res: any) => {
   const session = db.prepare('SELECT * FROM scan_sessions WHERE session_id = ? AND store_id = ?')
     .get(sessionId, req.user.store_id) as any;
   if (!session) return res.status(404).json({ error: 'Session not found' });
-  if (session.status === 'completed') return res.status(403).json({ error: 'Cannot delete a committed session.' });
+  if (session.status === SESSION_STATUS.COMPLETED) return res.status(403).json({ error: 'Cannot delete a committed session.' });
   // Only remove the session record — session_items kept as audit trail
   db.prepare('DELETE FROM scan_sessions WHERE session_id = ?').run(sessionId);
   res.json({ success: true });
@@ -1407,11 +1420,11 @@ app.post('/api/session/:id/scan', scanLimiter, async (req, res) => {
     return res.status(404).json({ error: 'Session not found or inactive' });
   }
 
-  if (session.status === 'draft') {
+  if (session.status === SESSION_STATUS.DRAFT) {
     return res.status(403).json({ error: 'Session is saved as draft. Resume scanning first.' });
   }
 
-  if (session.status !== 'active') {
+  if (session.status !== SESSION_STATUS.ACTIVE) {
     return res.status(404).json({ error: 'Session not found or inactive' });
   }
 
@@ -1858,7 +1871,7 @@ app.post('/api/inventory/batch-confirm', authenticateToken, requireOwner, expres
       .run('IMPORT', `Imported ${totalRows} rows across ${sheetsData.length} sheet(s): +${results.added} new, ~${results.updated} updated, ${results.skipped} skipped${skippedSummary}`, user.id, user.store_id);
     res.json(results);
   } catch (err: any) {
-    console.error('[]', err);
+    console.error('[inventory:batch-confirm]', err);
     res.status(500).json({ error: 'An internal error occurred' });
   }
 });

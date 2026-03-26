@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from 'react';
+import React, { Suspense, lazy } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Layout from './components/Layout';
@@ -11,11 +11,13 @@ import Login from './pages/Login';
 import Signup from './pages/Signup';
 import SuperAdmin from './pages/SuperAdmin';
 import Dashboard from './pages/Dashboard';
-import Scan from './pages/Scan';
-import Import from './pages/Import';
-import Logs from './pages/Logs';
 import MobileScan from './pages/MobileScan';
-import StoreSettings from './pages/StoreSettings';
+
+// Heavy pages — lazy-loaded so they don't bloat the initial bundle
+const Scan = lazy(() => import('./pages/Scan'));
+const Import = lazy(() => import('./pages/Import'));
+const Logs = lazy(() => import('./pages/Logs'));
+const StoreSettings = lazy(() => import('./pages/StoreSettings'));
 
 interface ErrorBoundaryState { hasError: boolean; error: Error | null; }
 
@@ -63,7 +65,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   if (!user) return <Navigate to="/login" />;
   if (user.role === 'superadmin') return <Navigate to="/admin" replace />;
 
-  return <Layout>{children}</Layout>;
+  return <Layout><Suspense fallback={<div className="flex items-center justify-center h-64 text-slate-400 text-sm">Loading...</div>}>{children}</Suspense></Layout>;
 }
 
 function AdminRoute({ children }: { children: React.ReactNode }) {
