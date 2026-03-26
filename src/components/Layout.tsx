@@ -107,21 +107,21 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
       <div className="flex-1 flex flex-col h-screen overflow-hidden">
         {/* Top Header */}
-        <header className="bg-white border-b border-slate-200 h-16 flex items-center justify-between px-4 md:px-8 shadow-sm z-20">
+        <header className="bg-navy-900 border-b border-navy-800 h-16 flex items-center justify-between px-4 md:px-8 z-20">
           <div className="flex items-center gap-4 md:hidden">
-            <div className="w-8 h-8 bg-navy-900 rounded-md flex items-center justify-center text-white font-bold">OC</div>
-            <h1 className="text-lg font-bold text-navy-900">OptiCapture</h1>
+            <div className="w-8 h-8 bg-white rounded-md flex items-center justify-center text-navy-900 font-bold">OC</div>
+            <h1 className="text-lg font-bold text-white">OptiCapture</h1>
           </div>
 
           {myStores && myStores.length > 1 ? (
             <div ref={storeSwitcherRef} className="relative">
               <button
                 onClick={() => setStoreSwitcherOpen(o => !o)}
-                className="hidden md:flex items-center gap-2 text-navy-900 font-medium bg-slate-100 px-4 py-2 rounded-full hover:bg-slate-200 transition-colors"
+                className="hidden md:flex items-center gap-2 text-white font-medium bg-navy-800 px-4 py-2 rounded-full hover:bg-navy-700 transition-colors"
               >
                 {user.store_logo
-                  ? <img src={user.store_logo} alt={user.store_name} className="w-7 h-7 rounded-full object-cover border border-slate-200" />
-                  : <Store size={18} className="text-slate-500" />
+                  ? <img src={user.store_logo} alt={user.store_name} className="w-7 h-7 rounded-full object-cover border border-navy-700" />
+                  : <Store size={18} className="text-slate-400" />
                 }
                 <span>{user.store_name}</span>
                 <ChevronDown size={14} className={cn("text-slate-400 transition-transform", storeSwitcherOpen && "rotate-180")} />
@@ -160,10 +160,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               )}
             </div>
           ) : (
-            <div className="hidden md:flex items-center gap-2 text-navy-900 font-medium bg-slate-100 px-4 py-2 rounded-full">
+            <div className="hidden md:flex items-center gap-2 text-white font-medium bg-navy-800 px-4 py-2 rounded-full">
               {user.store_logo
-                ? <img src={user.store_logo} alt={user.store_name} className="w-7 h-7 rounded-full object-cover border border-slate-200" />
-                : <Store size={18} className="text-slate-500" />
+                ? <img src={user.store_logo} alt={user.store_name} className="w-7 h-7 rounded-full object-cover border border-navy-700" />
+                : <Store size={18} className="text-slate-400" />
               }
               <span>{user.store_name}</span>
             </div>
@@ -171,16 +171,16 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
           <div className="flex items-center gap-4">
             <div className="md:hidden">
-              <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="p-2 text-navy-900">
+              <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="p-2 text-white">
                 {isMobileMenuOpen ? <X /> : <Menu />}
               </button>
             </div>
             <div className="hidden md:flex items-center gap-3">
               <div className="text-right">
-                <p className="text-sm font-bold text-navy-900">{user.username}</p>
-                <p className="text-xs text-slate-500 capitalize">{user.role}</p>
+                <p className="text-sm font-bold text-white">{user.username}</p>
+                <p className="text-xs text-slate-400 capitalize">{user.role}</p>
               </div>
-              <div className="w-10 h-10 rounded-full bg-navy-100 flex items-center justify-center text-navy-700 font-bold border border-navy-200">
+              <div className="w-10 h-10 rounded-full bg-navy-800 flex items-center justify-center text-white font-bold border border-navy-700">
                 {user.username[0].toUpperCase()}
               </div>
             </div>
