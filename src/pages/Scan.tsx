@@ -262,9 +262,12 @@ export default function Scan() {
         setSessionStatus('draft');
         setDraftAlert({ message: '', visible: false });
         addToast('success', 'Session saved as draft — scanning paused');
+      } else {
+        const err = await res.json().catch(() => ({}));
+        addToast('error', (err as any)?.error || 'Failed to save draft');
       }
     } catch {
-      addToast('error', 'Failed to save draft');
+      addToast('error', 'Failed to save draft — check your connection');
     }
   };
 
@@ -283,9 +286,12 @@ export default function Scan() {
         lastLongSessionAlertRef.current = null;
         setDraftAlert({ message: '', visible: false });
         addToast('success', 'Scanning resumed — phone can now scan again');
+      } else {
+        const err = await res.json().catch(() => ({}));
+        addToast('error', (err as any)?.error || 'Failed to resume scanning');
       }
     } catch {
-      addToast('error', 'Failed to resume scanning');
+      addToast('error', 'Failed to resume scanning — check your connection');
     }
   };
 
@@ -432,13 +438,18 @@ export default function Scan() {
       if (savedId && savedOtp) {
         // Try to resume the existing session
         try {
+          // Use /api/sessions/active to get real status from DB
+          const statusRes = await fetch('/api/sessions/active', { credentials: 'include' });
+          const activeSessions = statusRes.ok ? await statusRes.json() : [];
+          const match = activeSessions.find((s: any) => s.session_id === savedId);
+
           const res = await fetch(`/api/session/${savedId}`, { credentials: 'include' });
           if (res.ok) {
             const data = await res.json();
             // data is an array of session items — session still exists
             setSessionId(savedId);
             setOtp(savedOtp);
-            setSessionStatus('active');
+            setSessionStatus(match?.status ?? 'active');
             setItems(data);
             setUiStatus('ready');
             setStatusMessage('Session resumed. Scan the QR code with your phone.');
