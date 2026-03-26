@@ -47,6 +47,7 @@ interface ActiveSession {
   created_at: string;
   created_by: string;
   otp: string;
+  label: string | null;
 }
 
 const iconMap: Record<string, React.ElementType> = {
@@ -519,6 +520,9 @@ export default function Dashboard() {
                     </span>
                   </div>
                   <div>
+                    {s.label && (
+                      <p className="text-sm font-semibold text-slate-700 truncate" title={s.label}>{s.label}</p>
+                    )}
                     <p className="text-lg font-bold text-slate-900">{s.item_count} <span className="text-sm font-normal text-slate-500">{itemWord}</span></p>
                     <p className="text-xs text-slate-400">by {s.created_by} · {timeAgo}</p>
                   </div>

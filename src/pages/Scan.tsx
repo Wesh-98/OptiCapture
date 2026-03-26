@@ -18,6 +18,7 @@ import {
   CheckCircle2,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
+import { useAuth } from '../context/AuthContext';
 
 interface SessionItem {
   id: number;
@@ -92,14 +93,26 @@ function SourcePill({ source }: { source: string | null }) {
   );
 }
 
+function defaultDraftName(): string {
+  const now = new Date();
+  const day = now.toLocaleDateString('en-US', { weekday: 'short' });
+  const time = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  return `Scan · ${day} ${time}`;
+}
+
 export default function Scan() {
   const prefersReducedMotion = useReducedMotion();
   const [searchParams] = useSearchParams();
+  const { user } = useAuth();
+  const isTaker = user?.role === 'taker';
 
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [otp, setOtp] = useState<string | null>(null);
   const [items, setItems] = useState<SessionItem[]>([]);
   const [sessionStatus, setSessionStatus] = useState<'active' | 'draft' | null>(null);
+  const [sessionLabel, setSessionLabel] = useState<string | null>(null);
+  const [showDraftPopover, setShowDraftPopover] = useState(false);
+  const [draftNameInput, setDraftNameInput] = useState('');
   const [draftAlert, setDraftAlert] = useState<{ message: string; visible: boolean }>({ message: '', visible: false });
   const [existingDraft, setExistingDraft] = useState<{ session_id: string; item_count: number; status: string } | null>(null);
   const [serverInfo, setServerInfo] = useState<ServerInfo | null>(null);
@@ -271,6 +284,30 @@ export default function Scan() {
     }
   };
 
+  // Called from the named-draft popover — sends label along with status change
+  const handleConfirmDraft = async (label: string) => {
+    if (!sessionId) return;
+    setShowDraftPopover(false);
+    try {
+      const res = await fetch(`/api/session/${sessionId}/status`, {
+        method: 'PATCH', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'draft', label: label.trim() || null }),
+      });
+      if (res.ok) {
+        setSessionStatus('draft');
+        setSessionLabel(label.trim() || null);
+        setDraftAlert({ message: '', visible: false });
+        addToast('success', 'Session saved as draft — scanning paused');
+      } else {
+        const err = await res.json().catch(() => ({}));
+        addToast('error', (err as any)?.error || 'Failed to save draft');
+      }
+    } catch {
+      addToast('error', 'Failed to save draft — check your connection');
+    }
+  };
+
   const handleResumeScan = async () => {
     if (!sessionId) return;
     try {
@@ -421,6 +458,7 @@ export default function Scan() {
               setSessionId(found.session_id);
               setOtp(found.otp);
               setSessionStatus(found.status);
+              setSessionLabel(found.label ?? null);
               sessionStorage.setItem('scan_session_id', found.session_id);
               sessionStorage.setItem('scan_otp', found.otp);
               sessionStartTimeRef.current = Date.now();
@@ -450,6 +488,7 @@ export default function Scan() {
             setSessionId(savedId);
             setOtp(savedOtp);
             setSessionStatus(match?.status ?? 'active');
+            setSessionLabel(match?.label ?? null);
             setItems(data);
             setUiStatus('ready');
             setStatusMessage('Session resumed. Scan the QR code with your phone.');
@@ -661,6 +700,7 @@ export default function Scan() {
 
   return (
     <div className="space-y-6">
+      {showDraftPopover && <div className="fixed inset-0 z-20" onClick={() => setShowDraftPopover(false)} />}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h2 className="text-2xl font-bold text-navy-900">Live Scan Center</h2>
@@ -695,6 +735,7 @@ export default function Scan() {
                     setSessionId(found.session_id);
                     setOtp(found.otp);
                     setSessionStatus(found.status);
+                    setSessionLabel(found.label ?? null);
                     sessionStorage.setItem('scan_session_id', found.session_id);
                     sessionStorage.setItem('scan_otp', found.otp);
                     setExistingDraft(null);
@@ -887,7 +928,7 @@ export default function Scan() {
               </div>
             </div>
             <div className="flex items-center gap-2">
-              {selectedIds.size > 0 && (
+              {selectedIds.size > 0 && !isTaker && (
                 <button
                   onClick={openCommitModal}
                   disabled={uiStatus === 'committing'}
@@ -902,12 +943,42 @@ export default function Scan() {
                 </button>
               )}
               {sessionStatus === 'active' && items.length > 0 && (
-                <button
-                  onClick={handleSaveDraft}
-                  className="px-4 py-2 border border-slate-300 text-slate-600 rounded-xl text-sm font-semibold hover:bg-slate-50 transition-colors"
-                >
-                  Save as Draft
-                </button>
+                <div className="relative">
+                  <button
+                    onClick={() => { setDraftNameInput(sessionLabel ?? defaultDraftName()); setShowDraftPopover(true); }}
+                    className="px-4 py-2 border border-slate-300 text-slate-600 rounded-xl text-sm font-semibold hover:bg-slate-50 transition-colors"
+                  >
+                    Save as Draft
+                  </button>
+                  {showDraftPopover && (
+                    <div className="absolute right-0 top-full mt-2 z-30 bg-white border border-slate-200 rounded-xl shadow-lg p-3 w-64">
+                      <p className="text-xs font-semibold text-slate-600 mb-2">Name this draft (optional)</p>
+                      <input
+                        autoFocus
+                        type="text"
+                        value={draftNameInput}
+                        onChange={e => setDraftNameInput(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') handleConfirmDraft(draftNameInput); if (e.key === 'Escape') setShowDraftPopover(false); }}
+                        placeholder="e.g. Morning scan · Aisle 3"
+                        className="w-full px-3 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 mb-2"
+                      />
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handleConfirmDraft(draftNameInput)}
+                          className="flex-1 py-1.5 bg-amber-600 text-white rounded-lg text-xs font-semibold hover:bg-amber-700"
+                        >
+                          Save Draft
+                        </button>
+                        <button
+                          onClick={() => setShowDraftPopover(false)}
+                          className="px-3 py-1.5 border border-slate-200 text-slate-500 rounded-lg text-xs hover:bg-slate-50"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               )}
               {sessionStatus === 'draft' && (
                 <button
@@ -975,7 +1046,11 @@ export default function Scan() {
           {sessionStatus === 'draft' && (
             <div className="flex items-center gap-3 px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-800 mx-4">
               <span className="text-lg">🔒</span>
-              <span className="flex-1">Draft — scanning paused. Edit items below, then commit or resume scanning.</span>
+              <span className="flex-1">
+                {sessionLabel
+                  ? <><strong>{sessionLabel}</strong> — draft, scanning paused.</>
+                  : 'Draft — scanning paused. Edit items below, then commit or resume scanning.'}
+              </span>
               <button
                 onClick={handleResumeScan}
                 className="px-3 py-1.5 bg-amber-600 text-white rounded-lg text-xs font-semibold hover:bg-amber-700 shrink-0"
