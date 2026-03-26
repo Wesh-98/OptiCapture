@@ -114,7 +114,6 @@ export default function Scan() {
   const [showDraftPopover, setShowDraftPopover] = useState(false);
   const [draftNameInput, setDraftNameInput] = useState('');
   const [draftAlert, setDraftAlert] = useState<{ message: string; visible: boolean }>({ message: '', visible: false });
-  const [existingDraft, setExistingDraft] = useState<{ session_id: string; item_count: number; status: string } | null>(null);
   const [serverInfo, setServerInfo] = useState<ServerInfo | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
 
@@ -509,22 +508,10 @@ export default function Scan() {
         } catch {}
       }
 
-      // Before auto-creating, check for the current user's own existing sessions
-      try {
-        const sessionsRes = await fetch('/api/sessions/active', { credentials: 'include' });
-        if (sessionsRes.ok) {
-          const sessions = await sessionsRes.json();
-          // Only prompt to resume sessions this user created — not other takers' sessions
-          const mine = sessions.filter((s: any) => s.created_by === user?.username);
-          if (mine.length > 0) {
-            setExistingDraft(mine[0]);
-            setSessionLoading(false);
-            return;
-          }
-        }
-      } catch {}
-
-      // No existing sessions — auto-create
+      // No sessionStorage session on this device — auto-create a new one.
+      // Sessions from other devices (or other takers on the same login) remain
+      // visible on the Dashboard for the owner to review and commit — they are
+      // not surfaced here to avoid one phone hijacking another's session.
       createSession();
     })();
 
@@ -719,43 +706,6 @@ export default function Scan() {
         </button>
       </div>
 
-      {existingDraft && !sessionId && (
-        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-6 flex items-center justify-between">
-          <div>
-            <p className="font-semibold text-amber-900">Unfinished draft session</p>
-            <p className="text-sm text-amber-700 mt-0.5">{existingDraft.item_count} items scanned · {existingDraft.status === 'draft' ? 'Saved as draft' : 'Scanning in progress'}</p>
-          </div>
-          <div className="flex gap-2">
-            <button
-              onClick={async () => {
-                const res = await fetch('/api/sessions/active', { credentials: 'include' });
-                if (res.ok) {
-                  const sessions = await res.json();
-                  const found = sessions.find((s: any) => s.session_id === existingDraft.session_id);
-                  if (found) {
-                    setSessionId(found.session_id);
-                    setOtp(found.otp);
-                    setSessionStatus(found.status);
-                    setSessionLabel(found.label ?? null);
-                    sessionStorage.setItem('scan_session_id', found.session_id);
-                    sessionStorage.setItem('scan_otp', found.otp);
-                    setExistingDraft(null);
-                  }
-                }
-              }}
-              className="px-4 py-2 bg-amber-600 text-white rounded-xl text-sm font-semibold hover:bg-amber-700"
-            >
-              Resume Draft
-            </button>
-            <button
-              onClick={() => { setExistingDraft(null); createSession(); }}
-              className="px-4 py-2 border border-slate-300 text-slate-700 rounded-xl text-sm font-semibold hover:bg-slate-50"
-            >
-              Start New
-            </button>
-          </div>
-        </div>
-      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Scanner Panel */}
