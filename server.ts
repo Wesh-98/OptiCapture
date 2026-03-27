@@ -734,6 +734,28 @@ app.delete('/api/admin/stores/:id/users/:userId', authenticateToken, (req: any, 
   res.json({ ok: true });
 });
 
+// Super admin — delete store + all associated data
+app.delete('/api/admin/stores/:id', authenticateToken, (req: any, res) => {
+  if (req.user.role !== 'superadmin') return res.status(403).json({ error: 'Forbidden' });
+  const storeId = Number(req.params.id);
+  const store = db.prepare('SELECT id, name FROM stores WHERE id = ?').get(storeId) as any;
+  if (!store) return res.status(404).json({ error: 'Store not found' });
+
+  db.transaction(() => {
+    // Delete in dependency order
+    db.prepare(`DELETE FROM session_items WHERE session_id IN (SELECT session_id FROM scan_sessions WHERE store_id = ?)`).run(storeId);
+    db.prepare(`DELETE FROM scan_sessions WHERE store_id = ?`).run(storeId);
+    db.prepare(`DELETE FROM inventory WHERE store_id = ?`).run(storeId);
+    db.prepare(`DELETE FROM categories WHERE store_id = ?`).run(storeId);
+    db.prepare(`DELETE FROM logs WHERE store_id = ?`).run(storeId);
+    db.prepare(`DELETE FROM user_stores WHERE store_id = ?`).run(storeId);
+    db.prepare(`DELETE FROM users WHERE store_id = ?`).run(storeId);
+    db.prepare(`DELETE FROM stores WHERE id = ?`).run(storeId);
+  })();
+
+  res.json({ ok: true, deleted: store.name });
+});
+
 // Super admin — edit store details
 app.put('/api/admin/stores/:id', authenticateToken, (req: any, res) => {
   if (req.user.role !== 'superadmin') return res.status(403).json({ error: 'Forbidden' });
