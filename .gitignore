@@ -7,5 +7,14 @@ coverage/
 .env*
 !.env.example
 opticapture.db
+opticapture.db-shm
+opticapture.db-wal
 .tunnel-url
 uploads/
+
+# TLS certificates (local dev only)
+*.pem
+
+# Local planning / docs not for the repo
+goal/
+.claude/
