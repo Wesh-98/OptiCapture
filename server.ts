@@ -1072,7 +1072,7 @@ app.post('/api/inventory', authenticateToken, requireOwner, (req: any, res) => {
     `).run(item_name, quantity, category_id, status, savedImage, unit, sale_price, tax_percent, description, tag_names, upc || null, user.store_id);
 
     db.prepare('INSERT INTO logs (action, details, user_id, store_id) VALUES (?, ?, ?, ?)')
-      .run('CREATE', `Added item "${item_name}"`, user.id, user.store_id);
+      .run('CREATE', `Added item "${item_name}"${description ? ` — ${description}` : ''}`, user.id, user.store_id);
 
     res.json({ id: info.lastInsertRowid });
   } catch (err: any) {
@@ -1102,7 +1102,7 @@ app.put('/api/inventory/:id', authenticateToken, requireOwner, (req: any, res) =
     `).run(item_name, quantity, category_id, status, unit, sale_price, tax_percent, description, tag_names, savedImage, upc || null, id, user.store_id);
 
     db.prepare('INSERT INTO logs (action, details, user_id, store_id) VALUES (?, ?, ?, ?)')
-      .run('UPDATE', `Updated item "${item_name}"`, user.id, user.store_id);
+      .run('UPDATE', `Updated item "${item_name}"${description ? ` — ${description}` : ''}`, user.id, user.store_id);
 
     // Invalidate UPC cache so mobile scanners see the updated product name immediately
     const effectiveUpc = upc || (db.prepare('SELECT upc FROM inventory WHERE id = ? AND store_id = ?').get(id, user.store_id) as any)?.upc;
@@ -1119,10 +1119,10 @@ app.delete('/api/inventory/:id', authenticateToken, requireOwner, (req: any, res
   const { id } = req.params;
   const user = req.user;
 
-  const deletedItem = db.prepare('SELECT item_name FROM inventory WHERE id = ? AND store_id = ?').get(id, user.store_id) as any;
+  const deletedItem = db.prepare('SELECT item_name, description FROM inventory WHERE id = ? AND store_id = ?').get(id, user.store_id) as any;
   db.prepare('DELETE FROM inventory WHERE id = ? AND store_id = ?').run(id, user.store_id);
   db.prepare('INSERT INTO logs (action, details, user_id, store_id) VALUES (?, ?, ?, ?)')
-    .run('DELETE', `Deleted item "${deletedItem?.item_name ?? id}"`, user.id, user.store_id);
+    .run('DELETE', `Deleted item "${deletedItem?.item_name ?? id}"${deletedItem?.description ? ` — ${deletedItem.description}` : ''}`, user.id, user.store_id);
 
   res.json({ success: true });
 });
