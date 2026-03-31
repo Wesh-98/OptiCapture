@@ -1102,7 +1102,7 @@ app.put('/api/inventory/:id', authenticateToken, requireOwner, (req: any, res) =
     `).run(item_name, quantity, category_id, status, unit, sale_price, tax_percent, description, tag_names, savedImage, upc || null, id, user.store_id);
 
     db.prepare('INSERT INTO logs (action, details, user_id, store_id) VALUES (?, ?, ?, ?)')
-      .run('UPDATE', `Updated item "${item_name}" (id: ${id})`, user.id, user.store_id);
+      .run('UPDATE', `Updated item "${item_name}"`, user.id, user.store_id);
 
     // Invalidate UPC cache so mobile scanners see the updated product name immediately
     const effectiveUpc = upc || (db.prepare('SELECT upc FROM inventory WHERE id = ? AND store_id = ?').get(id, user.store_id) as any)?.upc;
