@@ -664,6 +664,19 @@ export default function Dashboard() {
                 </button>
               </>
             )}
+            {viewMode === 'items' && isOwner && (
+              <button
+                onClick={() => {
+                  setFormData({ ...emptyForm, category_id: String(selectedCategory?.id ?? '') });
+                  setIsAddModalOpen(true);
+                }}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 bg-navy-900 hover:bg-navy-800 rounded-lg text-xs font-medium text-white transition-colors whitespace-nowrap"
+              >
+                <Plus size={13} />
+                <span className="hidden sm:inline">Add Item</span>
+                <span className="sm:hidden">Add</span>
+              </button>
+            )}
             <div className="relative w-36 sm:w-48 md:w-56">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
               <input
