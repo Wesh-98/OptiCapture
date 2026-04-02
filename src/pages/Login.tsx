@@ -2,13 +2,14 @@ import React, { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { motion, useReducedMotion } from 'motion/react';
-import { Lock, User, BarChart3, Smartphone, Layers } from 'lucide-react';
+import { Lock, User, BarChart3, Smartphone, Layers, Hash } from 'lucide-react';
 
 export default function Login() {
   const prefersReducedMotion = useReducedMotion();
 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [storeCode, setStoreCode] = useState('');
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { login } = useAuth();
@@ -29,7 +30,7 @@ export default function Login() {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ username, password, store_code: storeCode.trim().toUpperCase() || undefined }),
       });
       if (res.ok) {
         const user = await res.json();
@@ -105,6 +106,25 @@ export default function Login() {
             )}
 
             <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                  Store Code
+                  <span className="ml-1.5 text-slate-400 font-normal text-xs">(leave blank for superadmin)</span>
+                </label>
+                <div className="relative">
+                  <Hash className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} />
+                  <input
+                    type="text"
+                    value={storeCode}
+                    onChange={e => setStoreCode(e.target.value.toUpperCase())}
+                    className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-navy-700 focus:border-navy-700 transition-all text-sm font-mono tracking-widest uppercase"
+                    placeholder="e.g. A3K9MZ"
+                    maxLength={6}
+                    autoComplete="off"
+                  />
+                </div>
+              </div>
+
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1.5">Username</label>
                 <div className="relative">
