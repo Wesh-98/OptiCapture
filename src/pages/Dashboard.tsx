@@ -803,10 +803,11 @@ export default function Dashboard() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {categories.filter(c => c.name.toLowerCase().includes(search.toLowerCase())).map((cat) => {
+                {categories.filter(c => c.name.toLowerCase().includes(search.toLowerCase())).map((cat, idx, arr) => {
                   const isImageIcon = cat.icon?.startsWith('/') || cat.icon?.startsWith('http');
                   const CategoryIcon = !isImageIcon ? (iconMap[cat.icon] ?? Package) : Package;
                   const isInactive = cat.status !== 'Active';
+                  const dropUp = idx >= arr.length - 2;
                   return (
                   <tr key={cat.id} className={cn(
                     'transition-colors group',
@@ -850,7 +851,7 @@ export default function Dashboard() {
                       </button>
 
                       {activeActionMenu === cat.id && (
-                        <div className="absolute right-0 top-full mt-1 w-52 bg-white rounded-lg shadow-xl border border-slate-100 z-20 py-1 text-left">
+                        <div className={cn("absolute right-0 w-52 bg-white rounded-lg shadow-xl border border-slate-100 z-20 py-1 text-left", dropUp ? "bottom-full mb-1" : "top-full mt-1")}>
                           {/* View Items — always visible */}
                           <button className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2"
                             onClick={() => { setSelectedCategory(cat); setViewMode('items'); setActiveActionMenu(null); fetchItems(cat.id); }}>
