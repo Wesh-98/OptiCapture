@@ -1005,12 +1005,16 @@ app.get('/api/inventory/export', authenticateToken, requireOwner, async (req: an
   }
 
   if (fmt === 'csv') {
-    // Force-quote every value so leading-zero UPCs and numeric strings survive Excel import
     const csvCell = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const csv = [COLS.map(csvCell).join(','), ...rows.map(r => COLS.map(c => csvCell(r[c])).join(','))].join('\n');
+    const CSV_COLS = ['item_name','description','quantity','unit','sale_price','tax_percent','upc','number','tag_names','status','created_at'];
+    const lines: string[] = [CSV_COLS.map(csvCell).join(',')];
+    for (const [cat, items] of Object.entries(grouped)) {
+      lines.push(`"### ${cat}"`);
+      for (const r of items) lines.push(CSV_COLS.map(c => csvCell(r[c])).join(','));
+    }
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}.csv"`);
-    return res.send(csv);
+    return res.send(lines.join('\n'));
   }
 
   if (fmt === 'json') {

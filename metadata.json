@@ -1,5 +1,0 @@
-{
-  "name": "OptiCapture",
-  "description": "A professional inventory management system for convenience stores with mobile scanning and conflict detection.",
-  "requestFramePermissions": ["camera"]
-}

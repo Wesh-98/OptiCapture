@@ -237,29 +237,6 @@
   .fc-node rect { rx: 8; ry: 8; }
   text { font-family: 'Segoe UI', system-ui, sans-serif; }
 
-  /* ── Pricing ── */
-  .pricing-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
-    gap: 16px;
-    margin: 20px 0;
-  }
-  .pricing-card {
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 20px;
-    text-align: center;
-  }
-  .pricing-card.featured {
-    border-color: var(--navy);
-    background: var(--navy-pale);
-  }
-  .pricing-card .tier { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--slate); margin-bottom: 8px; }
-  .pricing-card .price { font-size: 28px; font-weight: 800; color: var(--navy); }
-  .pricing-card .price span { font-size: 13px; font-weight: 400; color: var(--slate); }
-  .pricing-card ul { list-style: none; margin-top: 14px; text-align: left; font-size: 12px; color: var(--slate); }
-  .pricing-card ul li { padding: 4px 0; border-bottom: 1px solid var(--border); }
-  .pricing-card ul li::before { content: "✓ "; color: var(--emerald); font-weight: 700; }
 
   /* ── Improvements ── */
   .improvements { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 16px 0; }
@@ -773,68 +750,6 @@
   </div>
 </div>
 
-<!-- ═══════════════════════════════════════════ PAGE 7 — PRICING ═══ -->
-<div class="page">
-
-  <div class="section-label">08 — Business Model</div>
-  <h2>Pricing &amp; Tiers</h2>
-  <div class="divider"></div>
-  <p>OptiCapture is offered as a monthly SaaS subscription. All tiers include core scanning, drafts, and inventory management. Higher tiers unlock integrations, premium lookups, and enterprise support.</p>
-
-  <div class="pricing-grid">
-    <div class="pricing-card">
-      <div class="tier">Starter</div>
-      <div class="price">$0 <span>/ month</span></div>
-      <ul>
-        <li>1 store location</li>
-        <li>Up to 2 taker accounts</li>
-        <li>Mobile barcode scanning</li>
-        <li>Draft sessions</li>
-        <li>Excel import / export</li>
-        <li>Basic product lookup</li>
-        <li>Community support</li>
-      </ul>
-    </div>
-    <div class="pricing-card featured">
-      <div class="tier">Professional</div>
-      <div class="price">$49 <span>/ month</span></div>
-      <ul>
-        <li>1 store location</li>
-        <li>Unlimited taker accounts</li>
-        <li>Everything in Starter</li>
-        <li>Premium product lookup API</li>
-        <li>API access + webhooks</li>
-        <li>QuickBooks / Xero sync</li>
-        <li>Low stock alerts</li>
-        <li>Priority support</li>
-      </ul>
-    </div>
-    <div class="pricing-card">
-      <div class="tier">Enterprise</div>
-      <div class="price">$199 <span>/ month</span></div>
-      <ul>
-        <li>Multiple locations</li>
-        <li>Unlimited everything</li>
-        <li>Everything in Professional</li>
-        <li>POS connector (Square etc.)</li>
-        <li>Zapier integration</li>
-        <li>Multi-location dashboard</li>
-        <li>Custom onboarding</li>
-        <li>Dedicated support</li>
-      </ul>
-    </div>
-  </div>
-
-  <div class="highlight-box" style="margin-top:30px;">
-    <p>For businesses currently paying $200–$400/month for legacy inventory systems like Petrosoft, OptiCapture's Professional tier delivers equal or greater capability at a fraction of the cost — with a modern mobile-first experience built for the way staff actually work.</p>
-  </div>
-
-  <div style="margin-top:40px; padding:24px; background:#f8fafc; border-radius:12px; border:1px solid var(--border);">
-    <h3 style="margin-top:0; margin-bottom:12px;">Summary</h3>
-    <p style="margin-bottom:8px;">OptiCapture replaces a slow, error-prone manual process with a fast, accurate, mobile-driven workflow that any business can adopt incrementally — starting with a simple CSV import and growing into full API-driven integration with POS, accounting, and e-commerce systems.</p>
-    <p style="margin:0;">The result: fewer counting errors, faster inventory cycles, a full audit trail, and a platform that grows with the business rather than holding it back.</p>
-  </div>
-</div>
 
 <div class="footer">
   OptiCapture — Internal Project Brief — March 2026 &nbsp;·&nbsp; Confidential — For Management Review Only
