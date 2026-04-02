@@ -997,6 +997,13 @@ app.get('/api/inventory/export', authenticateToken, requireOwner, async (req: an
   const filename = `inventory-${Date.now()}`;
   const COLS = ['item_name','description','quantity','unit','sale_price','tax_percent','upc','number','tag_names','status','category','created_at'];
 
+  // Group rows by category — shared across xlsx and pdf
+  const grouped: Record<string, any[]> = {};
+  for (const r of rows) {
+    const cat = r.category || 'Uncategorized';
+    (grouped[cat] ??= []).push(r);
+  }
+
   if (fmt === 'csv') {
     // Force-quote every value so leading-zero UPCs and numeric strings survive Excel import
     const csvCell = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
@@ -1022,12 +1029,7 @@ app.get('/api/inventory/export', authenticateToken, requireOwner, async (req: an
     doc.fontSize(10).font('Helvetica').fillColor('#666')
       .text(`Generated: ${new Date().toLocaleString()}   |   Total items: ${rows.length}`, { align: 'center' });
     doc.moveDown(1.5);
-    const grouped = rows.reduce((acc: any, r: any) => {
-      const cat = r.category || 'Uncategorized';
-      (acc[cat] ??= []).push(r);
-      return acc;
-    }, {});
-    for (const [cat, items] of Object.entries(grouped) as [string, any[]][]) {
+    for (const [cat, items] of Object.entries(grouped)) {
       doc.fontSize(12).font('Helvetica-Bold').fillColor('#0a192f').text(cat);
       doc.moveDown(0.3);
       for (const item of items) {
@@ -1040,10 +1042,16 @@ app.get('/api/inventory/export', authenticateToken, requireOwner, async (req: an
     return;
   }
 
-  // Default: xlsx — reuse imported xlsxUtils
-  const ws = xlsxUtils.json_to_sheet(rows);
+  // xlsx — one sheet per category, sheet name = category name
+  const XLSX_COLS = ['item_name','description','quantity','unit','sale_price','tax_percent','upc','number','tag_names','status','created_at'];
   const wb = xlsxUtils.book_new();
-  xlsxUtils.book_append_sheet(wb, ws, 'Inventory');
+  for (const [cat, items] of Object.entries(grouped)) {
+    const sheetRows = items.map(r => Object.fromEntries(XLSX_COLS.map(c => [c, r[c] ?? ''])));
+    const ws = xlsxUtils.json_to_sheet(sheetRows, { header: XLSX_COLS });
+    // Excel sheet names: max 31 chars, strip invalid characters [ ] : * ? / \
+    const sheetName = cat.replace(/[\[\]:*?/\\]/g, '').slice(0, 31);
+    xlsxUtils.book_append_sheet(wb, ws, sheetName);
+  }
   const buf = xlsxWrite(wb, { type: 'buffer', bookType: 'xlsx' });
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}.xlsx"`);
