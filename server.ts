@@ -390,28 +390,34 @@ runMigration(9, () => {
 // Migration 10: recreate users table with UNIQUE(username, store_id) instead of UNIQUE(username)
 // This enables store-scoped usernames — two different stores can now have a user called "admin"
 runMigration(10, () => {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS users_new (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      username TEXT NOT NULL,
-      password TEXT,
-      role TEXT NOT NULL DEFAULT 'owner',
-      store_id INTEGER,
-      store_name TEXT,
-      email TEXT,
-      oauth_provider TEXT,
-      oauth_id TEXT,
-      failed_login_attempts INTEGER DEFAULT 0,
-      locked_until DATETIME,
-      UNIQUE(username, store_id)
-    );
-    INSERT OR IGNORE INTO users_new
-      SELECT id, username, password, role, store_id, store_name, email,
-             oauth_provider, oauth_id, failed_login_attempts, locked_until
-      FROM users;
-    DROP TABLE users;
-    ALTER TABLE users_new RENAME TO users;
-  `);
+  // Disable FK enforcement so DROP TABLE users isn't blocked by user_stores referencing it
+  db.exec('PRAGMA foreign_keys = OFF');
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS users_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT NOT NULL,
+        password TEXT,
+        role TEXT NOT NULL DEFAULT 'owner',
+        store_id INTEGER,
+        store_name TEXT,
+        email TEXT,
+        oauth_provider TEXT,
+        oauth_id TEXT,
+        failed_login_attempts INTEGER DEFAULT 0,
+        locked_until DATETIME,
+        UNIQUE(username, store_id)
+      );
+      INSERT OR IGNORE INTO users_new
+        SELECT id, username, password, role, store_id, store_name, email,
+               oauth_provider, oauth_id, failed_login_attempts, locked_until
+        FROM users;
+      DROP TABLE users;
+      ALTER TABLE users_new RENAME TO users;
+    `);
+  } finally {
+    db.exec('PRAGMA foreign_keys = ON');
+  }
 });
 
 db.prepare(`
