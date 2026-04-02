@@ -32,11 +32,12 @@ OptiCapture is a **retail inventory management system** built for small to mid-s
 
 **Key capabilities:**
 - Multi-store, multi-role user model (owner / taker / superadmin)
+- **Store-scoped login** — each store has a unique 6-char code; usernames are per-store, not global
 - OTP-gated mobile scan sessions (no mobile login required)
 - Real-time polling with async UPC product lookup
 - Named draft sessions — pause, rename, resume, hand off between staff
 - Batch inventory import via XLSX / CSV / JSON with column mapping
-- Export to XLSX, CSV, JSON, PDF
+- Export to XLSX (per-category sheets), CSV (grouped), JSON, PDF
 - Google OAuth with email auto-link guard
 - Superadmin panel for full multi-tenant management
 
@@ -185,6 +186,7 @@ id INTEGER PRIMARY KEY AUTOINCREMENT
 name TEXT NOT NULL
 plan_tier TEXT DEFAULT 'starter'      -- starter | professional | internal
 status TEXT DEFAULT 'active'          -- active | suspended
+store_code TEXT UNIQUE                -- 6-char CSPRNG code used at login (Migration 9)
 street, zipcode, state, address
 logo TEXT                             -- base64 or URL
 phone, email
@@ -194,7 +196,7 @@ created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 #### `users`
 ```sql
 id INTEGER PRIMARY KEY AUTOINCREMENT
-username TEXT UNIQUE NOT NULL
+username TEXT NOT NULL                -- NOT globally unique; scoped to store (Migration 10)
 password TEXT                         -- bcrypt hash; NULL for pure-OAuth accounts
 role TEXT NOT NULL                    -- owner | taker | superadmin
 store_id INTEGER                      -- primary store; 0 for superadmin
@@ -204,6 +206,7 @@ oauth_provider TEXT                   -- 'google' or NULL
 oauth_id TEXT                         -- UNIQUE (provider, id) pair
 failed_login_attempts INTEGER DEFAULT 0
 locked_until DATETIME
+UNIQUE(username, store_id)            -- two stores can share the same username
 ```
 
 #### `user_stores`
@@ -314,17 +317,43 @@ runMigration(7, () => {
 });
 ```
 
-8 migrations defined at server startup. New columns are added via `ALTER TABLE ... ADD COLUMN`.
+10 migrations defined at server startup. New columns via `ALTER TABLE ... ADD COLUMN`; breaking changes via table recreation with FK enforcement temporarily disabled (`PRAGMA foreign_keys = OFF / ON`).
 
 ---
 
 ## 7. Authentication & Authorization
 
+### Store Code Login
+
+Every store has a unique 6-character alphanumeric code (`store_code`) generated at registration using CSPRNG from the same unambiguous charset as OTPs (`ABCDEFGHJKLMNPQRSTUVWXYZ23456789`).
+
+**Login flow:**
+
+| User type | Fields required |
+|-----------|----------------|
+| Owner / Taker | Store Code + Username + Password |
+| Superadmin | Username + Password (no store code) |
+
+```
+POST /api/auth/login  { store_code, username, password }
+
+If store_code provided:
+  → find store WHERE store_code = ?
+  → find user WHERE username = ? AND store_id = store.id
+  → verify bcrypt password
+
+If no store_code:
+  → find user WHERE username = ? AND role = 'superadmin'
+  → verify bcrypt password
+```
+
+Store codes are visible in **Store Settings** (blurred by default, reveal with "View Code" button) and in the **SuperAdmin** panel. Owners share their code with staff so they can log in.
+
 ### JWT Flow
 
 ```
 POST /api/auth/login
-  → validate credentials / OAuth token
+  → validate credentials via store-scoped lookup
   → issueJwt(user)  →  Set-Cookie: token=<jwt>; httpOnly; secure; sameSite
   → return user object (no token in body)
 
@@ -653,6 +682,15 @@ POST /api/inventory/batch-confirm  (express.json 50MB limit)
 
 Each Excel sheet maps to one category. If the sheet name matches an existing category, items go there. Otherwise a new category is created. This matches the common workflow where a buyer organizes spreadsheets by product type.
 
+### Export Format Behaviour
+
+| Format | Structure |
+|--------|-----------|
+| **XLSX** | One sheet per category — sheet name = category name (max 31 chars, invalid chars stripped) |
+| **CSV** | Single file; `### Category Name` header rows separate groups |
+| **JSON** | Flat array with `category` field on each item |
+| **PDF** | Grouped by category with bold section headers |
+
 ### Google Drive Image Normalization
 
 Import accepts Google Drive sharing URLs. The server extracts the file ID via regex and converts to the thumbnail API format:
@@ -682,6 +720,8 @@ https://drive.google.com/file/d/{FILE_ID}/view
 | OAuth account takeover | Auto-link only if `email_verified` AND target account has no password |
 | Brute-force login | Account lockout after 5 attempts (15-min lock) + auth rate limit |
 | OTP brute-force | 5-strike session lockout + scan rate limit |
+| Credential sharing across stores | Store-scoped usernames — login requires Store Code + Username + Password |
+| Store code shoulder-surfing | Store code blurred by default in Settings; reveal requires explicit click |
 | SQL injection | Prepared statements throughout (better-sqlite3) |
 | XSS via image upload | MIME type whitelist: JPEG, PNG, GIF, WebP only — SVG/PHP rejected |
 | Cross-store data leakage | All queries filtered by `req.user.store_id` from JWT |
@@ -692,6 +732,10 @@ https://drive.google.com/file/d/{FILE_ID}/view
 **JWT in httpOnly cookie, not localStorage** — prevents XSS from reading the token.
 
 **OTP scoped to session, not to user** — mobile clients don't need an account. The OTP is the only credential they present. Its short life (8 hours) and high entropy (2^40) make it safe for this use case.
+
+**Store code blurred by default** — Store Settings page renders the code with `filter: blur(8px)`. Staff must click "View Code" to reveal it, preventing shoulder-surfing. Copy button works regardless of blur state.
+
+**Log details include item names, not IDs** — CREATE / UPDATE / DELETE audit entries record the full `item_name` string. Item IDs are stored in the DB but not surfaced in the UI to reduce information leakage.
 
 **SQLite single-file DB** — acceptable at the current scale (one store = hundreds to low thousands of items). WAL mode allows concurrent reads while a write is in progress, which matters during multi-phone scan sessions.
 
@@ -759,4 +803,4 @@ When onboarding, read these in order:
 
 ---
 
-*Last updated: 2026-03-31*
+*Last updated: 2026-04-01*
