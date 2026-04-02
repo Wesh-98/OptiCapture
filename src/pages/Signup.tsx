@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, useReducedMotion } from 'motion/react';
-import { Lock, User, Store, Phone, Mail, MapPin, BarChart3, Smartphone, Layers, AlertTriangle } from 'lucide-react';
+import { Lock, User, Store, Phone, Mail, MapPin, BarChart3, Smartphone, Layers, AlertTriangle, Copy, Check } from 'lucide-react';
 import { US_STATES } from '../lib/constants';
 
 // Validation functions
@@ -30,6 +30,8 @@ export default function Signup() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isGooglePrefilled, setIsGooglePrefilled] = useState(false);
+  const [registeredCode, setRegisteredCode] = useState<string | null>(null);
+  const [codeCopied, setCodeCopied] = useState(false);
 
   // Pre-fill from Google OAuth pending session
   useEffect(() => {
@@ -81,7 +83,7 @@ export default function Signup() {
         if (data.redirect) {
           navigate(data.redirect); // OAuth signup — already logged in
         } else {
-          navigate('/login?registered=1');
+          setRegisteredCode(data.store_code);
         }
       } else {
         setError(data.error || 'Registration failed');
@@ -132,13 +134,49 @@ export default function Signup() {
           animate={prefersReducedMotion ? {} : { opacity: 1, y: 0 }}
           className="w-full max-w-lg py-8"
         >
+          {/* Store code success screen */}
+          {registeredCode && (
+            <div className="bg-white rounded-2xl shadow-xl border border-slate-200 p-8 text-center">
+              <div className="w-16 h-16 rounded-full bg-emerald-100 flex items-center justify-center mx-auto mb-4">
+                <Check size={32} className="text-emerald-600" />
+              </div>
+              <h2 className="text-2xl font-bold text-slate-900 mb-1">Store Created!</h2>
+              <p className="text-slate-500 text-sm mb-6">Save your store code — you'll need it every time you log in.</p>
+
+              <div className="bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl p-5 mb-6">
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-2">Your Store Code</p>
+                <p className="text-4xl font-mono font-bold tracking-[0.3em] text-navy-900">{registeredCode}</p>
+              </div>
+
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(registeredCode);
+                  setCodeCopied(true);
+                  setTimeout(() => setCodeCopied(false), 2000);
+                }}
+                className="flex items-center gap-2 mx-auto mb-6 px-4 py-2 bg-slate-100 hover:bg-slate-200 rounded-lg text-sm font-medium text-slate-700 transition-colors"
+              >
+                {codeCopied ? <><Check size={15} className="text-emerald-600" /> Copied!</> : <><Copy size={15} /> Copy Code</>}
+              </button>
+
+              <p className="text-xs text-slate-400 mb-6">Share this code with your staff so they can log in to your store.</p>
+
+              <button
+                onClick={() => navigate('/login')}
+                className="w-full py-2.5 rounded-xl font-semibold text-white bg-navy-900 hover:bg-navy-800 transition-colors text-sm"
+              >
+                Continue to Login
+              </button>
+            </div>
+          )}
+
           {/* Mobile logo */}
-          <div className="lg:hidden text-center mb-8">
+          {!registeredCode && <div className="lg:hidden text-center mb-8">
             <h1 className="text-3xl font-bold tracking-tight text-navy-900">OptiCapture</h1>
             <p className="text-slate-500 mt-1">Create your store account</p>
-          </div>
+          </div>}
 
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
+          {!registeredCode && <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
             <div className="mb-6">
               <h2 className="text-2xl font-bold text-slate-900">Create your store</h2>
               <p className="text-slate-500 mt-1 text-sm">Get started with OptiCapture in minutes</p>
@@ -287,7 +325,7 @@ export default function Signup() {
                 Sign in
               </Link>
             </p>
-          </div>
+          </div>}
         </motion.div>
       </div>
     </div>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Loader2, CheckCircle, Store, Lock, AlertTriangle, EyeOff } from 'lucide-react';
+import { Loader2, CheckCircle, Store, Lock, AlertTriangle, EyeOff, Hash, Copy, Check } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 const validateZipcode = (v: string) => !v || /^\d{5}(-\d{4})?$/.test(v);
@@ -43,6 +43,8 @@ export default function StoreSettings() {
   const [storeError, setStoreError] = useState('');
   const [passwordError, setPasswordError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [storeCode, setStoreCode] = useState('');
+  const [codeCopied, setCodeCopied] = useState(false);
 
   const fetchStoreSettings = useCallback(async () => {
     try {
@@ -58,6 +60,7 @@ export default function StoreSettings() {
           email: data.email || '',
           logo: data.logo || '',
         });
+        setStoreCode(data.store_code || '');
       }
     } catch (error) {
       console.error('Error fetching store settings:', error);
@@ -181,6 +184,36 @@ export default function StoreSettings() {
         <h1 className="text-2xl font-bold text-navy-900">Store Settings</h1>
         <p className="text-slate-500 mt-1">Manage your store profile, branding and account security</p>
       </div>
+
+      {/* Store Code — read-only reference for login */}
+      {storeCode && (
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-9 h-9 rounded-lg bg-navy-50 flex items-center justify-center">
+              <Hash size={18} className="text-navy-700" />
+            </div>
+            <div>
+              <h2 className="text-base font-bold text-navy-900">Store Code</h2>
+              <p className="text-xs text-slate-500">Share this code with staff so they can log in to your store</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="flex-1 flex items-center gap-3 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl">
+              <span className="text-2xl font-mono font-bold tracking-[0.25em] text-navy-900">{storeCode}</span>
+            </div>
+            <button
+              onClick={() => {
+                navigator.clipboard.writeText(storeCode);
+                setCodeCopied(true);
+                setTimeout(() => setCodeCopied(false), 2000);
+              }}
+              className="flex items-center gap-1.5 px-4 py-3 bg-slate-100 hover:bg-slate-200 rounded-xl text-sm font-medium text-slate-700 transition-colors whitespace-nowrap"
+            >
+              {codeCopied ? <><Check size={15} className="text-emerald-600" /> Copied!</> : <><Copy size={15} /> Copy</>}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Store Information Section */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">

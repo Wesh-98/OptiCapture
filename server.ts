@@ -361,6 +361,59 @@ runMigration(8, () => {
     WHERE expires_at IS NULL AND status IN ('active', 'draft')
   `).run();
 });
+
+// Migration 9: add store_code to stores — unique 6-char code used at login
+runMigration(9, () => {
+  const cols = (db.prepare('PRAGMA table_info(stores)').all() as any[]).map((c: any) => c.name);
+  if (!cols.includes('store_code')) {
+    db.prepare('ALTER TABLE stores ADD COLUMN store_code TEXT DEFAULT NULL').run();
+    // Backfill existing stores with unique codes
+    const stores = db.prepare('SELECT id FROM stores').all() as any[];
+    const usedCodes = new Set<string>();
+    const genUnique = () => {
+      const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+      let code = '';
+      do {
+        const bytes = randomBytes(6);
+        code = '';
+        for (let i = 0; i < 6; i++) code += chars[bytes[i] % chars.length];
+      } while (usedCodes.has(code));
+      usedCodes.add(code);
+      return code;
+    };
+    const upd = db.prepare('UPDATE stores SET store_code = ? WHERE id = ?');
+    for (const s of stores) upd.run(genUnique(), s.id);
+    db.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_stores_code ON stores(store_code)').run();
+  }
+});
+
+// Migration 10: recreate users table with UNIQUE(username, store_id) instead of UNIQUE(username)
+// This enables store-scoped usernames — two different stores can now have a user called "admin"
+runMigration(10, () => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS users_new (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT NOT NULL,
+      password TEXT,
+      role TEXT NOT NULL DEFAULT 'owner',
+      store_id INTEGER,
+      store_name TEXT,
+      email TEXT,
+      oauth_provider TEXT,
+      oauth_id TEXT,
+      failed_login_attempts INTEGER DEFAULT 0,
+      locked_until DATETIME,
+      UNIQUE(username, store_id)
+    );
+    INSERT OR IGNORE INTO users_new
+      SELECT id, username, password, role, store_id, store_name, email,
+             oauth_provider, oauth_id, failed_login_attempts, locked_until
+      FROM users;
+    DROP TABLE users;
+    ALTER TABLE users_new RENAME TO users;
+  `);
+});
+
 db.prepare(`
   CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oauth
   ON users(oauth_provider, oauth_id)
@@ -485,8 +538,17 @@ app.use('/api', apiLimiter);
 
 // Auth
 app.post('/api/auth/login', authLimiter, (req, res) => {
-  const { username, password } = req.body;
-  const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username) as any;
+  const { username, password, store_code } = req.body;
+
+  let user: any;
+  if (store_code) {
+    const store = db.prepare('SELECT id FROM stores WHERE store_code = ?').get(store_code) as any;
+    if (!store) return res.status(401).json({ error: 'Invalid store code' });
+    user = db.prepare('SELECT * FROM users WHERE username = ? AND store_id = ?').get(username, store.id);
+  } else {
+    // No store code — superadmin only
+    user = db.prepare("SELECT * FROM users WHERE username = ? AND role = 'superadmin'").get(username);
+  }
 
   if (!user) {
     return res.status(401).json({ error: 'Invalid credentials' });
@@ -613,8 +675,7 @@ app.post('/api/auth/register', authLimiter, (req, res) => {
   if (zipcode && !/^\d{5}(-\d{4})?$/.test(zipcode))
     return res.status(400).json({ error: 'Zipcode format: 12345 or 12345-6789' });
 
-  const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
-  if (existing) return res.status(409).json({ error: 'Username already taken' });
+  // Username uniqueness is now store-scoped (UNIQUE(username, store_id)); new stores always get a fresh store_id so no pre-check needed
 
   // Validate OAuth key if provided
   const oauthEntry = oauth_key ? pendingOAuth.get(oauth_key) : null;
@@ -624,9 +685,13 @@ app.post('/api/auth/register', authLimiter, (req, res) => {
   }
 
   const register = db.transaction(() => {
+    // Generate a unique store code (retry on collision)
+    let storeCode = generateStoreCode();
+    while (db.prepare('SELECT id FROM stores WHERE store_code = ?').get(storeCode)) storeCode = generateStoreCode();
+
     const storeInfo = db.prepare(
-      'INSERT INTO stores (name, street, zipcode, state, phone, email, plan_tier) VALUES (?, ?, ?, ?, ?, ?, ?)'
-    ).run(store_name, street || null, zipcode || null, state || null, phone || '', email || '', 'starter');
+      'INSERT INTO stores (name, street, zipcode, state, phone, email, plan_tier, store_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    ).run(store_name, street || null, zipcode || null, state || null, phone || '', email || '', 'starter', storeCode);
     const storeId = storeInfo.lastInsertRowid as number;
 
     const hashed = password ? bcrypt.hashSync(password, 10) : null;
@@ -651,18 +716,18 @@ app.post('/api/auth/register', authLimiter, (req, res) => {
     ];
     for (const [name, icon] of defaults) catInsert.run(name, icon, storeId);
 
-    return { storeId };
+    return { storeId, storeCode };
   });
 
   try {
-    const { storeId } = register();
+    const { storeId, storeCode } = register();
     if (oauthEntry) {
       pendingOAuth.delete(oauth_key);
       const newUser = db.prepare("SELECT * FROM users WHERE store_id = ? AND role = 'owner'").get(storeId) as any;
       issueJwt(req, res, newUser);
-      return res.status(201).json({ message: 'Store registered', store_id: storeId, redirect: '/' });
+      return res.status(201).json({ message: 'Store registered', store_id: storeId, store_code: storeCode, redirect: '/' });
     }
-    res.status(201).json({ message: 'Store registered successfully', store_id: storeId });
+    res.status(201).json({ message: 'Store registered successfully', store_id: storeId, store_code: storeCode });
   } catch (err: any) {
     console.error('[auth:register]', err);
     res.status(500).json({ error: 'An internal error occurred' });
@@ -825,7 +890,7 @@ app.post('/api/auth/switch-store', authenticateToken, (req: any, res) => {
 
 // Store Settings — get
 app.get('/api/store/settings', authenticateToken, (req: any, res) => {
-  const store = db.prepare('SELECT id, name, street, zipcode, state, phone, email, plan_tier, status, logo FROM stores WHERE id = ?')
+  const store = db.prepare('SELECT id, name, street, zipcode, state, phone, email, plan_tier, status, logo, store_code FROM stores WHERE id = ?')
     .get(req.user.store_id) as any;
   if (!store) return res.status(404).json({ error: 'Store not found' });
   res.json(store);
@@ -1231,6 +1296,14 @@ function generateOTP(length = 8): string {
     result += chars[bytes[i] % chars.length];
   }
   return result;
+}
+
+function generateStoreCode(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code = '';
+  const bytes = randomBytes(6);
+  for (let i = 0; i < 6; i++) code += chars[bytes[i] % chars.length];
+  return code;
 }
 
 app.post('/api/session/create', authenticateToken, (req: any, res) => {
