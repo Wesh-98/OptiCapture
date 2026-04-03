@@ -5,6 +5,7 @@ interface User {
   id: number;
   username: string;
   role: 'owner' | 'taker' | 'superadmin';
+  store_id: number;
   store_name: string;
   store_logo?: string | null;
 }
@@ -67,6 +68,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
     if (!res.ok) throw new Error('Failed to switch store');
     await res.json();
+    // Clear scan session so a new one is created for the switched store
+    sessionStorage.removeItem('scan_session_id');
+    sessionStorage.removeItem('scan_otp');
+    sessionStorage.removeItem('scan_store_id');
     // Re-fetch user to get updated JWT context
     const meRes = await fetch('/api/auth/me', { credentials: 'include' });
     if (meRes.ok) {
@@ -76,7 +81,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = async () => {
-      await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+    await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+    sessionStorage.removeItem('scan_session_id');
+    sessionStorage.removeItem('scan_otp');
+    sessionStorage.removeItem('scan_store_id');
     setUser(null);
     setMyStores([]);
     navigate('/login');

@@ -31,6 +31,7 @@ interface UpcCacheEntry { product_name: string | null; brand: string | null; ima
 const upcCache = new Map<string, UpcCacheEntry>();
 const UPC_CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
 const app = express();
+app.set('trust proxy', 1); // trust first proxy (Cloudflare tunnel / nginx) for rate-limiter IP detection
 const PORT = 3000;
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
@@ -420,6 +421,13 @@ runMigration(10, () => {
   }
 });
 
+runMigration(11, () => {
+  const cols = (db.prepare('PRAGMA table_info(session_items)').all() as any[]).map((c: any) => c.name);
+  if (!cols.includes('device_id')) {
+    db.prepare("ALTER TABLE session_items ADD COLUMN device_id TEXT DEFAULT NULL").run();
+  }
+});
+
 db.prepare(`
   CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oauth
   ON users(oauth_provider, oauth_id)
@@ -437,6 +445,16 @@ db.prepare(`
   UPDATE inventory
   SET image = 'https://drive.google.com/thumbnail?id=' || SUBSTR(image, INSTR(image, 'id=') + 3) || '&sz=w800'
   WHERE image LIKE '%drive.google.com/uc?export=view%'
+    AND image NOT LIKE '%thumbnail%'
+`).run();
+
+// One-time migration: convert /file/d/FILE_ID/view sharing links to embeddable thumbnail URLs
+db.prepare(`
+  UPDATE inventory
+  SET image = 'https://drive.google.com/thumbnail?id=' ||
+              SUBSTR(image, INSTR(image, '/file/d/') + 8,
+                INSTR(SUBSTR(image, INSTR(image, '/file/d/') + 8), '/') - 1) || '&sz=w800'
+  WHERE image LIKE '%drive.google.com/file/d/%'
     AND image NOT LIKE '%thumbnail%'
 `).run();
 
@@ -491,12 +509,13 @@ function saveBase64Image(base64Data: string): string {
 
 // Normalize Google Drive sharing URLs to embeddable thumbnail URLs
 function normalizeImageUrl(url: string): string {
-  // Sharing URL: /file/d/FILE_ID/view
+  if (!url.includes('drive.google.com') && !url.includes('docs.google.com')) return url;
+  // /file/d/FILE_ID/view — standard sharing link
   const fileMatch = url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
   if (fileMatch) return `https://drive.google.com/thumbnail?id=${fileMatch[1]}&sz=w800`;
-  // Already-converted uc?export=view&id=FILE_ID URLs
-  const ucMatch = url.match(/drive\.google\.com.*[?&]id=([a-zA-Z0-9_-]+)/);
-  if (ucMatch) return `https://drive.google.com/thumbnail?id=${ucMatch[1]}&sz=w800`;
+  // uc?export=view&id=FILE_ID or open?id=FILE_ID — query-string formats
+  const idMatch = url.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (idMatch) return `https://drive.google.com/thumbnail?id=${idMatch[1]}&sz=w800`;
   return url;
 }
 
@@ -1347,61 +1366,79 @@ app.post('/api/session/create', authenticateToken, (req: any, res) => {
   }
 });
 
-async function lookupProductByUpc(upc: string) {
+type LookupResult = { product_name: string; brand: string | null; image: string | null; source: string };
+
+async function fetchOpenFoodFacts(upc: string, signal: AbortSignal): Promise<LookupResult | null> {
+  try {
+    const res = await fetch(
+      `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(upc)}.json`,
+      { headers: { 'User-Agent': 'OptiCapture/1.0' }, signal }
+    );
+    if (!res.ok) return null;
+    const data = await res.json() as any;
+    const p = data?.product;
+    if (!p) return null;
+    const product_name = p.product_name?.trim() || p.product_name_en?.trim() || null;
+    if (!product_name) return null;
+    const brand = typeof p.brands === 'string' && p.brands.trim() ? p.brands.split(',')[0].trim() : null;
+    const image = p.image_front_url || p.image_url || null;
+    return { product_name, brand, image, source: 'open_food_facts' };
+  } catch {
+    return null;
+  }
+}
+
+async function fetchUpcItemDb(upc: string, signal: AbortSignal): Promise<LookupResult | null> {
+  try {
+    const apiKey = process.env.UPCITEMDB_API_KEY?.trim();
+    // Use paid /v1 endpoint when a key is configured, trial endpoint otherwise
+    const url = `https://api.upcitemdb.com/prod/${apiKey ? 'v1' : 'trial'}/lookup?upc=${encodeURIComponent(upc)}`;
+    const headers: Record<string, string> = apiKey ? { 'x-user-key': apiKey } : {};
+    const res = await fetch(url, { headers, signal });
+    if (!res.ok) return null;
+    const data = await res.json() as any;
+    const item = data?.items?.[0];
+    if (!item?.title) return null;
+    return {
+      product_name: item.title.trim(),
+      brand: item.brand?.trim() || null,
+      image: Array.isArray(item.images) && item.images.length > 0 ? item.images[0] : null,
+      source: 'upcitemdb',
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function lookupProductByUpc(upc: string): Promise<LookupResult | null> {
   const cleanUpc = String(upc || '').trim();
   if (!cleanUpc) return null;
 
-  try {
-    const offRes = await fetch(`https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(cleanUpc)}.json`, {
-      headers: { 'User-Agent': 'OptiCapture/1.0' },
-    });
+  const c1 = new AbortController();
+  const c2 = new AbortController();
+  const t1 = setTimeout(() => c1.abort(), 5000);
+  const t2 = setTimeout(() => c2.abort(), 5000);
 
-    if (offRes.ok) {
-      const offData = await offRes.json() as any;
-      const product = offData?.product;
+  const [offResult, upcResult] = await Promise.allSettled([
+    fetchOpenFoodFacts(cleanUpc, c1.signal),
+    fetchUpcItemDb(cleanUpc, c2.signal),
+  ]);
 
-      if (product) {
-        const productName = product.product_name?.trim() || product.product_name_en?.trim() || null;
-        const brand = typeof product.brands === 'string' && product.brands.trim()
-          ? product.brands.split(',')[0].trim()
-          : null;
-        const image = product.image_front_url || product.image_url || null;
+  clearTimeout(t1);
+  clearTimeout(t2);
 
-        if (productName) {
-          return { product_name: productName, brand, image, source: 'open_food_facts' };
-        }
-      }
-    }
-  } catch (error) {
-    console.warn('Open Food Facts lookup failed:', error);
+  const off = offResult.status === 'fulfilled' ? offResult.value : null;
+  const upc_ = upcResult.status === 'fulfilled' ? upcResult.value : null;
+
+  // Prefer whichever result has more complete data (name + image beats name-only).
+  // When both have an image, prefer UPCitemdb — cleaner retail labelling.
+  // When only one has a name, use that one regardless of source.
+  if (off && upc_) {
+    if (upc_.image) return upc_;   // UPCitemdb has image — use it
+    if (off.image) return off;     // OFF has image, UPCitemdb doesn't
+    return upc_;                   // Both name-only — UPCitemdb has cleaner names
   }
-
-  try {
-    const apiKey = process.env.UPCITEMDB_API_KEY;
-    if (apiKey) {
-      const upcRes = await fetch(`https://api.upcitemdb.com/prod/trial/lookup?upc=${encodeURIComponent(cleanUpc)}`, {
-        headers: { Authorization: `Bearer ${apiKey}` },
-      });
-
-      if (upcRes.ok) {
-        const upcData = await upcRes.json() as any;
-        const item = upcData?.items?.[0];
-
-        if (item?.title) {
-          return {
-            product_name: item.title?.trim() || null,
-            brand: item.brand?.trim() || null,
-            image: Array.isArray(item.images) && item.images.length > 0 ? item.images[0] : null,
-            source: 'upcitemdb',
-          };
-        }
-      }
-    }
-  } catch (error) {
-    console.warn('UPCitemDB lookup failed:', error);
-  }
-
-  return null;
+  return upc_ ?? off ?? null;
 }
 
 app.get('/api/sessions/active', authenticateToken, (req: any, res: any) => {
@@ -1443,8 +1480,9 @@ app.patch('/api/session/:id/status', authenticateToken, (req: any, res: any) => 
       "UPDATE scan_sessions SET status = 'active', expires_at = datetime('now', '+8 hours') WHERE session_id = ?"
     ).run(sessionId);
   } else {
+    // Saving as draft — extend expiry 24 hours from now so the owner can review it later
     db.prepare(
-      "UPDATE scan_sessions SET status = ?, label = COALESCE(?, label) WHERE session_id = ?"
+      "UPDATE scan_sessions SET status = ?, label = COALESCE(?, label), expires_at = datetime('now', '+24 hours') WHERE session_id = ?"
     ).run(status, label ?? null, sessionId);
   }
 
@@ -1472,7 +1510,7 @@ app.get('/api/session/:id/meta', authenticateToken, (req: any, res: any) => {
 
 app.get('/api/session/:id/items', scanLimiter, (req: any, res: any) => {
   const { id: sessionId } = req.params;
-  const { otp } = req.query;
+  const { otp, device_id } = req.query;
 
   if (!otp) return res.status(400).json({ error: 'OTP required' });
 
@@ -1482,49 +1520,59 @@ app.get('/api/session/:id/items', scanLimiter, (req: any, res: any) => {
 
   if (!session) return res.status(403).json({ error: 'Invalid session or OTP' });
 
-  const items = db.prepare(
-    'SELECT * FROM session_items WHERE session_id = ? ORDER BY scanned_at ASC'
-  ).all(sessionId) as any[];
+  // If caller has a valid JWT, enforce store ownership (defence-in-depth for browser clients)
+  try {
+    const token = (req as any).cookies?.token;
+    if (token) {
+      const payload = jwt.verify(token, process.env.JWT_SECRET!, {
+        algorithms: ['HS256'], issuer: 'opticapture', audience: 'opticapture-app',
+      }) as any;
+      if (payload?.store_id && payload.store_id !== session.store_id) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
+    }
+  } catch { /* invalid/expired token — OTP is sufficient for phone clients */ }
+
+  const items = device_id
+    ? db.prepare(
+        'SELECT * FROM session_items WHERE session_id = ? AND (device_id = ? OR device_id IS NULL) ORDER BY scanned_at ASC'
+      ).all(sessionId, device_id) as any[]
+    : db.prepare(
+        'SELECT * FROM session_items WHERE session_id = ? ORDER BY scanned_at ASC'
+      ).all(sessionId) as any[];
 
   res.json({ status: session.status, items });
 });
 
 app.get('/api/session/:id', authenticateToken, (req: any, res) => {
   const { id } = req.params;
-  const { since } = req.query; // ISO timestamp — if provided, return only newer items
+  const { since_id } = req.query; // integer item ID cursor — return only items with id > since_id
   const session = db.prepare("SELECT * FROM scan_sessions WHERE session_id = ? AND store_id = ?")
     .get(id, req.user.store_id) as any;
   if (!session) return res.status(403).json({ error: 'Forbidden' });
 
-  const items = since
-    ? db.prepare(`
-        SELECT si.id, si.session_id, si.upc, si.quantity, si.scanned_at,
-               si.lookup_status, si.product_name, si.brand, si.image,
-               si.source, si.exists_in_inventory,
-               si.sale_price, si.unit, si.tag_names
-        FROM session_items si
-        WHERE si.session_id = ? AND si.scanned_at > ?
-        ORDER BY si.scanned_at DESC
-      `).all(id, since)
-    : db.prepare(`
-        SELECT si.id, si.session_id, si.upc, si.quantity, si.scanned_at,
-               si.lookup_status, si.product_name, si.brand, si.image,
-               si.source, si.exists_in_inventory,
-               si.sale_price, si.unit, si.tag_names
-        FROM session_items si
-        WHERE si.session_id = ?
-        ORDER BY si.scanned_at DESC
-      `).all(id);
+  const COLS = `si.id, si.session_id, si.upc, si.quantity, si.scanned_at,
+                si.lookup_status, si.product_name, si.brand, si.image,
+                si.source, si.exists_in_inventory, si.sale_price, si.unit, si.tag_names`;
+
+  const items = since_id
+    ? db.prepare(`SELECT ${COLS} FROM session_items si WHERE si.session_id = ? AND si.id > ? ORDER BY si.id DESC`).all(id, Number(since_id))
+    : db.prepare(`SELECT ${COLS} FROM session_items si WHERE si.session_id = ? ORDER BY si.id DESC`).all(id);
+
   res.json({ items, expires_at: session.expires_at ?? null });
 });
 
 app.post('/api/session/:id/scan', scanLimiter, async (req, res) => {
   const { id } = req.params;
   const { upc, otp, item_name } = req.body;
+  const deviceId = (req.headers['x-device-id'] as string | undefined) ?? null;
 
   const cleanUpc = String(upc || '').trim();
   if (!cleanUpc) {
     return res.status(400).json({ error: 'UPC is required' });
+  }
+  if (cleanUpc.length > 128) {
+    return res.status(400).json({ error: 'UPC too long' });
   }
 
   const session = db.prepare(
@@ -1558,6 +1606,20 @@ app.post('/api/session/:id/scan', scanLimiter, async (req, res) => {
     db.prepare('UPDATE scan_sessions SET otp_attempts = otp_attempts + 1 WHERE session_id = ?').run(session.session_id);
     return res.status(401).json({ error: 'Invalid OTP.' });
   }
+
+  // If caller is an authenticated user (has JWT cookie), validate they belong to the same store.
+  // Mobile phones have no JWT so this check is skipped for them — OTP alone is their auth.
+  try {
+    const token = (req as any).cookies?.token;
+    if (token) {
+      const payload = jwt.verify(token, process.env.JWT_SECRET!, {
+        algorithms: ['HS256'], issuer: 'opticapture', audience: 'opticapture-app',
+      }) as any;
+      if (payload?.store_id && payload.store_id !== session.store_id) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
+    }
+  } catch { /* invalid/expired token — treat as unauthenticated, OTP is sufficient */ }
 
   const inventoryMatch = db.prepare(`
     SELECT id, item_name, image FROM inventory WHERE upc = ? AND store_id = ? LIMIT 1
@@ -1600,9 +1662,10 @@ app.post('/api/session/:id/scan', scanLimiter, async (req, res) => {
   }
 
   // --- Atomic upsert (respond immediately — no waiting for external API) ---
+  // SQLite serializes all write transactions so the SELECT-then-INSERT/UPDATE is race-free.
   const upsertScan = db.transaction(() => {
     const existing = db.prepare(
-      'SELECT * FROM session_items WHERE session_id = ? AND upc = ?'
+      'SELECT id FROM session_items WHERE session_id = ? AND upc = ?'
     ).get(id, cleanUpc) as any;
 
     if (existing) {
@@ -1616,9 +1679,9 @@ app.post('/api/session/:id/scan', scanLimiter, async (req, res) => {
       `).run(lookupStatus, productName, brand, image, source, existsInInventory, existing.id);
     } else {
       db.prepare(`
-        INSERT INTO session_items (session_id, upc, quantity, lookup_status, product_name, brand, image, source, exists_in_inventory)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(id, cleanUpc, 1, lookupStatus, productName, brand, image, source, existsInInventory);
+        INSERT INTO session_items (session_id, upc, quantity, lookup_status, product_name, brand, image, source, exists_in_inventory, device_id)
+        VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
+      `).run(id, cleanUpc, lookupStatus, productName, brand, image, source, existsInInventory, deviceId);
     }
 
     db.prepare("UPDATE scan_sessions SET expires_at = datetime('now', '+8 hours') WHERE session_id = ?").run(id);
@@ -1677,6 +1740,15 @@ app.patch('/api/session/:id/items/:itemId', authenticateToken, (req: any, res) =
     WHERE id = ? AND session_id = ?
   `).run(product_name || null, brand || null, quantity || 1, upc || null, image || null, tag_names || null, sale_price || null, unit || null, itemId, id);
 
+  res.json({ success: true });
+});
+
+app.delete('/api/session/:id/items', authenticateToken, (req: any, res: any) => {
+  const session = db.prepare('SELECT * FROM scan_sessions WHERE session_id = ? AND store_id = ?')
+    .get(req.params.id, req.user.store_id) as any;
+  if (!session) return res.status(403).json({ error: 'Forbidden' });
+  if (session.status === 'completed') return res.status(403).json({ error: 'Cannot clear a committed session' });
+  db.prepare('DELETE FROM session_items WHERE session_id = ?').run(req.params.id);
   res.json({ success: true });
 });
 
