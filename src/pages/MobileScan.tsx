@@ -1,11 +1,21 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
-import { CheckCircle, AlertTriangle, Camera, Keyboard } from 'lucide-react';
+import { CheckCircle, AlertTriangle, Camera, Keyboard, RefreshCw } from 'lucide-react';
 import { BrowserMultiFormatReader } from '@zxing/browser';
 import { BarcodeFormat, DecodeHintType } from '@zxing/library';
 
 const IDLE_TIMEOUT_MS = 60_000;
+
+function getDeviceId(): string {
+  const STORAGE_KEY = 'scan_device_id';
+  let id = localStorage.getItem(STORAGE_KEY);
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem(STORAGE_KEY, id);
+  }
+  return id;
+}
 
 interface ScannedItem {
   id: number;
@@ -77,7 +87,7 @@ export default function MobileScan() {
         const res = await fetch(`/api/session/${sessionId}/scan`, {
           method: 'POST',
           credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'X-Device-Id': getDeviceId() },
           body: JSON.stringify({ upc, otp, item_name: itemName || undefined }),
         });
 
@@ -131,7 +141,7 @@ export default function MobileScan() {
   // Reconnect: fetch existing items + draft status on mount (handles screen lock)
   useEffect(() => {
     if (!sessionId || !otp) return;
-    fetch(`/api/session/${sessionId}/items?otp=${otp}`)
+    fetch(`/api/session/${sessionId}/items?otp=${otp}&device_id=${encodeURIComponent(getDeviceId())}`)
       .then(res => res.ok ? res.json() : null)
       .then(data => {
         if (!data) return;
@@ -241,12 +251,14 @@ export default function MobileScan() {
 
     try {
       const hints = new Map();
+      hints.set(DecodeHintType.TRY_HARDER, true);
       hints.set(DecodeHintType.POSSIBLE_FORMATS, [
         BarcodeFormat.UPC_A,
         BarcodeFormat.UPC_E,
         BarcodeFormat.EAN_13,
         BarcodeFormat.EAN_8,
         BarcodeFormat.CODE_128,
+        BarcodeFormat.CODE_39,
       ]);
 
       const codeReader = new BrowserMultiFormatReader(hints);
@@ -256,8 +268,8 @@ export default function MobileScan() {
         {
           video: {
             facingMode: { ideal: 'environment' },
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
+            width: { ideal: 1920, min: 1280 },
+            height: { ideal: 1080, min: 720 },
           },
         },
         scannerElementId,
@@ -345,6 +357,13 @@ export default function MobileScan() {
     await startScanner();
   }, [resetIdleTimer, startScanner]);
 
+  const handleResetCamera = useCallback(async () => {
+    await stopScanner();
+    await new Promise(r => setTimeout(r, 300));
+    setCameraError(null);
+    await startScanner();
+  }, [stopScanner, startScanner]);
+
   // Draft mode: no camera, no scanning
   if (sessionDraft) {
     return (
@@ -424,15 +443,23 @@ export default function MobileScan() {
             <AlertTriangle size={40} className="text-red-400" />
             <p className="text-white text-sm text-center">{cameraError}</p>
             <button
-              onClick={() => {
-                setCameraError(null);
-                startScanner();
-              }}
+              onClick={handleResetCamera}
               className="px-6 py-3 bg-emerald-600 text-white rounded-xl font-bold text-sm"
             >
               Try Again
             </button>
           </div>
+        )}
+
+        {/* Reset camera button — always visible in corner when camera is active */}
+        {inputMode === 'camera' && !cameraError && !cameraIdle && (
+          <button
+            onClick={handleResetCamera}
+            className="absolute top-2 right-2 p-2 bg-black/40 hover:bg-black/60 rounded-full text-white transition-colors"
+            title="Reset camera"
+          >
+            <RefreshCw size={14} />
+          </button>
         )}
       </div>
 

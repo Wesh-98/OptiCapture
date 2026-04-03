@@ -840,7 +840,7 @@ export default function Dashboard() {
                       </span>
                     </td>
                     <td className="px-6 py-4 text-sm text-slate-600 font-mono">
-                      {cat.total_stock || 0} units
+                      {cat.total_stock || 0}
                     </td>
                     <td className="px-6 py-4 text-right relative">
                       <button

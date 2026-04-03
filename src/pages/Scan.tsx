@@ -152,7 +152,7 @@ export default function Scan() {
   const pollIntervalRef = useRef<number | null>(null);
   const isBusyRef = useRef(false);
   const pollFailCountRef = useRef(0);
-  const lastPollAtRef = useRef<string | null>(null); // ISO timestamp of most recent item seen
+  const lastPollAtRef = useRef<number | null>(null); // highest item id seen — used as delta cursor
   const manuallyDeselectedRef = useRef<Set<number>>(new Set());
   const sessionStartTimeRef = useRef<number | null>(null);
   const lastItemAddedAtRef = useRef<number | null>(null);
@@ -272,9 +272,10 @@ export default function Scan() {
       setItems([]);
       setUiStatus('ready');
       setStatusMessage('Session ready. Scan the QR code with your phone.');
-      // Save session to sessionStorage for persistence
+      // Save session to sessionStorage for persistence (store_id guards against cross-store leaks)
       sessionStorage.setItem('scan_session_id', data.sessionId);
       sessionStorage.setItem('scan_otp', data.otp);
+      if (user?.store_id != null) sessionStorage.setItem('scan_store_id', String(user.store_id));
     } catch {
       setUiStatus('error');
       setStatusMessage('Could not create scan session.');
@@ -286,7 +287,7 @@ export default function Scan() {
       isBusyRef.current = false;
       setIsRefreshing(false);
     }
-  }, []);
+  }, [user]);
 
   const handleSaveDraft = async () => {
     if (!sessionId) return;
@@ -360,9 +361,9 @@ export default function Scan() {
   const fetchSessionItems = useCallback(async (fullRefresh = false) => {
     if (!sessionId) return;
     try {
-      const since = fullRefresh ? null : lastPollAtRef.current;
-      const url = since
-        ? `/api/session/${sessionId}?since=${encodeURIComponent(since)}`
+      const sinceId = fullRefresh ? null : lastPollAtRef.current;
+      const url = sinceId != null
+        ? `/api/session/${sessionId}?since_id=${sinceId}`
         : `/api/session/${sessionId}`;
       const res = await fetch(url, { credentials: 'include' });
       if (!res.ok) throw new Error(`Polling failed: ${res.status}`);
@@ -375,13 +376,13 @@ export default function Scan() {
       pollFailCountRef.current = 0;
 
       if (data.length > 0) {
-        // Track most recent scanned_at to use as next delta cursor
-        const newest = data.reduce((a, b) => (a.scanned_at > b.scanned_at ? a : b));
-        lastPollAtRef.current = newest.scanned_at;
+        // Track highest item id seen — strictly monotonic, no timestamp precision issues
+        const maxId = data.reduce((max, item) => (item.id > max ? item.id : max), 0);
+        if (maxId > (lastPollAtRef.current ?? 0)) lastPollAtRef.current = maxId;
       }
 
       setItems(prevItems => {
-        if (fullRefresh || !since) {
+        if (fullRefresh || sinceId == null) {
           // Full replace on first load
           if (data.length > prevItems.length) lastItemAddedAtRef.current = Date.now();
           return data;
@@ -514,10 +515,17 @@ export default function Scan() {
         } catch {}
       }
 
-      // Check sessionStorage for existing session
+      // Check sessionStorage for existing session — validate it belongs to the current store
       const savedId = sessionStorage.getItem('scan_session_id');
       const savedOtp = sessionStorage.getItem('scan_otp');
-      if (savedId && savedOtp) {
+      const savedStoreId = sessionStorage.getItem('scan_store_id');
+      const storeIdMismatch = savedStoreId != null && user?.store_id != null && String(user.store_id) !== savedStoreId;
+      if (storeIdMismatch) {
+        sessionStorage.removeItem('scan_session_id');
+        sessionStorage.removeItem('scan_otp');
+        sessionStorage.removeItem('scan_store_id');
+      }
+      if (savedId && savedOtp && !storeIdMismatch) {
         // Try to resume the existing session
         try {
           // Use /api/sessions/active to get real status from DB
@@ -551,9 +559,10 @@ export default function Scan() {
             ));
             return;
           } else {
-            // Session expired or not found — check for drafts
+            // Session expired or not found — clear all session storage
             sessionStorage.removeItem('scan_session_id');
             sessionStorage.removeItem('scan_otp');
+            sessionStorage.removeItem('scan_store_id');
           }
         } catch {}
       }
@@ -718,6 +727,41 @@ export default function Scan() {
       manuallyDeselectedRef.current.delete(itemId);
     } catch {
       addToast('error', 'Failed to delete item');
+    }
+  };
+
+  const handleClearAllItems = async () => {
+    if (!sessionId) return;
+    if (!window.confirm('Clear all scanned items? This cannot be undone.')) return;
+    try {
+      const res = await fetch(`/api/session/${sessionId}/items`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      if (!res.ok) throw new Error('Clear failed');
+      setItems([]);
+      setSelectedIds(new Set());
+      manuallyDeselectedRef.current.clear();
+      addToast('success', 'All items cleared');
+    } catch {
+      addToast('error', 'Failed to clear items');
+    }
+  };
+
+  const handleDeleteDraft = async () => {
+    if (!sessionId) return;
+    if (!window.confirm('Delete this draft entirely? All scanned items will be lost.')) return;
+    try {
+      const res = await fetch(`/api/session/${sessionId}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      if (!res.ok) throw new Error('Delete failed');
+      addToast('success', 'Draft deleted');
+      // Reset to a fresh session
+      await createSession();
+    } catch {
+      addToast('error', 'Failed to delete draft');
     }
   };
 
@@ -1064,12 +1108,26 @@ export default function Scan() {
                   ? <><strong>{sessionLabel}</strong> — draft, scanning paused.</>
                   : 'Draft — scanning paused. Edit items below, then commit or resume scanning.'}
               </span>
-              <button
-                onClick={handleResumeScan}
-                className="px-3 py-1.5 bg-amber-600 text-white rounded-lg text-xs font-semibold hover:bg-amber-700 shrink-0"
-              >
-                Resume Scanning
-              </button>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={handleClearAllItems}
+                  className="px-3 py-1.5 border border-amber-300 text-amber-700 rounded-lg text-xs font-semibold hover:bg-amber-100 transition-colors"
+                >
+                  Clear Items
+                </button>
+                <button
+                  onClick={handleDeleteDraft}
+                  className="px-3 py-1.5 border border-red-300 text-red-600 rounded-lg text-xs font-semibold hover:bg-red-50 transition-colors"
+                >
+                  Delete Draft
+                </button>
+                <button
+                  onClick={handleResumeScan}
+                  className="px-3 py-1.5 bg-amber-600 text-white rounded-lg text-xs font-semibold hover:bg-amber-700 transition-colors"
+                >
+                  Resume Scanning
+                </button>
+              </div>
             </div>
           )}
 
