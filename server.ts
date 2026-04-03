@@ -1448,6 +1448,18 @@ async function fetchUpcItemDb(upc: string, signal: AbortSignal): Promise<LookupR
   }
 }
 
+// UPC/EAN barcodes sometimes arrive with or without a leading zero.
+// EAN-13 = 13 digits; UPC-A = 12 digits (EAN-13 with leading 0 dropped).
+// Try both variants so a scan of "012345678905" also matches "12345678905".
+function upcVariants(upc: string): string[] {
+  const variants = [upc];
+  if (/^\d+$/.test(upc)) {
+    if (upc.length === 13 && upc.startsWith('0')) variants.push(upc.slice(1));
+    if (upc.length === 12) variants.push('0' + upc);
+  }
+  return variants;
+}
+
 async function lookupProductByUpc(upc: string): Promise<LookupResult | null> {
   const cleanUpc = String(upc || '').trim();
   if (!cleanUpc) return null;
@@ -1457,9 +1469,11 @@ async function lookupProductByUpc(upc: string): Promise<LookupResult | null> {
   const t1 = setTimeout(() => c1.abort(), 5000);
   const t2 = setTimeout(() => c2.abort(), 5000);
 
+  // Try all UPC variants (with/without leading zero) — first non-null result wins per source
+  const variants = upcVariants(cleanUpc);
   const [offResult, upcResult] = await Promise.allSettled([
-    fetchOpenFoodFacts(cleanUpc, c1.signal),
-    fetchUpcItemDb(cleanUpc, c2.signal),
+    (async () => { for (const v of variants) { const r = await fetchOpenFoodFacts(v, c1.signal); if (r) return r; } return null; })(),
+    (async () => { for (const v of variants) { const r = await fetchUpcItemDb(v, c2.signal); if (r) return r; } return null; })(),
   ]);
 
   clearTimeout(t1);
@@ -1659,9 +1673,10 @@ app.post('/api/session/:id/scan', scanLimiter, async (req, res) => {
     }
   } catch { /* invalid/expired token — treat as unauthenticated, OTP is sufficient */ }
 
-  const inventoryMatch = db.prepare(`
-    SELECT id, item_name, image FROM inventory WHERE upc = ? AND store_id = ? LIMIT 1
-  `).get(cleanUpc, session.store_id) as any;
+  // Try exact UPC first, then leading-zero variant (EAN-13 ↔ UPC-A)
+  const inventoryMatch = upcVariants(cleanUpc)
+    .map(v => db.prepare('SELECT id, item_name, image FROM inventory WHERE upc = ? AND store_id = ? LIMIT 1').get(v, session.store_id) as any)
+    .find(Boolean) ?? null;
 
   // --- Resolve product info (cache-first, non-blocking for external lookups) ---
   let lookupStatus = 'unknown';
@@ -1685,9 +1700,9 @@ app.post('/api/session/:id/scan', scanLimiter, async (req, res) => {
     if (productName) lookupStatus = 'new_candidate';
     source = 'manual';
   } else {
-    // Check in-memory cache before hitting external APIs
-    const cached = upcCache.get(cleanUpc);
-    if (cached && Date.now() - cached.ts < UPC_CACHE_TTL) {
+    // Check in-memory cache before hitting external APIs — try all UPC variants
+    const cached = upcVariants(cleanUpc).map(v => upcCache.get(v)).find(c => c && Date.now() - c.ts < UPC_CACHE_TTL) ?? null;
+    if (cached) {
       lookupStatus = cached.product_name ? 'new_candidate' : 'unknown';
       productName = cached.product_name;
       brand = cached.brand;
@@ -1801,89 +1816,89 @@ app.delete('/api/session/:id/items/:itemId', authenticateToken, (req: any, res) 
 
 app.post('/api/session/:id/commit', authenticateToken, requireOwner, (req: any, res) => {
   const { id } = req.params;
-  const { selectedIds, category_id } = req.body as { selectedIds?: number[]; category_id?: number };
+  // assignments: per-item [{id, category_id}] — new format
+  // selectedIds + category_id — legacy fallback (single category for all)
+  const { assignments, selectedIds, category_id } = req.body as {
+    assignments?: Array<{ id: number; category_id: number }>;
+    selectedIds?: number[];
+    category_id?: number;
+  };
   const user = req.user;
 
-  if (!category_id) return res.status(400).json({ error: 'category_id is required' });
+  // Build a normalised id→category_id map
+  let assignmentMap: Map<number, number>;
+  if (assignments?.length) {
+    assignmentMap = new Map(assignments.map(a => [Number(a.id), Number(a.category_id)]));
+  } else if (category_id && selectedIds?.length) {
+    assignmentMap = new Map(selectedIds.map(id => [Number(id), Number(category_id)]));
+  } else {
+    return res.status(400).json({ error: 'assignments (or selectedIds + category_id) is required' });
+  }
 
-  // H-6: Verify session belongs to this store
+  // Verify session belongs to this store
   const session = db.prepare("SELECT * FROM scan_sessions WHERE session_id = ? AND store_id = ?")
     .get(id, user.store_id) as any;
   if (!session) return res.status(403).json({ error: 'Forbidden' });
 
-  // Verify category belongs to this store
-  const cat = db.prepare('SELECT id, name FROM categories WHERE id = ? AND store_id = ?').get(category_id, user.store_id) as any;
-  if (!cat) return res.status(400).json({ error: 'Invalid category' });
-
-  const allItems = db.prepare('SELECT * FROM session_items WHERE session_id = ?').all(id) as any[];
-  const items = selectedIds?.length
-    ? allItems.filter((item: any) => selectedIds.includes(item.id))
-    : allItems;
-
-  if (items.length === 0) {
-    return res.json({ message: 'No items to commit' });
+  // Validate every category_id in the map belongs to this store
+  const uniqueCatIds = [...new Set(assignmentMap.values())];
+  const validCats = db.prepare(
+    `SELECT id, name FROM categories WHERE store_id = ? AND id IN (${uniqueCatIds.map(() => '?').join(',')})`
+  ).all(user.store_id, ...uniqueCatIds) as any[];
+  if (validCats.length !== uniqueCatIds.length) {
+    return res.status(400).json({ error: 'One or more categories are invalid' });
   }
+  const catNameMap = new Map(validCats.map((c: any) => [c.id, c.name]));
 
-  const resolvedCategoryId = category_id;
+  // Load only the items that are in the assignment map
+  const allItems = db.prepare('SELECT * FROM session_items WHERE session_id = ?').all(id) as any[];
+  const items = allItems.filter((item: any) => assignmentMap.has(item.id));
+
+  if (items.length === 0) return res.json({ message: 'No items to commit' });
+
   const insertInventory = db.prepare(`
     INSERT INTO inventory (item_name, upc, quantity, category_id, status, image, sale_price, unit, store_id)
     VALUES (?, ?, ?, ?, 'Active', ?, ?, ?, ?)
   `);
-  const checkInventory = db.prepare('SELECT * FROM inventory WHERE upc = ? AND store_id = ?');
+  const checkInventory = db.prepare('SELECT id FROM inventory WHERE upc = ? AND store_id = ?');
 
   const transaction = db.transaction((sessionItems: any[]) => {
     let inserted = 0;
     let skippedExisting = 0;
     let skippedUnknown = 0;
+    const byCategory: Record<number, number> = {};
 
     for (const item of sessionItems) {
-      const invItem = checkInventory.get(item.upc, user.store_id);
+      if (checkInventory.get(item.upc, user.store_id)) { skippedExisting++; continue; }
+      if (item.lookup_status !== 'new_candidate') { skippedUnknown++; continue; }
 
-      if (invItem) {
-        skippedExisting++;
-        continue;
-      }
-
-      if (item.lookup_status !== 'new_candidate') {
-        skippedUnknown++;
-        continue;
-      }
-
+      const catId = assignmentMap.get(item.id)!;
       insertInventory.run(
         item.product_name || 'Unknown Scanned Item',
-        item.upc,
-        item.quantity,
-        resolvedCategoryId,
+        item.upc, item.quantity, catId,
         item.image || null,
         item.sale_price ? parseFloat(item.sale_price) : null,
         item.unit || null,
         user.store_id
       );
+      byCategory[catId] = (byCategory[catId] ?? 0) + 1;
       inserted++;
     }
 
     db.prepare("UPDATE scan_sessions SET status = 'completed' WHERE session_id = ?").run(id);
-
-    return { inserted, skippedExisting, skippedUnknown };
+    return { inserted, skippedExisting, skippedUnknown, byCategory };
   });
 
   try {
     const result = transaction(items);
+    const catSummary = Object.entries(result.byCategory)
+      .map(([cid, n]) => `${catNameMap.get(Number(cid)) ?? cid}: ${n}`)
+      .join(', ');
     db.prepare('INSERT INTO logs (action, details, user_id, store_id) VALUES (?, ?, ?, ?)')
-      .run(
-        'BATCH',
-        `Committed remote session ${id} to category "${cat.name}" | inserted=${result.inserted} skippedExisting=${result.skippedExisting} skippedUnknown=${result.skippedUnknown}`,
-        user.id,
-        user.store_id
-      );
-
-    res.json({
-      success: true,
-      total: items.length,
-      inserted: result.inserted,
-      skippedExisting: result.skippedExisting,
-      skippedUnknown: result.skippedUnknown
-    });
+      .run('BATCH',
+        `Committed session ${id} | inserted=${result.inserted} skippedExisting=${result.skippedExisting} skippedUnknown=${result.skippedUnknown} | ${catSummary}`,
+        user.id, user.store_id);
+    res.json({ success: true, total: items.length, inserted: result.inserted, skippedExisting: result.skippedExisting, skippedUnknown: result.skippedUnknown });
   } catch (err: any) {
     console.error('[session:commit]', err);
     res.status(500).json({ error: 'An internal error occurred' });
