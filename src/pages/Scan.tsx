@@ -131,8 +131,11 @@ export default function Scan() {
 
   const [showCommitModal, setShowCommitModal] = useState(false);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [selectedCategoryId, setSelectedCategoryId] = useState<number | null>(null);
   const [categoriesLoading, setCategoriesLoading] = useState(false);
+  // per-item category assignments used inside the commit modal
+  const [itemCategories, setItemCategories] = useState<Map<number, number>>(new Map());
+  const [modalSelectedIds, setModalSelectedIds] = useState<Set<number>>(new Set());
+  const [bulkCategoryId, setBulkCategoryId] = useState<number | null>(null);
 
   const [toasts, setToasts] = useState<Toast[]>([]);
 
@@ -632,27 +635,34 @@ export default function Scan() {
   const openCommitModal = async () => {
     if (!sessionId || selectedIds.size === 0 || isBusyRef.current) return;
     await fetchCategories();
+    // Pre-populate with empty assignments for every selected item
+    setItemCategories(new Map());
+    setModalSelectedIds(new Set());
+    setBulkCategoryId(null);
     setShowCommitModal(true);
   };
 
   const confirmCommit = async () => {
-    if (!sessionId || !selectedCategoryId || isBusyRef.current) return;
+    if (!sessionId || isBusyRef.current) return;
+    // Build assignments — only items that have a category assigned
+    const assignments = [...selectedIds]
+      .filter(id => itemCategories.has(id))
+      .map(id => ({ id, category_id: itemCategories.get(id)! }));
+    if (assignments.length === 0) return;
     setShowCommitModal(false);
     isBusyRef.current = true;
     setUiStatus('committing');
     setStatusMessage('Committing selected items to inventory...');
-
     try {
       const res = await fetch(`/api/session/${sessionId}/commit`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ selectedIds: [...selectedIds], category_id: selectedCategoryId }),
+        body: JSON.stringify({ assignments }),
       });
       if (!res.ok) throw new Error(`Commit failed: ${res.status}`);
       const result = await res.json();
-      const catName = categories.find(c => c.id === selectedCategoryId)?.name ?? 'selected category';
-      addToast('success', `${result.inserted ?? 0} item(s) added to "${catName}"`);
+      addToast('success', `${result.inserted ?? 0} item(s) committed to inventory`);
       stopPolling();
       await createSession();
     } catch {
@@ -1055,6 +1065,12 @@ export default function Scan() {
                 >
                   {allSelected ? 'Deselect All' : 'Select All'}
                 </button>
+                <button
+                  onClick={() => setSelectedIds(new Set(newItems.map(i => i.id)))}
+                  className="text-xs text-emerald-600 hover:text-emerald-800 underline underline-offset-2"
+                >
+                  New Only
+                </button>
                 <span className="text-xs text-emerald-700 font-semibold">New: {newItems.length}</span>
                 <span className="text-xs text-slate-600 font-semibold">In Stock: {inStockItems.length}</span>
                 <span className="text-xs text-amber-700 font-semibold">Unknown: {unknownItems.length}</span>
@@ -1435,57 +1451,157 @@ export default function Scan() {
 
       {/* Commit Modal */}
       <AnimatePresence>
-        {showCommitModal && (
-          <motion.div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
-            initial={prefersReducedMotion ? false : { opacity: 0 }} animate={prefersReducedMotion ? {} : { opacity: 1 }} exit={prefersReducedMotion ? {} : { opacity: 0 }}
-            onClick={() => setShowCommitModal(false)}
-          >
+        {showCommitModal && (() => {
+          const commitItems = items.filter(i => selectedIds.has(i.id));
+          const assignedCount = commitItems.filter(i => itemCategories.has(i.id)).length;
+          const unassigned = commitItems.filter(i => !itemCategories.has(i.id));
+          const modalAllSelected = commitItems.length > 0 && commitItems.every(i => modalSelectedIds.has(i.id));
+
+          const applyBulk = () => {
+            if (!bulkCategoryId) return;
+            setItemCategories(prev => {
+              const next = new Map(prev);
+              const targets = modalSelectedIds.size > 0 ? [...modalSelectedIds] : commitItems.map(i => i.id);
+              targets.forEach(id => next.set(id, bulkCategoryId));
+              return next;
+            });
+            setModalSelectedIds(new Set());
+          };
+
+          return (
             <motion.div
-              className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm mx-4"
-              initial={prefersReducedMotion ? false : { scale: 0.95, opacity: 0 }} animate={prefersReducedMotion ? {} : { scale: 1, opacity: 1 }} exit={prefersReducedMotion ? {} : { scale: 0.95, opacity: 0 }}
-              onClick={e => e.stopPropagation()}
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+              initial={prefersReducedMotion ? false : { opacity: 0 }} animate={prefersReducedMotion ? {} : { opacity: 1 }} exit={prefersReducedMotion ? {} : { opacity: 0 }}
+              onClick={() => setShowCommitModal(false)}
             >
-              <h3 className="text-lg font-bold text-navy-900 mb-1">Commit to Inventory</h3>
-              <p className="text-sm text-slate-500 mb-4">
-                {selectedIds.size} item(s) will be added to the selected category.
-              </p>
+              <motion.div
+                className="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 flex flex-col max-h-[90vh]"
+                initial={prefersReducedMotion ? false : { scale: 0.95, opacity: 0 }} animate={prefersReducedMotion ? {} : { scale: 1, opacity: 1 }} exit={prefersReducedMotion ? {} : { scale: 0.95, opacity: 0 }}
+                onClick={e => e.stopPropagation()}
+              >
+                {/* Header */}
+                <div className="px-6 pt-5 pb-4 border-b border-slate-100">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <h3 className="text-lg font-bold text-navy-900">Commit to Inventory</h3>
+                      <p className="text-sm text-slate-500 mt-0.5">{commitItems.length} item{commitItems.length !== 1 ? 's' : ''} selected — assign a category to each</p>
+                    </div>
+                    <button onClick={() => setShowCommitModal(false)} className="p-1 rounded-lg hover:bg-slate-100 text-slate-400">
+                      <X size={18} />
+                    </button>
+                  </div>
 
-              <label className="block text-sm font-medium text-slate-700 mb-1">Select Category</label>
-              {categoriesLoading ? (
-                <div className="flex items-center gap-2 text-sm text-slate-400 py-2">
-                  <Loader2 size={16} className="animate-spin" /> Loading categories...
+                  {/* Bulk assign row */}
+                  <div className="flex items-center gap-2 mt-3">
+                    <select
+                      value={bulkCategoryId ?? ''}
+                      onChange={e => setBulkCategoryId(Number(e.target.value) || null)}
+                      className="flex-1 px-3 py-1.5 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-navy-700"
+                    >
+                      <option value="">— Apply category to {modalSelectedIds.size > 0 ? `${modalSelectedIds.size} checked` : 'all'} —</option>
+                      {categories.map(cat => <option key={cat.id} value={cat.id}>{cat.name}</option>)}
+                    </select>
+                    <button
+                      onClick={applyBulk}
+                      disabled={!bulkCategoryId}
+                      className="px-3 py-1.5 bg-navy-900 text-white rounded-lg text-sm font-medium hover:bg-navy-800 disabled:opacity-40 transition-colors shrink-0"
+                    >
+                      Apply
+                    </button>
+                  </div>
                 </div>
-              ) : (
-                <select
-                  value={selectedCategoryId ?? ''}
-                  onChange={e => setSelectedCategoryId(Number(e.target.value))}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-navy-700 bg-white"
-                >
-                  {categories.map(cat => (
-                    <option key={cat.id} value={cat.id}>{cat.name}</option>
-                  ))}
-                </select>
-              )}
 
-              <div className="flex gap-2 mt-5">
-                <button
-                  onClick={() => setShowCommitModal(false)}
-                  className="flex-1 px-4 py-2 rounded-lg border border-slate-300 text-sm text-slate-600 hover:bg-slate-50 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={confirmCommit}
-                  disabled={!selectedCategoryId || categoriesLoading}
-                  className="flex-1 px-4 py-2 rounded-lg bg-navy-900 text-white text-sm font-medium hover:bg-navy-800 transition-colors disabled:opacity-50"
-                >
-                  Confirm Commit
-                </button>
-              </div>
+                {/* Item list */}
+                <div className="overflow-y-auto flex-1">
+                  {categoriesLoading ? (
+                    <div className="flex items-center justify-center gap-2 text-sm text-slate-400 py-8">
+                      <Loader2 size={16} className="animate-spin" /> Loading categories...
+                    </div>
+                  ) : (
+                    <>
+                      {/* Select-all row */}
+                      <div className="px-4 py-2 border-b border-slate-100 flex items-center gap-3 text-xs text-slate-500 bg-slate-50">
+                        <input
+                          type="checkbox"
+                          checked={modalAllSelected}
+                          onChange={() => setModalSelectedIds(modalAllSelected ? new Set() : new Set(commitItems.map(i => i.id)))}
+                          className="rounded"
+                        />
+                        <span>{modalAllSelected ? 'Deselect all' : 'Select all for bulk apply'}</span>
+                      </div>
+
+                      {commitItems.map(item => {
+                        const catId = itemCategories.get(item.id);
+                        const checked = modalSelectedIds.has(item.id);
+                        return (
+                          <div key={item.id} className={cn('flex items-center gap-3 px-4 py-2.5 border-b border-slate-100 hover:bg-slate-50', checked && 'bg-blue-50/40')}>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => setModalSelectedIds(prev => {
+                                const next = new Set(prev);
+                                checked ? next.delete(item.id) : next.add(item.id);
+                                return next;
+                              })}
+                              className="rounded shrink-0"
+                            />
+                            {item.image
+                              ? <img src={item.image} alt="" className="w-9 h-9 rounded-lg object-cover shrink-0 bg-slate-100" onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                              : <div className="w-9 h-9 rounded-lg bg-slate-100 shrink-0 flex items-center justify-center"><ImageIcon size={14} className="text-slate-300" /></div>
+                            }
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-slate-800 truncate">{item.product_name || item.upc}</p>
+                              <p className="text-xs text-slate-400">×{item.quantity}{item.unit ? ` ${item.unit}` : ''}</p>
+                            </div>
+                            <select
+                              value={catId ?? ''}
+                              onChange={e => {
+                                const val = Number(e.target.value) || undefined;
+                                setItemCategories(prev => {
+                                  const next = new Map(prev);
+                                  val ? next.set(item.id, val) : next.delete(item.id);
+                                  return next;
+                                });
+                              }}
+                              className={cn(
+                                'text-xs px-2 py-1.5 rounded-lg border focus:outline-none focus:ring-1 focus:ring-navy-700 bg-white shrink-0 max-w-[140px]',
+                                catId ? 'border-slate-300 text-slate-700' : 'border-amber-300 text-amber-600'
+                              )}
+                            >
+                              <option value="">— Pick —</option>
+                              {categories.map(cat => <option key={cat.id} value={cat.id}>{cat.name}</option>)}
+                            </select>
+                          </div>
+                        );
+                      })}
+                    </>
+                  )}
+                </div>
+
+                {/* Footer */}
+                <div className="px-6 py-4 border-t border-slate-100 flex items-center gap-3">
+                  {unassigned.length > 0 && (
+                    <span className="flex-1 text-xs text-amber-600 flex items-center gap-1">
+                      <AlertTriangle size={13} />
+                      {unassigned.length} item{unassigned.length !== 1 ? 's' : ''} need a category
+                    </span>
+                  )}
+                  {unassigned.length === 0 && <span className="flex-1 text-xs text-emerald-600">All items have a category ✓</span>}
+                  <button onClick={() => setShowCommitModal(false)} className="px-4 py-2 rounded-lg border border-slate-300 text-sm text-slate-600 hover:bg-slate-50 transition-colors">
+                    Cancel
+                  </button>
+                  <button
+                    onClick={confirmCommit}
+                    disabled={assignedCount === 0 || categoriesLoading}
+                    className="px-4 py-2 rounded-lg bg-navy-900 text-white text-sm font-medium hover:bg-navy-800 transition-colors disabled:opacity-50"
+                  >
+                    Commit {assignedCount > 0 ? `(${assignedCount})` : ''}
+                  </button>
+                </div>
+              </motion.div>
             </motion.div>
-          </motion.div>
-        )}
+          );
+        })()}
       </AnimatePresence>
 
       {/* Toast Notifications */}
