@@ -106,6 +106,30 @@ app.use(cookieParser());
 app.use('/uploads', express.static(UPLOADS_DIR));
 app.use('/icons', express.static(path.join(process.cwd(), 'public', 'icons')));
 
+// Google Drive image proxy — fetches Drive thumbnails server-side so the browser
+// never needs a Google session. Only Drive file IDs are accepted (no open proxy).
+app.get('/api/drive-image/:fileId', async (req, res) => {
+  const { fileId } = req.params;
+  if (!/^[a-zA-Z0-9_-]+$/.test(fileId)) return res.status(400).end();
+  try {
+    const driveUrl = `https://drive.google.com/thumbnail?id=${fileId}&sz=w800`;
+    const upstream = await fetch(driveUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; OptiCapture/1.0)' },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!upstream.ok) return res.status(502).end();
+    const contentType = upstream.headers.get('content-type') || 'image/jpeg';
+    // Only forward image responses — reject HTML (e.g. Google login redirect)
+    if (!contentType.startsWith('image/')) return res.status(502).end();
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Cache-Control', 'public, max-age=86400'); // cache 24h in browser
+    const buf = await upstream.arrayBuffer();
+    res.send(Buffer.from(buf));
+  } catch {
+    res.status(502).end();
+  }
+});
+
 // Database Initialization
 // Migration version tracking
 db.prepare(`
@@ -440,22 +464,33 @@ db.prepare('CREATE INDEX IF NOT EXISTS idx_session_items_session_at  ON session_
 db.prepare('CREATE INDEX IF NOT EXISTS idx_inventory_upc_store        ON inventory(upc, store_id)').run();
 db.prepare('CREATE INDEX IF NOT EXISTS idx_scan_sessions_store_status ON scan_sessions(store_id, status, expires_at)').run();
 
-// One-time migration: convert old uc?export=view Drive URLs to thumbnail format
+// One-time migration: convert uc?export=view Drive URLs → server proxy path
 db.prepare(`
   UPDATE inventory
-  SET image = 'https://drive.google.com/thumbnail?id=' || SUBSTR(image, INSTR(image, 'id=') + 3) || '&sz=w800'
+  SET image = '/api/drive-image/' || SUBSTR(image, INSTR(image, 'id=') + 3)
   WHERE image LIKE '%drive.google.com/uc?export=view%'
-    AND image NOT LIKE '%thumbnail%'
+    AND image NOT LIKE '%/api/drive-image/%'
 `).run();
 
-// One-time migration: convert /file/d/FILE_ID/view sharing links to embeddable thumbnail URLs
+// One-time migration: convert /file/d/FILE_ID/view sharing links → server proxy path
 db.prepare(`
   UPDATE inventory
-  SET image = 'https://drive.google.com/thumbnail?id=' ||
+  SET image = '/api/drive-image/' ||
               SUBSTR(image, INSTR(image, '/file/d/') + 8,
-                INSTR(SUBSTR(image, INSTR(image, '/file/d/') + 8), '/') - 1) || '&sz=w800'
+                INSTR(SUBSTR(image, INSTR(image, '/file/d/') + 8), '/') - 1)
   WHERE image LIKE '%drive.google.com/file/d/%'
-    AND image NOT LIKE '%thumbnail%'
+    AND image NOT LIKE '%/api/drive-image/%'
+`).run();
+
+// One-time migration: convert existing thumbnail?id= URLs → server proxy path
+db.prepare(`
+  UPDATE inventory
+  SET image = '/api/drive-image/' || SUBSTR(image, INSTR(image, 'thumbnail?id=') + 13,
+                CASE WHEN INSTR(SUBSTR(image, INSTR(image, 'thumbnail?id=') + 13), '&') > 0
+                     THEN INSTR(SUBSTR(image, INSTR(image, 'thumbnail?id=') + 13), '&') - 1
+                     ELSE LENGTH(image) END)
+  WHERE image LIKE '%drive.google.com/thumbnail?id=%'
+    AND image NOT LIKE '%/api/drive-image/%'
 `).run();
 
 // Middleware
@@ -512,10 +547,13 @@ function normalizeImageUrl(url: string): string {
   if (!url.includes('drive.google.com') && !url.includes('docs.google.com')) return url;
   // /file/d/FILE_ID/view — standard sharing link
   const fileMatch = url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
-  if (fileMatch) return `https://drive.google.com/thumbnail?id=${fileMatch[1]}&sz=w800`;
+  if (fileMatch) return `/api/drive-image/${fileMatch[1]}`;
+  // thumbnail?id=FILE_ID — already-converted thumbnail URLs
+  const thumbMatch = url.match(/thumbnail\?id=([a-zA-Z0-9_-]+)/);
+  if (thumbMatch) return `/api/drive-image/${thumbMatch[1]}`;
   // uc?export=view&id=FILE_ID or open?id=FILE_ID — query-string formats
   const idMatch = url.match(/[?&]id=([a-zA-Z0-9_-]+)/);
-  if (idMatch) return `https://drive.google.com/thumbnail?id=${idMatch[1]}&sz=w800`;
+  if (idMatch) return `/api/drive-image/${idMatch[1]}`;
   return url;
 }
 
