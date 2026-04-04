@@ -212,7 +212,7 @@ export default function Scan() {
     }
   }, [sessionId, otp, addToast]);
 
-  const fetchCategories = useCallback(async () => {
+  const fetchCategories = useCallback(async (): Promise<Category[]> => {
     setCategoriesLoading(true);
     try {
       const res = await fetch('/api/categories', { credentials: 'include' });
@@ -220,9 +220,10 @@ export default function Scan() {
       const data: Category[] = await res.json();
       const active = data.filter(c => c.status !== 'Inactive');
       setCategories(active);
-      if (active.length > 0) setSelectedCategoryId(active[0].id);
+      return active;
     } catch {
       addToast('error', 'Failed to load categories');
+      return [];
     } finally {
       setCategoriesLoading(false);
     }
@@ -578,6 +579,7 @@ export default function Scan() {
     })();
 
     return () => { stopPolling(); window.clearInterval(serverInfoInterval); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchServerInfo, createSession, stopPolling, searchParams]);
 
   useEffect(() => {
@@ -634,7 +636,11 @@ export default function Scan() {
 
   const openCommitModal = async () => {
     if (!sessionId || selectedIds.size === 0 || isBusyRef.current) return;
-    await fetchCategories();
+    const activeCategories = await fetchCategories();
+    if (activeCategories.length === 0) {
+      addToast('error', 'No active categories found. Create a category before committing.');
+      return;
+    }
     // Pre-populate with empty assignments for every selected item
     setItemCategories(new Map());
     setModalSelectedIds(new Set());
@@ -662,17 +668,29 @@ export default function Scan() {
       });
       if (!res.ok) throw new Error(`Commit failed: ${res.status}`);
       const result = await res.json();
-      addToast('success', `${result.inserted ?? 0} item(s) committed to inventory`);
-      stopPolling();
-      await createSession();
+      const skipped = (result.skippedExisting ?? 0) + (result.skippedUnknown ?? 0);
+      const toastMsg = skipped > 0
+        ? `${result.inserted ?? 0} committed — ${result.skippedExisting ?? 0} duplicate${result.skippedExisting !== 1 ? 's' : ''}, ${result.skippedUnknown ?? 0} unknown skipped`
+        : `${result.inserted ?? 0} item(s) committed to inventory`;
+      addToast(result.inserted > 0 ? 'success' : 'warning', toastMsg);
+      // Remove only the committed items from the list — keep the session alive
+      // so remaining unselected items stay visible and scanning can continue.
+      const committedIds = new Set(assignments.map(a => a.id));
+      setItems(prev => prev.filter(item => !committedIds.has(item.id)));
+      setSelectedIds(new Set());
+      setItemCategories(new Map());
+      lastPollAtRef.current = null; // force full refresh on next poll
+      isBusyRef.current = false;
+      setUiStatus('ready');
+      setStatusMessage('Session ready. Scan the QR code with your phone.');
     } catch {
       setUiStatus('error');
       setStatusMessage('Failed to commit session.');
       addToast('error', 'Failed to commit items to inventory.');
-    } finally {
       isBusyRef.current = false;
     }
   };
+
 
   const openEdit = (item: SessionItem) => {
     setEditItem({

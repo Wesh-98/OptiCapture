@@ -8,12 +8,14 @@ export default defineConfig(() => {
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
-        '@': path.resolve(__dirname, '.'),
+        '@': path.resolve(__dirname, './src'),
       },
     },
     server: {
-      hmr: process.env.DISABLE_HMR !== 'true',
-      allowedHosts: ['.trycloudflare.com'],
+      hmr: process.env.DISABLE_HMR === 'true'
+        ? false
+        : { clientPort: 443, protocol: 'wss' },
+      allowedHosts: process.env.TUNNEL_HOST ? [process.env.TUNNEL_HOST] : ['.trycloudflare.com'],
     },
   };
 });

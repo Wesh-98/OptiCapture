@@ -12,13 +12,15 @@ import https from 'https';
 import fs from 'fs';
 import { randomUUID, randomBytes } from 'crypto';
 import multer from 'multer';
-import { read as xlsxRead, utils as xlsxUtils, write as xlsxWrite } from 'xlsx';
+import ExcelJS from 'exceljs';
+import Papa from 'papaparse';
 import { OAuth2Client } from 'google-auth-library';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const db = new Database('opticapture.db');
+const DB_PATH = path.join(__dirname, 'opticapture.db');
+const db = new Database(DB_PATH);
 // WAL mode: allows concurrent reads while a write is in progress — critical for
 // multiple phones scanning simultaneously into the same session
 db.pragma('journal_mode = WAL');
@@ -28,10 +30,17 @@ db.pragma('busy_timeout = 5000');
 // UPC lookup cache — avoids hitting external APIs for barcodes already resolved.
 // TTL: 7 days. Cleared on server restart (intentional — forces fresh data periodically).
 interface UpcCacheEntry { product_name: string | null; brand: string | null; image: string | null; source: string; ts: number; }
+const UPC_CACHE_MAX = 5000;
 const upcCache = new Map<string, UpcCacheEntry>();
 const UPC_CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
+function upcCacheSet(key: string, value: UpcCacheEntry) {
+  if (upcCache.size >= UPC_CACHE_MAX) upcCache.delete(upcCache.keys().next().value!);
+  upcCache.set(key, value);
+}
 const app = express();
-app.set('trust proxy', 1); // trust first proxy (Cloudflare tunnel / nginx) for rate-limiter IP detection
+// Trust the first proxy only in production (Cloudflare / nginx). In dev, trust proxy
+// would let any client spoof X-Forwarded-For and bypass all rate limiting.
+app.set('trust proxy', process.env.NODE_ENV === 'production' ? 1 : false);
 const PORT = 3000;
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
@@ -42,11 +51,16 @@ if (!JWT_SECRET) {
 const googleClient = new OAuth2Client(
   process.env.GOOGLE_CLIENT_ID,
   process.env.GOOGLE_CLIENT_SECRET,
-  process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3000/api/auth/google/callback'
+  process.env.GOOGLE_REDIRECT_URI || 'https://localhost:3000/api/auth/google/callback'
 );
 
-// Temporary store for pending OAuth registrations (10-min TTL)
+// Temporary store for pending OAuth registrations (10-min TTL, max 500 entries)
 const pendingOAuth = new Map<string, { googleId: string; email: string; name: string; expiresAt: number }>();
+const PENDING_OAUTH_MAX = 500;
+function pendingOAuthSet(key: string, value: { googleId: string; email: string; name: string; expiresAt: number }) {
+  if (pendingOAuth.size >= PENDING_OAUTH_MAX) pendingOAuth.delete(pendingOAuth.keys().next().value!);
+  pendingOAuth.set(key, value);
+}
 
 // M-5: Clean up expired pending OAuth entries every 5 minutes
 setInterval(() => {
@@ -56,8 +70,18 @@ setInterval(() => {
   }
 }, 5 * 60 * 1000);
 
+// Audit log retention — delete entries older than 90 days; run on startup and daily
+function pruneAuditLogs() {
+  db.prepare("DELETE FROM logs WHERE created_at < datetime('now', '-90 days')").run();
+}
+pruneAuditLogs();
+setInterval(pruneAuditLogs, 24 * 60 * 60 * 1000);
+
 // Multer — memory storage for file uploads (xlsx/csv import)
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024, fieldSize: 10 * 1024 }, // 20 MB file, 10 KB per non-file field
+});
 
 // Uploads directory for product images
 const UPLOADS_DIR = path.join(__dirname, 'uploads');
@@ -69,7 +93,7 @@ app.use(helmet({
       defaultSrc: ["'self'"],
       scriptSrc: ["'self'", "'unsafe-inline'"], // Vite dev requires inline scripts
       styleSrc: ["'self'", "'unsafe-inline'"],
-      imgSrc: ["'self'", "data:", "https:", "blob:"],
+      imgSrc: ["'self'", "data:", "https:", "blob:", "https://drive.google.com", "https://lh3.googleusercontent.com"],
       connectSrc: ["'self'", "https://world.openfoodfacts.org", "https://api.upcitemdb.com", "wss:"],
       fontSrc: ["'self'", "data:"],
       objectSrc: ["'none'"],
@@ -77,6 +101,7 @@ app.use(helmet({
     },
   },
   hsts: { maxAge: 31536000, includeSubDomains: true },
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
 }));
 
 // Auth endpoints: max 20 requests per 15 min per IP
@@ -108,26 +133,13 @@ app.use('/icons', express.static(path.join(process.cwd(), 'public', 'icons')));
 
 // Google Drive image proxy — fetches Drive thumbnails server-side so the browser
 // never needs a Google session. Only Drive file IDs are accepted (no open proxy).
-app.get('/api/drive-image/:fileId', async (req, res) => {
+app.get('/api/drive-image/:fileId', (req, res) => {
   const { fileId } = req.params;
   if (!/^[a-zA-Z0-9_-]+$/.test(fileId)) return res.status(400).end();
-  try {
-    const driveUrl = `https://drive.google.com/thumbnail?id=${fileId}&sz=w800`;
-    const upstream = await fetch(driveUrl, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; OptiCapture/1.0)' },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!upstream.ok) return res.status(502).end();
-    const contentType = upstream.headers.get('content-type') || 'image/jpeg';
-    // Only forward image responses — reject HTML (e.g. Google login redirect)
-    if (!contentType.startsWith('image/')) return res.status(502).end();
-    res.setHeader('Content-Type', contentType);
-    res.setHeader('Cache-Control', 'public, max-age=86400'); // cache 24h in browser
-    const buf = await upstream.arrayBuffer();
-    res.send(Buffer.from(buf));
-  } catch {
-    res.status(502).end();
-  }
+  // Redirect the browser directly to Google Drive's thumbnail CDN.
+  // The browser carries the user's Google session, so "anyone with the link"
+  // files resolve correctly. Server-side fetch doesn't have that session.
+  res.redirect(302, `https://drive.google.com/thumbnail?id=${fileId}&sz=w800`);
 });
 
 // Database Initialization
@@ -154,7 +166,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS stores (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
-    plan_tier TEXT DEFAULT 'starter',
+
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -290,13 +302,13 @@ runMigration(4, () => {
 // Seed sentinel store (id=0) for superadmin — must exist before superadmin user is inserted
 const checkHQ = db.prepare('SELECT id FROM stores WHERE id = 0').get();
 if (!checkHQ) {
-  db.prepare("INSERT INTO stores (id, name, plan_tier) VALUES (0, 'OptiCapture HQ', 'internal')").run();
+  db.prepare("INSERT INTO stores (id, name) VALUES (0, 'OptiCapture HQ')").run();
 }
 
 // Seed store
 const checkStore = db.prepare('SELECT id FROM stores WHERE id = 1').get();
 if (!checkStore) {
-  db.prepare("INSERT INTO stores (id, name, plan_tier) VALUES (1, 'OptiMart Downtown', 'professional')").run();
+  db.prepare("INSERT INTO stores (id, name) VALUES (1, 'OptiMart Downtown')").run();
 }
 
 // Seed demo accounts only in development (C-2: never seed known credentials in production)
@@ -493,6 +505,11 @@ db.prepare(`
     AND image NOT LIKE '%/api/drive-image/%'
 `).run();
 
+// Typed request for authenticated routes
+interface AuthRequest extends express.Request {
+  user: { id: number; username: string; role: string; store_id: number; store_name: string; };
+}
+
 // Middleware
 const authenticateToken = (req: any, res: any, next: any) => {
   const token = req.cookies.token;
@@ -511,9 +528,10 @@ const authenticateToken = (req: any, res: any, next: any) => {
   });
 };
 
-// Role guard — takers can view and scan, but cannot write/delete inventory or categories
+// Role guard — only owners and superadmins may write/delete inventory or categories
 const requireOwner = (req: any, res: any, next: any) => {
-  if (req.user.role === 'taker') return res.status(403).json({ error: 'Insufficient permissions' });
+  if (req.user.role !== 'owner' && req.user.role !== 'superadmin')
+    return res.status(403).json({ error: 'Insufficient permissions' });
   next();
 };
 
@@ -558,12 +576,7 @@ function normalizeImageUrl(url: string): string {
 }
 
 function generateTempPassword(): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
-  let result = '';
-  for (let i = 0; i < 10; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result;
+  return randomBytes(8).toString('base64url').slice(0, 10);
 }
 
 // Helper to get local IP address
@@ -703,7 +716,7 @@ app.get('/api/auth/google/callback', async (req: any, res) => {
 
     // New user — save pending profile and redirect to signup
     const key = randomUUID();
-    pendingOAuth.set(key, { googleId, email, name, expiresAt: Date.now() + 10 * 60 * 1000 });
+    pendingOAuthSet(key, { googleId, email, name, expiresAt: Date.now() + 10 * 60 * 1000 });
     res.redirect(`/signup?pending=${key}`);
   } catch {
     // H-2: Use opaque error code, not raw message
@@ -727,6 +740,10 @@ app.post('/api/auth/register', authLimiter, (req, res) => {
   const { store_name, street, zipcode, state, phone, email, username, password, oauth_key } = req.body;
   if (!store_name || !username)
     return res.status(400).json({ error: 'Store name and username are required' });
+  if (store_name.length > 100) return res.status(400).json({ error: 'Store name must be 100 characters or fewer' });
+  if (username.length > 50) return res.status(400).json({ error: 'Username must be 50 characters or fewer' });
+  if (street && street.length > 200) return res.status(400).json({ error: 'Street address must be 200 characters or fewer' });
+  if (email && email.length > 200) return res.status(400).json({ error: 'Email must be 200 characters or fewer' });
   if (!password && !oauth_key)
     return res.status(400).json({ error: 'Password is required' });
   if (password && (password.length < 8 || !/[A-Z]/.test(password) || !/\d/.test(password)))
@@ -753,8 +770,8 @@ app.post('/api/auth/register', authLimiter, (req, res) => {
     while (db.prepare('SELECT id FROM stores WHERE store_code = ?').get(storeCode)) storeCode = generateStoreCode();
 
     const storeInfo = db.prepare(
-      'INSERT INTO stores (name, street, zipcode, state, phone, email, plan_tier, store_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-    ).run(store_name, street || null, zipcode || null, state || null, phone || '', email || '', 'starter', storeCode);
+      'INSERT INTO stores (name, street, zipcode, state, phone, email, store_code) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run(store_name, street || null, zipcode || null, state || null, phone || '', email || '', storeCode);
     const storeId = storeInfo.lastInsertRowid as number;
 
     const hashed = password ? bcrypt.hashSync(password, 10) : null;
@@ -887,10 +904,10 @@ app.delete('/api/admin/stores/:id', authenticateToken, (req: any, res) => {
 // Super admin — edit store details
 app.put('/api/admin/stores/:id', authenticateToken, (req: any, res) => {
   if (req.user.role !== 'superadmin') return res.status(403).json({ error: 'Forbidden' });
-  const { name, street, zipcode, state, phone, email, plan_tier, logo } = req.body;
+  const { name, street, zipcode, state, phone, email, logo } = req.body;
   if (!name?.trim()) return res.status(400).json({ error: 'Store name is required' });
-  db.prepare('UPDATE stores SET name = ?, street = ?, zipcode = ?, state = ?, phone = ?, email = ?, plan_tier = ?, logo = ? WHERE id = ?')
-    .run(name.trim(), street || null, zipcode || null, state || null, phone || null, email || null, plan_tier || 'starter', logo || null, req.params.id);
+  db.prepare('UPDATE stores SET name = ?, street = ?, zipcode = ?, state = ?, phone = ?, email = ?, logo = ? WHERE id = ?')
+    .run(name.trim(), street || null, zipcode || null, state || null, phone || null, email || null, logo || null, req.params.id);
   res.json({ ok: true });
 });
 
@@ -953,7 +970,7 @@ app.post('/api/auth/switch-store', authenticateToken, (req: any, res) => {
 
 // Store Settings — get
 app.get('/api/store/settings', authenticateToken, (req: any, res) => {
-  const store = db.prepare('SELECT id, name, street, zipcode, state, phone, email, plan_tier, status, logo, store_code FROM stores WHERE id = ?')
+  const store = db.prepare('SELECT id, name, street, zipcode, state, phone, email, status, logo, store_code FROM stores WHERE id = ?')
     .get(req.user.store_id) as any;
   if (!store) return res.status(404).json({ error: 'Store not found' });
   res.json(store);
@@ -963,6 +980,9 @@ app.get('/api/store/settings', authenticateToken, (req: any, res) => {
 app.put('/api/store/settings', authenticateToken, (req: any, res) => {
   const { name, street, zipcode, state, phone, email, logo } = req.body;
   if (!name?.trim()) return res.status(400).json({ error: 'Store name is required' });
+  if (name.length > 100) return res.status(400).json({ error: 'Store name must be 100 characters or fewer' });
+  if (street && street.length > 200) return res.status(400).json({ error: 'Street address must be 200 characters or fewer' });
+  if (email && email.length > 200) return res.status(400).json({ error: 'Email must be 200 characters or fewer' });
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Invalid email address' });
   if (phone && !/^\d{10}$/.test(phone.replace(/\D/g, ''))) return res.status(400).json({ error: 'Phone must be 10 digits' });
   if (zipcode && !/^\d{5}(-\d{4})?$/.test(zipcode)) return res.status(400).json({ error: 'Zipcode format: 12345 or 12345-6789' });
@@ -1176,18 +1196,18 @@ app.get('/api/inventory/export', authenticateToken, requireOwner, async (req: an
 
   // xlsx — one sheet per category, sheet name = category name
   const XLSX_COLS = ['item_name','description','quantity','unit','sale_price','tax_percent','upc','number','tag_names','status','created_at'];
-  const wb = xlsxUtils.book_new();
+  const wb = new ExcelJS.Workbook();
   for (const [cat, items] of Object.entries(grouped)) {
-    const sheetRows = items.map(r => Object.fromEntries(XLSX_COLS.map(c => [c, r[c] ?? ''])));
-    const ws = xlsxUtils.json_to_sheet(sheetRows, { header: XLSX_COLS });
     // Excel sheet names: max 31 chars, strip invalid characters [ ] : * ? / \
-    const sheetName = cat.replace(/[\[\]:*?/\\]/g, '').slice(0, 31);
-    xlsxUtils.book_append_sheet(wb, ws, sheetName);
+    const sheetName = cat.replace(/[[\]:*?/\\]/g, '').slice(0, 31) || 'Sheet';
+    const ws = wb.addWorksheet(sheetName);
+    ws.addRow(XLSX_COLS);
+    for (const r of items) ws.addRow(XLSX_COLS.map(c => r[c] ?? ''));
   }
-  const buf = xlsxWrite(wb, { type: 'buffer', bookType: 'xlsx' });
+  const buf = await wb.xlsx.writeBuffer();
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}.xlsx"`);
-  res.send(buf);
+  res.send(Buffer.from(buf));
 });
 
 app.post('/api/inventory', authenticateToken, requireOwner, (req: any, res) => {
@@ -1760,7 +1780,7 @@ app.post('/api/session/:id/scan', scanLimiter, async (req, res) => {
       const resolvedStatus  = resolvedName ? 'new_candidate' : 'unknown';
 
       // Update cache regardless of whether we found anything
-      upcCache.set(cleanUpc, { product_name: resolvedName, brand: resolvedBrand, image: resolvedImage, source: resolvedSource, ts: Date.now() });
+      upcCacheSet(cleanUpc, { product_name: resolvedName, brand: resolvedBrand, image: resolvedImage, source: resolvedSource, ts: Date.now() });
 
       // Only update DB if we actually got something useful
       if (resolvedName) {
@@ -1773,7 +1793,7 @@ app.post('/api/session/:id/scan', scanLimiter, async (req, res) => {
       }
     }).catch(() => {
       // External API failed — cache as unknown so we don't retry until TTL expires
-      upcCache.set(cleanUpc, { product_name: null, brand: null, image: null, source: 'scan_only', ts: Date.now() });
+      upcCacheSet(cleanUpc, { product_name: null, brand: null, image: null, source: 'scan_only', ts: Date.now() });
     });
   }
 });
@@ -1862,6 +1882,8 @@ app.post('/api/session/:id/commit', authenticateToken, requireOwner, (req: any, 
   `);
   const checkInventory = db.prepare('SELECT id FROM inventory WHERE upc = ? AND store_id = ?');
 
+  const deleteSessionItem = db.prepare('DELETE FROM session_items WHERE id = ?');
+
   const transaction = db.transaction((sessionItems: any[]) => {
     let inserted = 0;
     let skippedExisting = 0;
@@ -1873,19 +1895,26 @@ app.post('/api/session/:id/commit', authenticateToken, requireOwner, (req: any, 
       if (item.lookup_status !== 'new_candidate') { skippedUnknown++; continue; }
 
       const catId = assignmentMap.get(item.id)!;
+      const qty = Math.max(0, Math.min(parseFloat(item.quantity) || 0, 1_000_000));
+      const price = item.sale_price != null ? Math.max(0, parseFloat(item.sale_price) || 0) : null;
       insertInventory.run(
         item.product_name || 'Unknown Scanned Item',
-        item.upc, item.quantity, catId,
+        item.upc, qty, catId,
         item.image || null,
-        item.sale_price ? parseFloat(item.sale_price) : null,
+        price,
         item.unit || null,
         user.store_id
       );
+      deleteSessionItem.run(item.id);
       byCategory[catId] = (byCategory[catId] ?? 0) + 1;
       inserted++;
     }
 
-    db.prepare("UPDATE scan_sessions SET status = 'completed' WHERE session_id = ?").run(id);
+    // Only complete the session if every item was either committed or skipped
+    const remaining = db.prepare('SELECT COUNT(*) as n FROM session_items WHERE session_id = ?').get(id) as any;
+    if (remaining.n === 0) {
+      db.prepare("UPDATE scan_sessions SET status = 'completed' WHERE session_id = ?").run(id);
+    }
     return { inserted, skippedExisting, skippedUnknown, byCategory };
   });
 
@@ -1906,7 +1935,7 @@ app.post('/api/session/:id/commit', authenticateToken, requireOwner, (req: any, 
 });
 
 // Batch Upload — parse ALL sheets, return headers + preview + full rows per sheet
-app.post('/api/inventory/batch-upload', authenticateToken, requireOwner, upload.single('file'), (req: any, res) => {
+app.post('/api/inventory/batch-upload', authenticateToken, requireOwner, upload.single('file'), async (req: any, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
   // After receiving the uploaded file, check MIME type
@@ -1940,17 +1969,45 @@ app.post('/api/inventory/batch-upload', authenticateToken, requireOwner, upload.
       return res.json({ sheets, totalRows: rows.length });
     }
 
-    const workbook = xlsxRead(req.file.buffer, { type: 'buffer' });
-    const sheets = workbook.SheetNames.map(name => {
-      const rows: Record<string, any>[] = xlsxUtils.sheet_to_json(workbook.Sheets[name], { defval: '' });
-      return {
-        name,
+    const isCsv = req.file.mimetype === 'text/csv' || req.file.mimetype === 'application/csv' ||
+      req.file.originalname?.toLowerCase().endsWith('.csv');
+
+    if (isCsv) {
+      const { data, errors } = Papa.parse<Record<string, any>>(req.file.buffer.toString('utf8'), {
+        header: true, skipEmptyLines: true, dynamicTyping: false,
+      });
+      if (errors.length && data.length === 0) return res.status(400).json({ error: 'Could not parse CSV file.' });
+      const rows = data as Record<string, any>[];
+      const sheets = [{
+        name: 'Sheet1',
         headers: rows.length > 0 ? Object.keys(rows[0]) : [],
         preview: rows.slice(0, 5),
         rows,
         rowCount: rows.length,
+      }];
+      return res.json({ sheets, totalRows: rows.length });
+    }
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(req.file.buffer);
+    const sheets = (await Promise.all(workbook.worksheets.map(async ws => {
+      const headerRow = (ws.getRow(1).values as any[]).slice(1); // exceljs rows are 1-indexed; slice off leading undefined
+      const rows: Record<string, any>[] = [];
+      ws.eachRow((row, rowNumber) => {
+        if (rowNumber === 1) return;
+        const vals = (row.values as any[]).slice(1);
+        const obj: Record<string, any> = {};
+        headerRow.forEach((h: any, i: number) => { obj[String(h ?? '')] = vals[i] ?? ''; });
+        rows.push(obj);
+      });
+      return {
+        name: ws.name,
+        headers: headerRow.map(String),
+        preview: rows.slice(0, 5),
+        rows,
+        rowCount: rows.length,
       };
-    }).filter(s => s.rowCount > 0);
+    }))).filter(s => s.rowCount > 0);
 
     if (sheets.length === 0) return res.status(400).json({ error: 'File is empty or has no data rows' });
 
