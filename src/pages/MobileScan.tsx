@@ -176,7 +176,7 @@ export default function MobileScan() {
         return;
       }
 
-      if (import.meta.env.DEV) console.log('SCANNED CODE:', cleanCode);
+      if (import.meta.env.DEV) console.warn('SCANNED CODE:', cleanCode);
 
       lastScanRef.current = { code: cleanCode, time: now };
       isProcessingRef.current = true;
@@ -273,7 +273,7 @@ export default function MobileScan() {
           },
         },
         scannerElementId,
-        async (result, error) => {
+        async (result, _error) => {
           if (result) {
             const code = result.getText();
             await onScanRef.current(code);

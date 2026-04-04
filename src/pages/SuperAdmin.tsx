@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import { Store, Users, Package, ShieldCheck, ShieldOff, LogOut, RefreshCw, Pencil, X, UserPlus, Trash2, Loader2, KeyRound, Copy, AlertTriangle, Search } from 'lucide-react';
@@ -11,7 +11,7 @@ interface StoreRow {
   address: string;
   email: string;
   phone: string;
-  plan_tier: string;
+
   status: string;
   created_at: string;
   user_count: number;
@@ -64,11 +64,7 @@ export default function SuperAdmin() {
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'suspended'>('all');
   const [joinedSort, setJoinedSort] = useState<'newest' | 'oldest'>('newest');
 
-  useEffect(() => {
-    fetchStores();
-  }, []);
-
-  const fetchStores = async () => {
+  const fetchStores = useCallback(async () => {
     setIsLoading(true);
     try {
       const res = await fetch('/api/admin/stores', { credentials: 'include' });
@@ -80,7 +76,11 @@ export default function SuperAdmin() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [navigate]);
+
+  useEffect(() => {
+    fetchStores();
+  }, [fetchStores]);
 
   const toggleStatus = async (store: StoreRow) => {
     const newStatus = store.status === 'active' ? 'suspended' : 'active';
@@ -197,7 +197,7 @@ export default function SuperAdmin() {
           state: editStore.state,
           phone: editStore.phone,
           email: editStore.email,
-          plan_tier: editStore.plan_tier,
+
           logo: editStore.logo,
         }),
       });
@@ -210,7 +210,7 @@ export default function SuperAdmin() {
         const error = await res.text();
         setEditError(error || 'Failed to save changes');
       }
-    } catch (err) {
+    } catch (_err) {
       setEditError('Failed to save changes');
     } finally {
       setEditSaving(false);
@@ -394,7 +394,7 @@ export default function SuperAdmin() {
               <table className="w-full text-left">
                 <thead className="bg-slate-50 border-b border-slate-200">
                   <tr>
-                    {['Store', 'Contact', 'Plan', 'Users', 'Items', 'Joined', 'Status', 'Actions'].map(h => (
+                    {['Store', 'Contact', 'Users', 'Items', 'Joined', 'Status', 'Actions'].map(h => (
                       <th key={h} className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">{h}</th>
                     ))}
                   </tr>
@@ -429,11 +429,7 @@ export default function SuperAdmin() {
                         {store.email && <p className={cn(store.status === 'suspended' ? 'text-slate-700' : 'text-slate-700')}>{store.email}</p>}
                         {store.phone && <p className={cn(store.status === 'suspended' ? 'text-slate-700' : 'text-slate-600')}>{store.phone}</p>}
                       </td>
-                      <td className="px-4 py-4">
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700 capitalize">
-                          {store.plan_tier}
-                        </span>
-                      </td>
+
                       <td className="px-4 py-4 text-sm text-slate-700 font-mono">{store.user_count}</td>
                       <td className="px-4 py-4 text-sm text-slate-700 font-mono">{store.item_count}</td>
                       <td className="px-4 py-4 text-sm text-slate-600">
@@ -638,18 +634,6 @@ export default function SuperAdmin() {
                   {editErrors.email && <p className="text-xs text-red-500 mt-1">{editErrors.email}</p>}
                 </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Plan Tier</label>
-                  <select
-                    value={editStore.plan_tier}
-                    onChange={e => setEditStore({ ...editStore, plan_tier: e.target.value })}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-navy-700 focus:border-transparent"
-                  >
-                    <option value="starter">Starter</option>
-                    <option value="professional">Professional</option>
-                    <option value="enterprise">Enterprise</option>
-                  </select>
-                </div>
 
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Logo</label>
