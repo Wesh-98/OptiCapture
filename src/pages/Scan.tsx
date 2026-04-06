@@ -70,7 +70,7 @@ interface Toast {
 
 type UiStatus = 'idle' | 'loading' | 'ready' | 'error' | 'committing';
 
-function StatusBadge({ item }: { item: SessionItem }) {
+function StatusBadge({ item }: Readonly<{ item: SessionItem }>) {
   if (item.exists_in_inventory === 1) {
     return <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600">In Stock</span>;
   }
@@ -80,7 +80,7 @@ function StatusBadge({ item }: { item: SessionItem }) {
   return <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-700">Unknown</span>;
 }
 
-function SourcePill({ source }: { source: string | null }) {
+function SourcePill({ source }: Readonly<{ source: string | null }>) {
   if (!source || source === 'scan_only') return null;
   const label =
     source === 'open_food_facts' ? 'OFF' :
@@ -98,6 +98,45 @@ function defaultDraftName(): string {
   const day = now.toLocaleDateString('en-US', { weekday: 'short' });
   const time = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
   return `Scan · ${day} ${time}`;
+}
+
+// ─── Poll helpers (pure, no React deps) ─────────────────────────────────────
+
+function buildPollUrl(sessionId: string, sinceId: number | null): string {
+  return sinceId != null
+    ? `/api/session/${sessionId}?since_id=${sinceId}`
+    : `/api/session/${sessionId}`;
+}
+
+function parseSessionEnvelope(raw: unknown): { items: SessionItem[]; expiresAt: string | null } {
+  if (Array.isArray(raw)) return { items: raw as SessionItem[], expiresAt: null };
+  const obj = raw as { items?: SessionItem[]; expires_at?: string };
+  return { items: obj.items ?? [], expiresAt: obj.expires_at ?? null };
+}
+
+function mergeSessionItems(
+  prevItems: SessionItem[],
+  incoming: SessionItem[],
+  isFullRefresh: boolean,
+): SessionItem[] {
+  if (isFullRefresh) return incoming;
+  if (incoming.length === 0) return prevItems;
+  const incomingIds = new Set(incoming.map(i => i.id));
+  return [...incoming, ...prevItems.filter(i => !incomingIds.has(i.id))];
+}
+
+function autoSelectIncoming(
+  prev: Set<number>,
+  incoming: SessionItem[],
+  manuallyDeselected: Set<number>,
+): Set<number> {
+  const next = new Set(prev);
+  for (const item of incoming) {
+    if (item.lookup_status === 'new_candidate' && !item.exists_in_inventory && !manuallyDeselected.has(item.id)) {
+      next.add(item.id);
+    }
+  }
+  return next;
 }
 
 export default function Scan() {
@@ -152,7 +191,7 @@ export default function Scan() {
     sessionStatusRef.current = sessionStatus;
   }, [sessionStatus]);
 
-  const pollIntervalRef = useRef<number | null>(null);
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isBusyRef = useRef(false);
   const pollFailCountRef = useRef(0);
   const lastPollAtRef = useRef<number | null>(null); // highest item id seen — used as delta cursor
@@ -166,7 +205,7 @@ export default function Scan() {
   const lastScannedAtRef = useRef<number>(0);
 
   const addToast = useCallback((type: 'success' | 'error' | 'warning', message: string) => {
-    const id = Math.random().toString(36).substr(2, 9);
+    const id = Math.random().toString(36).slice(2, 11);
     setToasts(prev => [...prev, { id, type, message }]);
     setTimeout(() => {
       setToasts(prev => prev.filter(t => t.id !== id));
@@ -186,8 +225,8 @@ export default function Scan() {
       }
     };
     check();
-    const id = window.setInterval(check, 60_000);
-    return () => window.clearInterval(id);
+    const id = globalThis.setInterval(check, 60_000);
+    return () => globalThis.clearInterval(id);
   }, [sessionExpiresAt, sessionStatus, addToast]);
 
   const submitHardwareScan = useCallback(async (upc: string) => {
@@ -232,7 +271,7 @@ export default function Scan() {
   const fetchServerInfo = useCallback(async () => {
     setIpLoading(true);
     const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 5000);
+    const timeout = globalThis.setTimeout(() => controller.abort(), 5000);
     try {
       const res = await fetch('/api/server-info', { credentials: 'include', signal: controller.signal });
       if (!res.ok) throw new Error(`Server info request failed: ${res.status}`);
@@ -247,7 +286,7 @@ export default function Scan() {
     } catch {
       setServerInfo({ ip: 'localhost', port: 3000, protocol: 'http' });
     } finally {
-      window.clearTimeout(timeout);
+      globalThis.clearTimeout(timeout);
       setIpLoading(false);
     }
   }, []);
@@ -366,93 +405,44 @@ export default function Scan() {
     if (!sessionId) return;
     try {
       const sinceId = fullRefresh ? null : lastPollAtRef.current;
-      const url = sinceId != null
-        ? `/api/session/${sessionId}?since_id=${sinceId}`
-        : `/api/session/${sessionId}`;
-      const res = await fetch(url, { credentials: 'include' });
+      const res = await fetch(buildPollUrl(sessionId, sinceId), { credentials: 'include' });
       if (!res.ok) throw new Error(`Polling failed: ${res.status}`);
-      const raw = await res.json();
-      // Support both legacy array and new { items, expires_at } envelope
-      const data: SessionItem[] = Array.isArray(raw) ? raw : (raw.items ?? []);
-      if (!Array.isArray(raw) && raw.expires_at) {
-        setSessionExpiresAt(raw.expires_at);
-      }
+      const { items: data, expiresAt } = parseSessionEnvelope(await res.json());
+      if (expiresAt) setSessionExpiresAt(expiresAt);
       pollFailCountRef.current = 0;
 
       if (data.length > 0) {
-        // Track highest item id seen — strictly monotonic, no timestamp precision issues
         const maxId = data.reduce((max, item) => (item.id > max ? item.id : max), 0);
         if (maxId > (lastPollAtRef.current ?? 0)) lastPollAtRef.current = maxId;
-      }
-
-      setItems(prevItems => {
-        if (fullRefresh || sinceId == null) {
-          // Full replace on first load
-          if (data.length > prevItems.length) lastItemAddedAtRef.current = Date.now();
-          return data;
-        }
-        if (data.length === 0) return prevItems; // nothing new
-        // Delta: prepend new items, update any that changed (e.g. quantity bumped)
         lastItemAddedAtRef.current = Date.now();
-        const incomingIds = new Set(data.map(i => i.id));
-        const merged = [
-          ...data,
-          ...prevItems.filter(i => !incomingIds.has(i.id)),
-        ];
-        return merged;
-      });
-      // Auto-select new items that aren't already in inventory
-      setSelectedIds(prev => {
-        const next = new Set(prev);
-        data.forEach(item => {
-          if (item.lookup_status === 'new_candidate' && !item.exists_in_inventory && !manuallyDeselectedRef.current.has(item.id)) {
-            next.add(item.id);
+      }
+
+      setItems(prev => mergeSessionItems(prev, data, fullRefresh || sinceId == null));
+      setSelectedIds(prev => autoSelectIncoming(prev, data, manuallyDeselectedRef.current));
+
+      const checkAlerts = () => {
+        if (!data.length || sessionStatusRef.current !== 'active') return;
+        if (sessionStartTimeRef.current) {
+          const sessionAge = Date.now() - sessionStartTimeRef.current;
+          const thirtyMin = 30 * 60 * 1000;
+          const tooSoon = lastLongSessionAlertRef.current != null && Date.now() - lastLongSessionAlertRef.current < thirtyMin;
+          if (sessionAge >= thirtyMin && !tooSoon) {
+            lastLongSessionAlertRef.current = Date.now();
+            setDraftAlert({ message: `You've been scanning for ${Math.floor(sessionAge / 60000)} min — save as draft to protect your progress.`, visible: true });
           }
-        });
-        return next;
-      });
-
-      // Auto-alert: long session (every 30 min)
-      if (
-        sessionStatusRef.current === 'active' &&
-        sessionStartTimeRef.current &&
-        data.length > 0
-      ) {
-        const sessionAge = Date.now() - sessionStartTimeRef.current;
-        const thirtyMin = 30 * 60 * 1000;
-        if (
-          sessionAge >= thirtyMin &&
-          (!lastLongSessionAlertRef.current || Date.now() - lastLongSessionAlertRef.current >= thirtyMin)
-        ) {
-          lastLongSessionAlertRef.current = Date.now();
-          setDraftAlert({
-            message: `You've been scanning for ${Math.floor(sessionAge / 60000)} min — save as draft to protect your progress.`,
-            visible: true,
-          });
         }
-      }
-
-      // Auto-alert: idle desktop (10 min no new items)
-      if (
-        sessionStatusRef.current === 'active' &&
-        lastItemAddedAtRef.current &&
-        data.length > 0 &&
-        !idleAlertFiredRef.current &&
-        Date.now() - lastItemAddedAtRef.current > 10 * 60 * 1000
-      ) {
-        idleAlertFiredRef.current = true;
-        setDraftAlert({
-          message: 'No new items scanned for 10 min — save as draft to protect your progress.',
-          visible: true,
-        });
-      }
-
+        if (lastItemAddedAtRef.current && !idleAlertFiredRef.current && Date.now() - lastItemAddedAtRef.current > 10 * 60 * 1000) {
+          idleAlertFiredRef.current = true;
+          setDraftAlert({ message: 'No new items scanned for 10 min — save as draft to protect your progress.', visible: true });
+        }
+      };
+      checkAlerts();
       setPollError(null);
     } catch {
       pollFailCountRef.current += 1;
       if (pollFailCountRef.current >= 3) {
         if (pollIntervalRef.current) {
-          window.clearInterval(pollIntervalRef.current);
+          globalThis.clearInterval(pollIntervalRef.current);
           pollIntervalRef.current = null;
         }
         setUiStatus('error');
@@ -466,7 +456,7 @@ export default function Scan() {
 
   const stopPolling = useCallback(() => {
     if (pollIntervalRef.current) {
-      window.clearInterval(pollIntervalRef.current);
+      globalThis.clearInterval(pollIntervalRef.current);
       pollIntervalRef.current = null;
     }
   }, []);
@@ -474,111 +464,100 @@ export default function Scan() {
   const startPolling = useCallback(() => {
     stopPolling();
     if (!sessionId) return;
-    pollIntervalRef.current = window.setInterval(() => { fetchSessionItems(); }, 2000);
+    pollIntervalRef.current = globalThis.setInterval(() => { fetchSessionItems(); }, 2000);
   }, [sessionId, fetchSessionItems, stopPolling]);
 
   useEffect(() => {
     fetchServerInfo();
-    const serverInfoInterval = window.setInterval(fetchServerInfo, 30_000);
+    const serverInfoInterval = globalThis.setInterval(fetchServerInfo, 30_000);
 
+    const resumeFromParam = async (paramSessionId: string): Promise<boolean> => {
+      try {
+        const sessionsRes = await fetch('/api/sessions/active', { credentials: 'include' });
+        if (sessionsRes.ok) {
+          const sessions = await sessionsRes.json();
+          const found = sessions.find((s: any) => s.session_id === paramSessionId);
+          if (found) {
+            setSessionId(found.session_id);
+            setOtp(found.otp);
+            setSessionStatus(found.status);
+            setSessionLabel(found.label ?? null);
+            if (found.status !== 'completed') {
+              sessionStorage.setItem('scan_session_id', found.session_id);
+              sessionStorage.setItem('scan_otp', found.otp);
+            }
+            sessionStartTimeRef.current = Date.now();
+            lastItemAddedAtRef.current = Date.now();
+            return true;
+          }
+        }
+        // Not in active/draft list — check if it's a completed session
+        const metaRes = await fetch(`/api/session/${paramSessionId}/meta`, { credentials: 'include' });
+        if (metaRes.ok) {
+          const meta = await metaRes.json();
+          if (meta.status === 'completed') {
+            setSessionId(paramSessionId);
+            setSessionStatus('completed');
+            setSessionLabel(meta.label ?? null);
+            setSessionLoading(false);
+            return true;
+          }
+        }
+      } catch {}
+      return false;
+    };
+
+    const resumeFromStorage = async (savedId: string, savedOtp: string): Promise<boolean> => {
+      try {
+        const statusRes = await fetch('/api/sessions/active', { credentials: 'include' });
+        const activeSessions = statusRes.ok ? await statusRes.json() : [];
+        const match = activeSessions.find((s: any) => s.session_id === savedId);
+        const res = await fetch(`/api/session/${savedId}`, { credentials: 'include' });
+        if (!res.ok) {
+          sessionStorage.removeItem('scan_session_id');
+          sessionStorage.removeItem('scan_otp');
+          sessionStorage.removeItem('scan_store_id');
+          return false;
+        }
+        const { items: data, expiresAt } = parseSessionEnvelope(await res.json());
+        if (expiresAt) setSessionExpiresAt(expiresAt);
+        setSessionId(savedId);
+        setOtp(savedOtp);
+        setSessionStatus(match?.status ?? 'active');
+        setSessionLabel(match?.label ?? null);
+        setItems(data);
+        setUiStatus('ready');
+        setStatusMessage('Session resumed. Scan the QR code with your phone.');
+        sessionStartTimeRef.current = Date.now();
+        lastItemAddedAtRef.current = Date.now();
+        setSelectedIds(new Set(
+          data.filter((i: any) => i.lookup_status === 'new_candidate' && !i.exists_in_inventory).map((i: any) => i.id)
+        ));
+        return true;
+      } catch {}
+      return false;
+    };
+
+    // Check for ?session= param, then sessionStorage, then create new
     (async () => {
-      // Check for ?session= param
       const paramSessionId = searchParams.get('session');
-      if (paramSessionId) {
-        try {
-          const sessionsRes = await fetch('/api/sessions/active', { credentials: 'include' });
-          if (sessionsRes.ok) {
-            const sessions = await sessionsRes.json();
-            const found = sessions.find((s: any) => s.session_id === paramSessionId);
-            if (found) {
-              setSessionId(found.session_id);
-              setOtp(found.otp);
-              setSessionStatus(found.status);
-              setSessionLabel(found.label ?? null);
-              if (found.status !== 'completed') {
-                sessionStorage.setItem('scan_session_id', found.session_id);
-                sessionStorage.setItem('scan_otp', found.otp);
-              }
-              sessionStartTimeRef.current = Date.now();
-              lastItemAddedAtRef.current = Date.now();
-              return;
-            }
-          }
-          // Not in active/draft list — check if it's a completed session
-          const metaRes = await fetch(`/api/session/${paramSessionId}/meta`, { credentials: 'include' });
-          if (metaRes.ok) {
-            const meta = await metaRes.json();
-            if (meta.status === 'completed') {
-              setSessionId(paramSessionId);
-              setSessionStatus('completed');
-              setSessionLabel(meta.label ?? null);
-              setSessionLoading(false);
-              return;
-            }
-          }
-        } catch {}
-      }
+      if (paramSessionId && await resumeFromParam(paramSessionId)) return;
 
-      // Check sessionStorage for existing session — validate it belongs to the current store
       const savedId = sessionStorage.getItem('scan_session_id');
       const savedOtp = sessionStorage.getItem('scan_otp');
       const savedStoreId = sessionStorage.getItem('scan_store_id');
+      // Guard against cross-store session leaks
       const storeIdMismatch = savedStoreId != null && user?.store_id != null && String(user.store_id) !== savedStoreId;
       if (storeIdMismatch) {
         sessionStorage.removeItem('scan_session_id');
         sessionStorage.removeItem('scan_otp');
         sessionStorage.removeItem('scan_store_id');
       }
-      if (savedId && savedOtp && !storeIdMismatch) {
-        // Try to resume the existing session
-        try {
-          // Use /api/sessions/active to get real status from DB
-          const statusRes = await fetch('/api/sessions/active', { credentials: 'include' });
-          const activeSessions = statusRes.ok ? await statusRes.json() : [];
-          const match = activeSessions.find((s: any) => s.session_id === savedId);
-
-          const res = await fetch(`/api/session/${savedId}`, { credentials: 'include' });
-          if (res.ok) {
-            const raw = await res.json();
-            // Support both legacy array and new { items, expires_at } envelope
-            const data: SessionItem[] = Array.isArray(raw) ? raw : (raw.items ?? []);
-            if (!Array.isArray(raw) && raw.expires_at) {
-              setSessionExpiresAt(raw.expires_at);
-            }
-            // data is an array of session items — session still exists
-            setSessionId(savedId);
-            setOtp(savedOtp);
-            setSessionStatus(match?.status ?? 'active');
-            setSessionLabel(match?.label ?? null);
-            setItems(data);
-            setUiStatus('ready');
-            setStatusMessage('Session resumed. Scan the QR code with your phone.');
-            sessionStartTimeRef.current = Date.now();
-            lastItemAddedAtRef.current = Date.now();
-            // Auto-select new candidates
-            setSelectedIds(new Set(
-              data
-                .filter((i: any) => i.lookup_status === 'new_candidate' && !i.exists_in_inventory)
-                .map((i: any) => i.id)
-            ));
-            return;
-          } else {
-            // Session expired or not found — clear all session storage
-            sessionStorage.removeItem('scan_session_id');
-            sessionStorage.removeItem('scan_otp');
-            sessionStorage.removeItem('scan_store_id');
-          }
-        } catch {}
-      }
-
-      // No sessionStorage session on this device — auto-create a new one.
-      // Sessions from other devices (or other takers on the same login) remain
-      // visible on the Dashboard for the owner to review and commit — they are
-      // not surfaced here to avoid one phone hijacking another's session.
+      if (savedId && savedOtp && !storeIdMismatch && await resumeFromStorage(savedId, savedOtp)) return;
       createSession();
     })();
 
-    return () => { stopPolling(); window.clearInterval(serverInfoInterval); };
+    return () => { stopPolling(); globalThis.clearInterval(serverInfoInterval); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchServerInfo, createSession, stopPolling, searchParams]);
 
@@ -669,9 +648,13 @@ export default function Scan() {
       if (!res.ok) throw new Error(`Commit failed: ${res.status}`);
       const result = await res.json();
       const skipped = (result.skippedExisting ?? 0) + (result.skippedUnknown ?? 0);
-      const toastMsg = skipped > 0
-        ? `${result.inserted ?? 0} committed — ${result.skippedExisting ?? 0} duplicate${result.skippedExisting !== 1 ? 's' : ''}, ${result.skippedUnknown ?? 0} unknown skipped`
-        : `${result.inserted ?? 0} item(s) committed to inventory`;
+      let toastMsg: string;
+      if (skipped > 0) {
+        const dupSuffix = result.skippedExisting !== 1 ? 's' : '';
+        toastMsg = `${result.inserted ?? 0} committed — ${result.skippedExisting ?? 0} duplicate${dupSuffix}, ${result.skippedUnknown ?? 0} unknown skipped`;
+      } else {
+        toastMsg = `${result.inserted ?? 0} item(s) committed to inventory`;
+      }
       addToast(result.inserted > 0 ? 'success' : 'warning', toastMsg);
       // Remove only the committed items from the list — keep the session alive
       // so remaining unselected items stay visible and scanning can continue.
@@ -727,10 +710,20 @@ export default function Scan() {
       });
       if (!res.ok) throw new Error('Save failed');
       // Update local state immediately
-      setItems(prev => prev.map(i =>
-        i.id === editItem.id
-          ? { ...i, product_name: editItem.product_name || null, brand: editItem.brand || null, quantity: editItem.quantity, upc: editItem.upc, image: editItem.image || null, lookup_status: 'new_candidate', sale_price: editItem.sale_price ? parseFloat(editItem.sale_price) : null, unit: editItem.unit || null }
-          : i
+      setItems(prev => prev.map(i => {
+        if (i.id !== editItem.id) return i;
+        return {
+          ...i,
+          product_name: editItem.product_name || null,
+          brand: editItem.brand || null,
+          quantity: editItem.quantity,
+          upc: editItem.upc,
+          image: editItem.image || null,
+          lookup_status: 'new_candidate',
+          sale_price: editItem.sale_price ? Number.parseFloat(editItem.sale_price) : null,
+          unit: editItem.unit || null,
+        };
+      }
       ));
       // Auto-select the edited item since it's now a candidate
       setSelectedIds(prev => new Set([...prev, editItem.id]));
@@ -760,7 +753,7 @@ export default function Scan() {
 
   const handleClearAllItems = async () => {
     if (!sessionId) return;
-    if (!window.confirm('Clear all scanned items? This cannot be undone.')) return;
+    if (!globalThis.confirm('Clear all scanned items? This cannot be undone.')) return;
     try {
       const res = await fetch(`/api/session/${sessionId}/items`, {
         method: 'DELETE',
@@ -778,7 +771,7 @@ export default function Scan() {
 
   const handleDeleteDraft = async () => {
     if (!sessionId) return;
-    if (!window.confirm('Delete this draft entirely? All scanned items will be lost.')) return;
+    if (!globalThis.confirm('Delete this draft entirely? All scanned items will be lost.')) return;
     try {
       const res = await fetch(`/api/session/${sessionId}`, {
         method: 'DELETE',
@@ -795,7 +788,7 @@ export default function Scan() {
 
   const mobileUrl = useMemo(() => {
     if (!sessionId || !otp) return '';
-    const base = serverInfo?.mobileUrl ?? window.location.origin;
+    const base = serverInfo?.mobileUrl ?? globalThis.location.origin;
     return `${base}/mobile-scan/${sessionId}?otp=${otp}`;
   }, [sessionId, otp, serverInfo]);
 
@@ -810,7 +803,7 @@ export default function Scan() {
 
   return (
     <div className="space-y-6">
-      {showDraftPopover && <div className="fixed inset-0 z-20" onClick={() => setShowDraftPopover(false)} />}
+      {showDraftPopover && <div role="presentation" aria-hidden="true" className="fixed inset-0 z-20" onClick={() => setShowDraftPopover(false)} />}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h2 className="text-2xl font-bold text-navy-900">Live Scan Center</h2>
@@ -896,12 +889,12 @@ export default function Scan() {
                       <span>
                         {serverInfo?.tunnelUrl
                           ? `Tunnel: ${serverInfo.tunnelUrl}`
-                          : `Origin: ${window.location.origin}`}
+                          : `Origin: ${globalThis.location.origin}`}
                       </span>
                     </div>
                     <div className="flex items-center gap-2 text-xs font-mono text-emerald-400">
                       <ShieldCheck size={14} />
-                      <span>Protocol: {window.location.protocol.replace(':', '').toUpperCase()}</span>
+                      <span>Protocol: {globalThis.location.protocol.replaceAll(':', '').toUpperCase()}</span>
                     </div>
                     {otp && (
                       <p className="text-xs font-mono text-emerald-400">
@@ -1031,7 +1024,7 @@ export default function Scan() {
                         type="text"
                         value={draftNameInput}
                         onChange={e => setDraftNameInput(e.target.value)}
-                        onKeyDown={e => { if (e.key === 'Enter') handleConfirmDraft(draftNameInput); if (e.key === 'Escape') setShowDraftPopover(false); }}
+                        onKeyDown={e => { if (e.key === 'Enter') { handleConfirmDraft(draftNameInput); } else if (e.key === 'Escape') { setShowDraftPopover(false); } }}
                         placeholder="e.g. Morning scan · Aisle 3"
                         className="w-full px-3 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 mb-2"
                       />
@@ -1309,8 +1302,9 @@ export default function Scan() {
               </div>
               <div className="p-5 space-y-4 overflow-y-auto max-h-[90vh]">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Product Name</label>
+                  <label htmlFor="scan-edit-name" className="block text-sm font-medium text-slate-700 mb-1">Product Name</label>
                   <input
+                    id="scan-edit-name"
                     type="text"
                     value={editItem.product_name}
                     onChange={e => setEditItem({ ...editItem, product_name: e.target.value })}
@@ -1319,8 +1313,9 @@ export default function Scan() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Brand</label>
+                  <label htmlFor="scan-edit-brand" className="block text-sm font-medium text-slate-700 mb-1">Brand</label>
                   <input
+                    id="scan-edit-brand"
                     type="text"
                     value={editItem.brand}
                     onChange={e => setEditItem({ ...editItem, brand: e.target.value })}
@@ -1329,8 +1324,9 @@ export default function Scan() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Quantity</label>
+                  <label htmlFor="scan-edit-qty" className="block text-sm font-medium text-slate-700 mb-1">Quantity</label>
                   <input
+                    id="scan-edit-qty"
                     type="number"
                     min="1"
                     value={editItem.quantity}
@@ -1341,10 +1337,11 @@ export default function Scan() {
 
                 {/* Sale Price */}
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Sale Price</label>
+                  <label htmlFor="scan-edit-price" className="block text-sm font-medium text-slate-700 mb-1">Sale Price</label>
                   <div className="relative">
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">$</span>
                     <input
+                      id="scan-edit-price"
                       type="number"
                       min="0"
                       step="0.01"
@@ -1358,8 +1355,9 @@ export default function Scan() {
 
                 {/* Unit */}
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Unit</label>
+                  <label htmlFor="scan-edit-unit" className="block text-sm font-medium text-slate-700 mb-1">Unit</label>
                   <input
+                    id="scan-edit-unit"
                     type="text"
                     list="unit-options"
                     value={editItem.unit}
@@ -1385,8 +1383,9 @@ export default function Scan() {
                   </datalist>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">UPC / Barcode</label>
+                  <label htmlFor="scan-edit-upc" className="block text-sm font-medium text-slate-700 mb-1">UPC / Barcode</label>
                   <input
+                    id="scan-edit-upc"
                     type="text"
                     value={editItem.upc}
                     onChange={e => setEditItem({ ...editItem, upc: e.target.value })}
@@ -1436,8 +1435,9 @@ export default function Scan() {
                   )}
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Tags</label>
+                  <label htmlFor="scan-edit-tags" className="block text-sm font-medium text-slate-700 mb-1">Tags</label>
                   <textarea
+                    id="scan-edit-tags"
                     rows={2}
                     value={editItem.tag_names}
                     onChange={e => setEditItem({ ...editItem, tag_names: e.target.value })}

@@ -35,10 +35,10 @@ export default function MobileScan() {
   const codeReaderRef = useRef<BrowserMultiFormatReader | null>(null);
   const activeControlsRef = useRef<any>(null);
   const lastScanRef = useRef<{ code: string; time: number } | null>(null);
-  const toastTimerRef = useRef<number | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isProcessingRef = useRef<boolean>(false);
   const idleDeadlineRef = useRef<number>(0);
-  const idleIntervalRef = useRef<number | null>(null);
+  const idleIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const onScanRef = useRef<(code: string) => Promise<void>>(async () => {});
 
   const [inputMode, setInputMode] = useState<'camera' | 'manual'>('camera');
@@ -64,8 +64,8 @@ export default function MobileScan() {
 
   const showToast = useCallback((type: 'success' | 'error', message: string) => {
     setToast({ type, message });
-    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
-    toastTimerRef.current = window.setTimeout(() => setToast(null), 3000);
+    if (toastTimerRef.current) globalThis.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = globalThis.setTimeout(() => setToast(null), 3000);
   }, []);
 
   const resetIdleTimer = useCallback(() => {
@@ -168,11 +168,7 @@ export default function MobileScan() {
       if (!cleanCode || isProcessingRef.current) return;
 
       const now = Date.now();
-      if (
-        lastScanRef.current &&
-        lastScanRef.current.code === cleanCode &&
-        now - lastScanRef.current.time < 2000
-      ) {
+      if (lastScanRef.current?.code === cleanCode && now - lastScanRef.current.time < 2000) {
         return;
       }
 
@@ -191,7 +187,7 @@ export default function MobileScan() {
   useEffect(() => {
     if (inputMode !== 'camera' || cameraIdle) return;
 
-    idleIntervalRef.current = window.setInterval(() => {
+    idleIntervalRef.current = globalThis.setInterval(() => {
       if (!idleDeadlineRef.current) return;
 
       const remaining = idleDeadlineRef.current - Date.now();
@@ -206,7 +202,7 @@ export default function MobileScan() {
 
     return () => {
       if (idleIntervalRef.current) {
-        window.clearInterval(idleIntervalRef.current);
+        globalThis.clearInterval(idleIntervalRef.current);
         idleIntervalRef.current = null;
       }
     };
@@ -244,7 +240,7 @@ export default function MobileScan() {
 
     setCameraError(null);
 
-    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+    if (!globalThis.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
       setCameraError('Camera requires HTTPS. Open the tunnel URL, not the LAN IP.');
       return;
     }
@@ -328,16 +324,16 @@ export default function MobileScan() {
   useEffect(() => {
     return () => {
       if (toastTimerRef.current) {
-        window.clearTimeout(toastTimerRef.current);
+        globalThis.clearTimeout(toastTimerRef.current);
       }
       if (idleIntervalRef.current) {
-        window.clearInterval(idleIntervalRef.current);
+        globalThis.clearInterval(idleIntervalRef.current);
       }
       stopScanner();
     };
   }, [stopScanner]);
 
-  const handleManualSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+  const handleManualSubmit = async (e) => {
     e.preventDefault();
 
     const upc = manualInput.trim();
@@ -429,8 +425,11 @@ export default function MobileScan() {
         {/* Idle overlay */}
         {inputMode === 'camera' && cameraIdle && (
           <div
+            role="button"
+            tabIndex={0}
             className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 gap-4 cursor-pointer"
             onClick={handleResumeCamera}
+            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') handleResumeCamera(); }}
           >
             <Camera size={40} className="text-white" />
             <p className="text-white text-lg font-medium">Tap to resume</p>

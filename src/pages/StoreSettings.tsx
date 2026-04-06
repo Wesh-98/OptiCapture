@@ -3,7 +3,7 @@ import { Loader2, CheckCircle, Store, Lock, AlertTriangle, EyeOff, Eye, Hash, Co
 import { useAuth } from '../context/AuthContext';
 
 const validateZipcode = (v: string) => !v || /^\d{5}(-\d{4})?$/.test(v);
-const validatePhone = (v: string) => !v || /^\d{10}$/.test(v.replace(/\D/g, ''));
+const validatePhone = (v: string) => !v || /^\d{10}$/.test(v.replaceAll(/\D/g, ''));
 const validateEmail = (v: string) => !v || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
 const validatePassword = (v: string) => v.length >= 8 && /[A-Z]/.test(v) && /\d/.test(v);
 
@@ -74,7 +74,7 @@ export default function StoreSettings() {
     fetchStoreSettings();
   }, [fetchStoreSettings]);
 
-  const handleStoreSubmit = async (e: React.FormEvent) => {
+  const handleStoreSubmit = async (e) => {
     e.preventDefault();
     setStoreError('');
     setStoreSuccess('');
@@ -121,7 +121,7 @@ export default function StoreSettings() {
     }
   };
 
-  const handlePasswordSubmit = async (e: React.FormEvent) => {
+  const handlePasswordSubmit = async (e) => {
     e.preventDefault();
     setPasswordError('');
     setPasswordSuccess('');
@@ -290,8 +290,9 @@ export default function StoreSettings() {
             { label: 'Email', value: storeInfo.email, key: 'email', type: 'email' },
           ].map(({ label, value, key, type, placeholder }) => (
             <div key={key}>
-              <label className="block text-sm font-medium text-slate-700 mb-1">{label}</label>
+              <label htmlFor={`ss-${key}`} className="block text-sm font-medium text-slate-700 mb-1">{label}</label>
               <input
+                id={`ss-${key}`}
                 type={type}
                 value={value}
                 readOnly={isTaker}
@@ -305,10 +306,10 @@ export default function StoreSettings() {
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Zipcode</label>
-              <input type="text" value={storeInfo.zipcode}
+              <label htmlFor="ss-zipcode" className="block text-sm font-medium text-slate-700 mb-1">Zipcode</label>
+              <input id="ss-zipcode" type="text" value={storeInfo.zipcode}
                 readOnly={isTaker}
-                onChange={isTaker ? undefined : e => setStoreInfo({...storeInfo, zipcode: e.target.value.replace(/[^\d-]/g, '').slice(0, 10)})}
+                onChange={isTaker ? undefined : e => setStoreInfo({...storeInfo, zipcode: e.target.value.replaceAll(/[^\d-]/g, '').slice(0, 10)})}
                 maxLength={10}
                 placeholder="10001"
                 className={`w-full px-3 py-2 border rounded-lg text-sm ${isTaker ? 'bg-slate-50 border-slate-200 text-slate-600 cursor-default' : 'border-slate-300 focus:ring-2 focus:ring-navy-700 focus:border-transparent'}`}
@@ -316,8 +317,8 @@ export default function StoreSettings() {
               {!isTaker && infoErrors.zipcode && <p className="text-xs text-red-500 mt-1">{infoErrors.zipcode}</p>}
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">State</label>
-              <select value={storeInfo.state}
+              <label htmlFor="ss-state" className="block text-sm font-medium text-slate-700 mb-1">State</label>
+              <select id="ss-state" value={storeInfo.state}
                 disabled={isTaker}
                 onChange={isTaker ? undefined : e => setStoreInfo({...storeInfo, state: e.target.value})}
                 className={`w-full px-3 py-2 border rounded-lg text-sm bg-white ${isTaker ? 'bg-slate-50 border-slate-200 text-slate-600 cursor-default' : 'border-slate-300 focus:ring-2 focus:ring-navy-700 focus:border-transparent'}`}>
@@ -369,10 +370,11 @@ export default function StoreSettings() {
 
         <form onSubmit={handlePasswordSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">
+            <label htmlFor="ss-curr-pw" className="block text-sm font-medium text-slate-700 mb-1">
               Current Password
             </label>
             <input
+              id="ss-curr-pw"
               type="password"
               value={passwordForm.current_password}
               onChange={(e) => setPasswordForm({ ...passwordForm, current_password: e.target.value })}
@@ -382,10 +384,11 @@ export default function StoreSettings() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">
+            <label htmlFor="ss-new-pw" className="block text-sm font-medium text-slate-700 mb-1">
               New Password
             </label>
             <input
+              id="ss-new-pw"
               type="password"
               value={passwordForm.new_password}
               onChange={(e) => setPasswordForm({ ...passwordForm, new_password: e.target.value })}
@@ -397,10 +400,11 @@ export default function StoreSettings() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">
+            <label htmlFor="ss-confirm-pw" className="block text-sm font-medium text-slate-700 mb-1">
               Confirm New Password
             </label>
             <input
+              id="ss-confirm-pw"
               type="password"
               value={passwordForm.confirm_password}
               onChange={(e) => setPasswordForm({ ...passwordForm, confirm_password: e.target.value })}

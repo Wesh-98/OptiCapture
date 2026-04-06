@@ -4,6 +4,7 @@ import tsPlugin from '@typescript-eslint/eslint-plugin';
 import tsParser from '@typescript-eslint/parser';
 import reactHooks from 'eslint-plugin-react-hooks';
 import reactRefresh from 'eslint-plugin-react-refresh';
+import security from 'eslint-plugin-security';
 
 export default [
   js.configs.recommended,
@@ -24,6 +25,7 @@ export default [
       '@typescript-eslint': tsPlugin,
       'react-hooks': reactHooks,
       'react-refresh': reactRefresh,
+      'security': security,
     },
     rules: {
       ...reactHooks.configs.recommended.rules,
@@ -34,6 +36,9 @@ export default [
       'no-unused-vars': 'off',
       'no-empty': ['error', { allowEmptyCatch: true }],
       'react-hooks/set-state-in-effect': 'warn',
+      'security/detect-non-literal-regexp': 'warn',
+      'security/detect-unsafe-regex': 'off', // too many false positives on simple bounded quantifiers
+      'security/detect-eval-with-expression': 'error',
     },
   },
   {

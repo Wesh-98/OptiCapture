@@ -20,7 +20,7 @@ function copyFileIfNeeded(src, dest) {
   }
 }
 
-function useMkcertCertificates() {
+function applyMkcertCertificates() {
   console.log('✓ Trusted mkcert certificates found');
   copyFileIfNeeded(mkcertKeyPath, devKeyPath);
   copyFileIfNeeded(mkcertCertPath, devCertPath);
@@ -28,7 +28,7 @@ function useMkcertCertificates() {
   process.exit(0);
 }
 
-function useExistingDevCertificates() {
+function applyExistingDevCertificates() {
   console.log('✓ Existing SSL certificates already found');
   process.exit(0);
 }
@@ -36,9 +36,8 @@ function useExistingDevCertificates() {
 function generateSelfSignedCertificates() {
   console.log('Generating self-signed SSL certificates with OpenSSL...');
 
-  const cmd = process.platform === 'win32'
-    ? `openssl req -x509 -newkey rsa:2048 -keyout "${devKeyPath}" -out "${devCertPath}" -days 365 -nodes -subj "/C=US/ST=State/L=City/O=Org/CN=localhost"`
-    : `openssl req -x509 -newkey rsa:2048 -keyout "${devKeyPath}" -out "${devCertPath}" -days 365 -nodes -subj "/C=US/ST=State/L=City/O=Org/CN=localhost"`;
+  // openssl command is identical on Windows and Unix — kept explicit for clarity
+  const cmd = `openssl req -x509 -newkey rsa:2048 -keyout "${devKeyPath}" -out "${devCertPath}" -days 365 -nodes -subj "/C=US/ST=State/L=City/O=Org/CN=localhost"`;
 
   execSync('openssl version', { stdio: 'ignore' });
   execSync(cmd, { stdio: 'inherit' });
@@ -51,12 +50,12 @@ function generateSelfSignedCertificates() {
 try {
   // 1. Prefer trusted mkcert certificates
   if (fs.existsSync(mkcertKeyPath) && fs.existsSync(mkcertCertPath)) {
-    useMkcertCertificates();
+    applyMkcertCertificates();
   }
 
   // 2. If app certs already exist, use them
   if (fs.existsSync(devKeyPath) && fs.existsSync(devCertPath)) {
-    useExistingDevCertificates();
+    applyExistingDevCertificates();
   }
 
   // 3. Otherwise generate self-signed certs

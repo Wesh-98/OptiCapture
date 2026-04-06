@@ -21,7 +21,7 @@ export default function Login() {
   };
   const oauthError = ERROR_MESSAGES[searchParams.get('error') ?? ''] ?? null;
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
     setIsSubmitting(true);
@@ -108,13 +108,14 @@ export default function Login() {
 
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1.5">
+                <label htmlFor="login-store-code" className="block text-sm font-medium text-slate-700 mb-1.5">
                   Store Code
                   <span className="ml-1.5 text-slate-400 font-normal text-xs">(leave blank for superadmin)</span>
                 </label>
                 <div className="relative">
                   <Hash className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} />
                   <input
+                    id="login-store-code"
                     type="text"
                     value={storeCode}
                     onChange={e => setStoreCode(e.target.value.toUpperCase())}
@@ -127,10 +128,11 @@ export default function Login() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1.5">Username</label>
+                <label htmlFor="login-username" className="block text-sm font-medium text-slate-700 mb-1.5">Username</label>
                 <div className="relative">
                   <User className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} />
                   <input
+                    id="login-username"
                     type="text"
                     value={username}
                     onChange={e => setUsername(e.target.value)}
@@ -142,10 +144,11 @@ export default function Login() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1.5">Password</label>
+                <label htmlFor="login-password" className="block text-sm font-medium text-slate-700 mb-1.5">Password</label>
                 <div className="relative">
                   <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} />
                   <input
+                    id="login-password"
                     type="password"
                     value={password}
                     onChange={e => setPassword(e.target.value)}
@@ -175,7 +178,7 @@ export default function Login() {
             {/* Google button */}
             <button
               type="button"
-              onClick={() => window.location.href = '/api/auth/google?intent=login'}
+              onClick={() => globalThis.location.href = '/api/auth/google?intent=login'}
               className="w-full flex items-center justify-center gap-3 py-2.5 border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors text-sm font-medium text-slate-700"
             >
               <img
