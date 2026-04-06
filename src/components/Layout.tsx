@@ -5,7 +5,7 @@ import { LayoutDashboard, ScanLine, Upload, History, LogOut, Menu, X, ChevronRig
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 
-export default function Layout({ children }: { children: React.ReactNode }) {
+export default function Layout({ children }: Readonly<{ children: React.ReactNode }>) {
   const { user, logout, myStores, switchStore } = useAuth();
   const location = useLocation();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -137,7 +137,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                       onClick={async () => {
                         setStoreSwitcherOpen(false);
                         await switchStore(store.id);
-                        window.location.reload();
+                        globalThis.location.reload();
                       }}
                       className={cn(
                         "w-full flex items-center gap-3 px-3 py-2.5 hover:bg-slate-50 transition-colors text-left",

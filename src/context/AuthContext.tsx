@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 interface User {
@@ -29,7 +29,7 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-export function AuthProvider({ children }: { children: ReactNode }) {
+export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [myStores, setMyStores] = useState<StoreAccess[]>([]);
@@ -54,12 +54,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     checkAuth();
   }, []);
 
-  const login = (userData: User) => {
+  const login = useCallback((userData: User) => {
     setUser(userData);
     navigate(userData.role === 'superadmin' ? '/admin' : '/');
-  };
+  }, [navigate]);
 
-  const switchStore = async (storeId: number) => {
+  const switchStore = useCallback(async (storeId: number) => {
     const res = await fetch('/api/auth/switch-store', {
       method: 'POST',
       credentials: 'include',
@@ -78,9 +78,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const userData = await meRes.json();
       setUser(userData);
     }
-  };
+  }, []);
 
-  const logout = async () => {
+  const logout = useCallback(async () => {
     await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
     sessionStorage.removeItem('scan_session_id');
     sessionStorage.removeItem('scan_otp');
@@ -88,10 +88,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
     setMyStores([]);
     navigate('/login');
-  };
+  }, [navigate]);
+
+  const value = useMemo(
+    () => ({ user, login, logout, isLoading, myStores, switchStore }),
+    [user, login, logout, isLoading, myStores, switchStore]
+  );
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, isLoading, myStores, switchStore }}>
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   );

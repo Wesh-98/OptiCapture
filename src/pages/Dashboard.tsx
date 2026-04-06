@@ -168,6 +168,81 @@ const LUCIDE_ICON_PICKS = [
   'PawPrint', 'ShoppingCart', 'Gift', 'Book', 'Dumbbell', 'Sparkles',
 ];
 
+// ─── Session card (extracted to reduce Dashboard cognitive complexity) ───────
+
+interface SessionCardProps {
+  session: ActiveSession;
+  onDelete: (sessionId: string) => void;
+  now: number;
+}
+
+function SessionCard({ session: s, onDelete, now }: Readonly<SessionCardProps>) {
+  const navigate = useNavigate();
+  const isActive = s.status === 'active';
+  const isCompleted = s.status === 'completed';
+  const itemWord = s.item_count === 1 ? 'item' : 'items';
+  const lastActivity = s.last_scan_at || s.created_at;
+  const diffMs = now - new Date(lastActivity).getTime();
+  const diffMin = Math.floor(diffMs / 60000);
+  const isToday = diffMs < 24 * 60 * 60 * 1000;
+  const timeAgo = diffMin < 60
+    ? `${diffMin}m ago`
+    : diffMin < 1440
+    ? `${Math.floor(diffMin / 60)}h ago`
+    : `${Math.floor(diffMin / 1440)}d ago`;
+
+  const cardClass = isCompleted
+    ? 'bg-[#eef2f8] border border-[#b6c8e0] border-l-[#1e3a5f]'
+    : !isToday
+    ? 'bg-slate-50 border border-slate-200 border-l-slate-400 opacity-75'
+    : isActive
+    ? 'bg-emerald-50/60 border border-emerald-200 border-l-emerald-500'
+    : 'bg-amber-50/60 border border-amber-200 border-l-amber-500';
+
+  const dotClass = isCompleted ? 'bg-[#1e3a5f]' : isActive ? 'bg-emerald-500 animate-pulse' : 'bg-amber-400';
+  const labelClass = isCompleted ? 'text-[#1e3a5f]' : isActive ? 'text-emerald-800' : 'text-amber-800';
+  const statusText = isCompleted ? 'Committed' : isActive ? 'Scanning' : 'Draft';
+  const btnLabel = isCompleted ? 'View' : isActive ? 'Open' : 'Review';
+  const btnClass = isCompleted
+    ? 'bg-[#1e3a5f] text-white hover:bg-[#16304f]'
+    : !isToday
+    ? 'bg-slate-500 text-white hover:bg-slate-600'
+    : isActive
+    ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+    : 'bg-amber-500 text-white hover:bg-amber-600';
+
+  return (
+    <div className={`relative rounded-xl p-3 flex flex-col gap-2 min-w-[160px] max-w-[200px] border-l-4 ${cardClass}`}>
+      {!isCompleted && (
+        <button
+          onClick={() => onDelete(s.session_id)}
+          className="absolute top-2 right-2 text-slate-400 hover:text-red-500 transition-colors"
+          title="Delete session"
+        >
+          <X size={13} />
+        </button>
+      )}
+      <div className="flex items-center gap-2">
+        <div className={`w-2 h-2 rounded-full shrink-0 ${dotClass}`} />
+        <span className={`text-xs font-semibold ${labelClass}`}>{statusText}</span>
+      </div>
+      <div>
+        {s.label && (
+          <p className="text-xs font-semibold text-slate-700 truncate pr-4" title={s.label}>{s.label}</p>
+        )}
+        <p className="text-lg font-bold text-slate-900">{s.item_count} <span className="text-sm font-normal text-slate-600">{itemWord}</span></p>
+        <p className="text-xs text-slate-500">{timeAgo}</p>
+      </div>
+      <button
+        onClick={() => navigate(`/scan?session=${s.session_id}`)}
+        className={`w-full py-1.5 rounded-lg text-xs font-semibold transition-colors ${btnClass}`}
+      >
+        {btnLabel}
+      </button>
+    </div>
+  );
+}
+
 const emptyForm = {
   image: '',
   item_name: '',
@@ -529,71 +604,9 @@ export default function Dashboard() {
 
           {sessionsOpen && (
             <div className="px-4 pb-4 pt-1 flex flex-wrap gap-3 border-t border-slate-100">
-              {activeSessions.map(s => {
-                const isActive    = s.status === 'active';
-                const isCompleted = s.status === 'completed';
-                const itemWord = s.item_count === 1 ? 'item' : 'items';
-                const lastActivity = s.last_scan_at || s.created_at;
-                const diffMs = Date.now() - new Date(lastActivity).getTime();
-                const diffMin = Math.floor(diffMs / 60000);
-                const isToday = diffMs < 24 * 60 * 60 * 1000;
-                const timeAgo = diffMin < 60
-                  ? `${diffMin}m ago`
-                  : diffMin < 1440
-                  ? `${Math.floor(diffMin / 60)}h ago`
-                  : `${Math.floor(diffMin / 1440)}d ago`;
-
-                const cardClass = isCompleted
-                  ? 'bg-[#eef2f8] border border-[#b6c8e0] border-l-[#1e3a5f]'
-                  : !isToday
-                  ? 'bg-slate-50 border border-slate-200 border-l-slate-400 opacity-75'
-                  : isActive
-                  ? 'bg-emerald-50/60 border border-emerald-200 border-l-emerald-500'
-                  : 'bg-amber-50/60 border border-amber-200 border-l-amber-500';
-
-                const dotClass = isCompleted ? 'bg-[#1e3a5f]' : isActive ? 'bg-emerald-500 animate-pulse' : 'bg-amber-400';
-                const labelClass = isCompleted ? 'text-[#1e3a5f]' : isActive ? 'text-emerald-800' : 'text-amber-800';
-                const statusText = isCompleted ? 'Committed' : isActive ? 'Scanning' : 'Draft';
-                const btnClass = isCompleted
-                  ? 'bg-[#1e3a5f] text-white hover:bg-[#16304f]'
-                  : !isToday
-                  ? 'bg-slate-500 text-white hover:bg-slate-600'
-                  : isActive
-                  ? 'bg-emerald-600 text-white hover:bg-emerald-700'
-                  : 'bg-amber-500 text-white hover:bg-amber-600';
-                const btnLabel = isCompleted ? 'View' : isActive ? 'Open' : 'Review';
-
-                return (
-                  <div key={s.session_id} className={`relative rounded-xl p-3 flex flex-col gap-2 min-w-[160px] max-w-[200px] border-l-4 ${cardClass}`}>
-                    {!isCompleted && (
-                      <button
-                        onClick={() => deleteSession(s.session_id)}
-                        className="absolute top-2 right-2 text-slate-400 hover:text-red-500 transition-colors"
-                        title="Delete session"
-                      >
-                        <X size={13} />
-                      </button>
-                    )}
-                    <div className="flex items-center gap-2">
-                      <div className={`w-2 h-2 rounded-full shrink-0 ${dotClass}`} />
-                      <span className={`text-xs font-semibold ${labelClass}`}>{statusText}</span>
-                    </div>
-                    <div>
-                      {s.label && (
-                        <p className="text-xs font-semibold text-slate-700 truncate pr-4" title={s.label}>{s.label}</p>
-                      )}
-                      <p className="text-lg font-bold text-slate-900">{s.item_count} <span className="text-sm font-normal text-slate-600">{itemWord}</span></p>
-                      <p className="text-xs text-slate-500">{timeAgo}</p>
-                    </div>
-                    <button
-                      onClick={() => navigate(`/scan?session=${s.session_id}`)}
-                      className={`w-full py-1.5 rounded-lg text-xs font-semibold transition-colors ${btnClass}`}
-                    >
-                      {btnLabel}
-                    </button>
-                  </div>
-                );
-              })}
+              {activeSessions.map(s => (
+                <SessionCard key={s.session_id} session={s} onDelete={deleteSession} now={Date.now()} />
+              ))}
             </div>
           )}
         </div>
@@ -791,7 +804,7 @@ export default function Dashboard() {
         {!globalSearch.trim() && viewMode === 'categories' && (
           <div className="overflow-x-auto">
             {activeActionMenu !== null && (
-              <div className="fixed inset-0 z-10" onClick={() => setActiveActionMenu(null)} />
+              <div role="presentation" aria-hidden="true" className="fixed inset-0 z-10" onClick={() => setActiveActionMenu(null)} />
             )}
             <table className="w-full text-left">
               <thead className="bg-slate-50 border-b border-slate-200">
@@ -1174,8 +1187,9 @@ export default function Dashboard() {
             <div className="p-6 space-y-5">
               {/* Name */}
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1.5">Category Name</label>
+                <label htmlFor="dash-cat-name" className="block text-sm font-medium text-slate-700 mb-1.5">Category Name</label>
                 <input
+                  id="dash-cat-name"
                   type="text"
                   value={catForm.name}
                   onChange={e => setCatForm(p => ({ ...p, name: e.target.value }))}
@@ -1265,8 +1279,8 @@ export default function Dashboard() {
 
       {/* Export Modal */}
       {showExportModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setShowExportModal(false)}>
-          <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm mx-4" onClick={e => e.stopPropagation()}>
+        <div role="presentation" aria-hidden="true" className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setShowExportModal(false)}>
+          <div role="dialog" aria-modal="true" className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm mx-4" onClick={e => e.stopPropagation()}>
             <h3 className="text-lg font-bold text-navy-900 mb-1">Export Inventory</h3>
             <p className="text-sm text-slate-500 mb-4">Choose a format to download your inventory.</p>
             <div className="grid grid-cols-2 gap-2 mb-5">
@@ -1314,13 +1328,13 @@ function ItemFormFields({
   onImageChange,
   categories,
   imageRequired = true,
-}: {
+}: Readonly<{
   data: typeof emptyForm;
   onChange: React.Dispatch<React.SetStateAction<typeof emptyForm>>;
   onImageChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   categories: Category[];
   imageRequired?: boolean;
-}) {
+}>) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
       {/* Image Upload */}
@@ -1361,8 +1375,9 @@ function ItemFormFields({
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-slate-700 mb-1">Item Name *</label>
+        <label htmlFor="dash-item-name" className="block text-sm font-medium text-slate-700 mb-1">Item Name *</label>
         <input
+          id="dash-item-name"
           type="text"
           value={data.item_name}
           onChange={e => onChange(prev => ({ ...prev, item_name: e.target.value }))}
@@ -1372,8 +1387,9 @@ function ItemFormFields({
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-slate-700 mb-1">UPC / Barcode</label>
+        <label htmlFor="dash-item-upc" className="block text-sm font-medium text-slate-700 mb-1">UPC / Barcode</label>
         <input
+          id="dash-item-upc"
           type="text"
           value={data.upc}
           onChange={e => onChange(prev => ({ ...prev, upc: e.target.value }))}
@@ -1383,8 +1399,9 @@ function ItemFormFields({
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-slate-700 mb-1">Category *</label>
+        <label htmlFor="dash-item-category" className="block text-sm font-medium text-slate-700 mb-1">Category *</label>
         <select
+          id="dash-item-category"
           value={data.category_id}
           onChange={e => onChange(prev => ({ ...prev, category_id: e.target.value }))}
           className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-navy-700 focus:border-transparent"
@@ -1398,8 +1415,9 @@ function ItemFormFields({
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-slate-700 mb-1">Quantity *</label>
+        <label htmlFor="dash-item-qty" className="block text-sm font-medium text-slate-700 mb-1">Quantity *</label>
         <input
+          id="dash-item-qty"
           type="number"
           value={data.quantity}
           onChange={e => onChange(prev => ({ ...prev, quantity: parseInt(e.target.value) || 0 }))}
@@ -1410,8 +1428,9 @@ function ItemFormFields({
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-slate-700 mb-1">Unit</label>
+        <label htmlFor="dash-item-unit" className="block text-sm font-medium text-slate-700 mb-1">Unit</label>
         <input
+          id="dash-item-unit"
           type="text"
           value={data.unit}
           onChange={e => onChange(prev => ({ ...prev, unit: e.target.value }))}
@@ -1421,8 +1440,9 @@ function ItemFormFields({
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-slate-700 mb-1">Status *</label>
+        <label htmlFor="dash-item-status" className="block text-sm font-medium text-slate-700 mb-1">Status *</label>
         <select
+          id="dash-item-status"
           value={data.status}
           onChange={e => onChange(prev => ({ ...prev, status: e.target.value }))}
           className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-navy-700 focus:border-transparent"
@@ -1434,8 +1454,9 @@ function ItemFormFields({
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-slate-700 mb-1">Sale Price ($)</label>
+        <label htmlFor="dash-item-price" className="block text-sm font-medium text-slate-700 mb-1">Sale Price ($)</label>
         <input
+          id="dash-item-price"
           type="number"
           step="0.01"
           value={data.sale_price}
@@ -1446,8 +1467,9 @@ function ItemFormFields({
       </div>
 
       <div>
-        <label className="block text-sm font-medium text-slate-700 mb-1">Tax (%)</label>
+        <label htmlFor="dash-item-tax" className="block text-sm font-medium text-slate-700 mb-1">Tax (%)</label>
         <input
+          id="dash-item-tax"
           type="number"
           step="0.1"
           value={data.tax_percent}
@@ -1458,8 +1480,9 @@ function ItemFormFields({
       </div>
 
       <div className="col-span-full">
-        <label className="block text-sm font-medium text-slate-700 mb-1">Description</label>
+        <label htmlFor="dash-item-desc" className="block text-sm font-medium text-slate-700 mb-1">Description</label>
         <textarea
+          id="dash-item-desc"
           value={data.description}
           onChange={e => onChange(prev => ({ ...prev, description: e.target.value }))}
           className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-navy-700 focus:border-transparent"
@@ -1468,8 +1491,9 @@ function ItemFormFields({
       </div>
 
       <div className="col-span-full">
-        <label className="block text-sm font-medium text-slate-700 mb-1">Tags</label>
+        <label htmlFor="dash-item-tags" className="block text-sm font-medium text-slate-700 mb-1">Tags</label>
         <input
+          id="dash-item-tags"
           type="text"
           value={data.tag_names}
           onChange={e => onChange(prev => ({ ...prev, tag_names: e.target.value }))}

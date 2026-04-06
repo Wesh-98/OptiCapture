@@ -210,24 +210,27 @@ export default function Import() {
 
       {/* Step indicators */}
       <div className="flex items-center gap-2 text-sm">
-        {(['upload', 'map', 'done'] as const).map((s, i) => (
-          <React.Fragment key={s}>
-            <div className={cn(
-              'flex items-center gap-1.5 px-3 py-1.5 rounded-full font-medium transition-colors',
-              state.step === s || (state.step === 'importing' && s === 'map')
-                ? 'bg-navy-900 text-white'
-                : state.step === 'done' || (s === 'upload' && state.step !== 'upload')
-                  ? 'bg-emerald-100 text-emerald-700'
-                  : 'bg-slate-100 text-slate-500'
-            )}>
-              {(state.step === 'done' && s !== 'done') || (s === 'upload' && state.step !== 'upload')
-                ? <Check size={13} />
-                : <span>{i + 1}</span>}
-              {s === 'upload' ? 'Upload File' : s === 'map' ? 'Map Columns' : 'Done'}
-            </div>
-            {i < 2 && <ChevronRight size={16} className="text-slate-300" />}
-          </React.Fragment>
-        ))}
+        {(['upload', 'map', 'done'] as const).map((s, i) => {
+          const stepLabel = s === 'upload' ? 'Upload File' : s === 'map' ? 'Map Columns' : 'Done';
+          return (
+            <React.Fragment key={s}>
+              <div className={cn(
+                'flex items-center gap-1.5 px-3 py-1.5 rounded-full font-medium transition-colors',
+                state.step === s || (state.step === 'importing' && s === 'map')
+                  ? 'bg-navy-900 text-white'
+                  : state.step === 'done' || (s === 'upload' && state.step !== 'upload')
+                    ? 'bg-emerald-100 text-emerald-700'
+                    : 'bg-slate-100 text-slate-500'
+              )}>
+                {(state.step === 'done' && s !== 'done') || (s === 'upload' && state.step !== 'upload')
+                  ? <Check size={13} />
+                  : <span>{i + 1}</span>}
+                {stepLabel}
+              </div>
+              {i < 2 && <ChevronRight size={16} className="text-slate-300" />}
+            </React.Fragment>
+          );
+        })}
       </div>
 
       {/* Step 1 — Upload */}
@@ -420,7 +423,7 @@ export default function Import() {
                   </thead>
                   <tbody>
                     {activeSheet.preview.map((row, i) => (
-                      <tr key={i} className="border-t border-slate-100">
+                      <tr key={activeSheet.headers.map(h => String(row[h] ?? '')).join('|') + i} className="border-t border-slate-100">
                         {activeSheet.headers.map(h => (
                           <td key={h} className="px-3 py-2 text-slate-600 whitespace-nowrap max-w-[160px] truncate">{String(row[h] ?? '')}</td>
                         ))}
@@ -528,7 +531,7 @@ export default function Import() {
                   {state.result.errors.length} row{state.result.errors.length !== 1 ? 's' : ''} failed
                 </div>
                 <ul className="space-y-1 max-h-40 overflow-y-auto text-xs text-red-600 font-mono">
-                  {state.result.errors.map((e, i) => <li key={i}>{e}</li>)}
+                  {state.result.errors.map((e) => <li key={e}>{e}</li>)}
                 </ul>
               </div>
             )}
@@ -547,8 +550,8 @@ export default function Import() {
                 </button>
                 {showSkipped && (
                   <ul className="mt-3 space-y-1 max-h-48 overflow-y-auto text-xs text-amber-800 font-mono">
-                    {state.result.skipped_rows!.map((r, i) => (
-                      <li key={i} className="flex gap-2">
+                    {state.result.skipped_rows!.map((r) => (
+                      <li key={`${r.sheet}-${r.row_num}`} className="flex gap-2">
                         <span className="text-amber-400 shrink-0">{r.sheet} row {r.row_num}</span>
                         <span className="truncate">{r.item_name}</span>
                       </li>

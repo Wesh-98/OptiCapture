@@ -8,6 +8,7 @@ export default defineConfig(() => {
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
+        // Scoped to src/ only — prevents server.ts and config files from being importable by frontend code
         '@': path.resolve(__dirname, './src'),
       },
     },
@@ -15,7 +16,18 @@ export default defineConfig(() => {
       hmr: process.env.DISABLE_HMR === 'true'
         ? false
         : { clientPort: 443, protocol: 'wss' },
-      allowedHosts: process.env.TUNNEL_HOST ? [process.env.TUNNEL_HOST] : ['.trycloudflare.com'],
+      // 'all' allows any tunnel subdomain (trycloudflare.com, ngrok, etc.)
+      // without needing to update TUNNEL_HOST each time the tunnel URL rotates
+      allowedHosts: true as const,
+    },
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            vendor: ['react', 'react-dom', 'react-router-dom'],
+          },
+        },
+      },
     },
   };
 });

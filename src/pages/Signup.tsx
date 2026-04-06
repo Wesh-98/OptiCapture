@@ -6,7 +6,7 @@ import { US_STATES } from '../lib/constants';
 
 // Validation functions
 const validateZipcode = (v: string) => !v || /^\d{5}(-\d{4})?$/.test(v);
-const validatePhone = (v: string) => !v || /^\d{10}$/.test(v.replace(/\D/g, ''));
+const validatePhone = (v: string) => !v || /^\d{10}$/.test(v.replaceAll(/\D/g, ''));
 const validateEmail = (v: string) => !v || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
 const validatePassword = (v: string) => v.length >= 8 && /[A-Z]/.test(v) && /\d/.test(v);
 
@@ -47,7 +47,7 @@ export default function Signup() {
       .catch(() => {});
   }, [pendingKey]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
 
@@ -201,7 +201,7 @@ export default function Signup() {
               <>
                 <button
                   type="button"
-                  onClick={() => window.location.href = '/api/auth/google?intent=signup'}
+                  onClick={() => globalThis.location.href = '/api/auth/google?intent=signup'}
                   className="w-full flex items-center justify-center gap-3 py-2.5 border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors text-sm font-medium text-slate-700 mb-4"
                 >
                   <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5" alt="Google" />
@@ -237,7 +237,7 @@ export default function Signup() {
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <input type="text" value={zipcode} onChange={e => setZipcode(e.target.value.replace(/[^\d-]/g, '').slice(0, 10))}
+                      <input type="text" value={zipcode} onChange={e => setZipcode(e.target.value.replaceAll(/[^\d-]/g, '').slice(0, 10))}
                         className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-navy-700 focus:border-navy-700 transition-all text-sm disabled:opacity-60 disabled:cursor-not-allowed"
                         placeholder="Zipcode" maxLength={10} />
                       {errors.zipcode && <p className="text-xs text-red-500 mt-1 pl-1">{errors.zipcode}</p>}
@@ -254,7 +254,7 @@ export default function Signup() {
                     <div>
                       <div className="relative">
                         <Phone className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} />
-                        <input type="tel" value={phone} onChange={e => setPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                        <input type="tel" value={phone} onChange={e => setPhone(e.target.value.replaceAll(/\D/g, '').slice(0, 10))}
                           className={inputClass} placeholder="Phone" />
                       </div>
                       {errors.phone && <p className="text-xs text-red-500 mt-1 pl-1">{errors.phone}</p>}

@@ -32,7 +32,7 @@ interface StoreUser {
 
 // Validation functions
 const validateZipcode = (v: string) => !v || /^\d{5}(-\d{4})?$/.test(v);
-const validatePhone = (v: string) => !v || /^\d{10}$/.test(v.replace(/\D/g, ''));
+const validatePhone = (v: string) => !v || /^\d{10}$/.test(v.replaceAll(/\D/g, ''));
 const validateEmail = (v: string) => !v || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
 
 export default function SuperAdmin() {
@@ -210,7 +210,8 @@ export default function SuperAdmin() {
         const error = await res.text();
         setEditError(error || 'Failed to save changes');
       }
-    } catch (_err) {
+    } catch (err) {
+      console.error('[SuperAdmin] save store error:', err);
       setEditError('Failed to save changes');
     } finally {
       setEditSaving(false);
@@ -426,7 +427,7 @@ export default function SuperAdmin() {
                         </div>
                       </td>
                       <td className="px-4 py-4 text-sm">
-                        {store.email && <p className={cn(store.status === 'suspended' ? 'text-slate-700' : 'text-slate-700')}>{store.email}</p>}
+                        {store.email && <p className="text-slate-700">{store.email}</p>}
                         {store.phone && <p className={cn(store.status === 'suspended' ? 'text-slate-700' : 'text-slate-600')}>{store.phone}</p>}
                       </td>
 
@@ -566,8 +567,9 @@ export default function SuperAdmin() {
 
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Store Name *</label>
+                  <label htmlFor="sa-edit-name" className="block text-sm font-medium text-slate-700 mb-1">Store Name *</label>
                   <input
+                    id="sa-edit-name"
                     type="text"
                     value={editStore.name}
                     onChange={e => setEditStore({ ...editStore, name: e.target.value })}
@@ -577,8 +579,9 @@ export default function SuperAdmin() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Street Address</label>
+                  <label htmlFor="sa-edit-street" className="block text-sm font-medium text-slate-700 mb-1">Street Address</label>
                   <input
+                    id="sa-edit-street"
                     type="text"
                     value={editStore.street || ''}
                     onChange={e => setEditStore({ ...editStore, street: e.target.value })}
@@ -588,18 +591,20 @@ export default function SuperAdmin() {
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Zipcode</label>
+                    <label htmlFor="sa-edit-zip" className="block text-sm font-medium text-slate-700 mb-1">Zipcode</label>
                     <input
+                      id="sa-edit-zip"
                       type="text"
                       value={editStore.zipcode || ''}
-                      onChange={e => setEditStore({ ...editStore, zipcode: e.target.value.replace(/[^\d-]/g, '').slice(0, 10) })}
+                      onChange={e => setEditStore({ ...editStore, zipcode: e.target.value.replaceAll(/[^\d-]/g, '').slice(0, 10) })}
                       className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-navy-700 focus:border-transparent"
                     />
                     {editErrors.zipcode && <p className="text-xs text-red-500 mt-1">{editErrors.zipcode}</p>}
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">State</label>
+                    <label htmlFor="sa-edit-state" className="block text-sm font-medium text-slate-700 mb-1">State</label>
                     <select
+                      id="sa-edit-state"
                       value={editStore.state || ''}
                       onChange={e => setEditStore({ ...editStore, state: e.target.value })}
                       className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-navy-700 focus:border-transparent"
@@ -613,19 +618,21 @@ export default function SuperAdmin() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Phone</label>
+                  <label htmlFor="sa-edit-phone" className="block text-sm font-medium text-slate-700 mb-1">Phone</label>
                   <input
+                    id="sa-edit-phone"
                     type="tel"
                     value={editStore.phone}
-                    onChange={e => setEditStore({ ...editStore, phone: e.target.value.replace(/\D/g, '').slice(0, 10) })}
+                    onChange={e => setEditStore({ ...editStore, phone: e.target.value.replaceAll(/\D/g, '').slice(0, 10) })}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-navy-700 focus:border-transparent"
                   />
                   {editErrors.phone && <p className="text-xs text-red-500 mt-1">{editErrors.phone}</p>}
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Email</label>
+                  <label htmlFor="sa-edit-email" className="block text-sm font-medium text-slate-700 mb-1">Email</label>
                   <input
+                    id="sa-edit-email"
                     type="email"
                     value={editStore.email}
                     onChange={e => setEditStore({ ...editStore, email: e.target.value })}
@@ -636,7 +643,7 @@ export default function SuperAdmin() {
 
 
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Logo</label>
+                  <label htmlFor="sa-edit-logo" className="block text-sm font-medium text-slate-700 mb-1">Logo</label>
                   {editStore.logo ? (
                     <div className="flex items-center gap-3">
                       <img src={editStore.logo} alt="Store logo" className="w-15 h-15 rounded-lg object-cover border border-slate-200" />

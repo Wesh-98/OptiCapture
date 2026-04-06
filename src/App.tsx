@@ -21,8 +21,8 @@ const StoreSettings = lazy(() => import('./pages/StoreSettings'));
 
 interface ErrorBoundaryState { hasError: boolean; error: Error | null; }
 
-class ErrorBoundary extends React.Component<{ children: React.ReactNode }, ErrorBoundaryState> {
-  constructor(props: { children: React.ReactNode }) {
+class ErrorBoundary extends React.Component<Readonly<{ children: React.ReactNode }>, ErrorBoundaryState> {
+  constructor(props: Readonly<{ children: React.ReactNode }>) {
     super(props);
     this.state = { hasError: false, error: null };
   }
@@ -40,7 +40,7 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, Error
             <h2 className="text-xl font-bold text-slate-900 mb-2">Something went wrong</h2>
             <p className="text-slate-500 text-sm mb-6">An unexpected error occurred. Please reload the page — your data is safe.</p>
             <button
-              onClick={() => window.location.reload()}
+              onClick={() => globalThis.location.reload()}
               className="px-5 py-2.5 bg-navy-900 text-white rounded-xl text-sm font-semibold hover:bg-navy-800 transition-colors"
             >
               Reload Page
@@ -58,7 +58,7 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, Error
   }
 }
 
-function ProtectedRoute({ children }: { children: React.ReactNode }) {
+function ProtectedRoute({ children }: Readonly<{ children: React.ReactNode }>) {
   const { user, isLoading } = useAuth();
 
   if (isLoading) return <div className="min-h-screen flex items-center justify-center bg-slate-50">Loading...</div>;
@@ -68,7 +68,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <Layout><Suspense fallback={<div className="flex items-center justify-center h-64 text-slate-400 text-sm">Loading...</div>}>{children}</Suspense></Layout>;
 }
 
-function AdminRoute({ children }: { children: React.ReactNode }) {
+function AdminRoute({ children }: Readonly<{ children: React.ReactNode }>) {
   const { user, isLoading } = useAuth();
 
   if (isLoading) return <div className="min-h-screen flex items-center justify-center bg-slate-50">Loading...</div>;
