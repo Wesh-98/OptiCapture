@@ -5,15 +5,33 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { db } from '../db.js';
 import { authenticateToken, authLimiter, googleClient } from '../middleware.js';
 import { revokeToken, pendingOAuth, pendingOAuthSet, DUMMY_HASH } from '../cache.js';
-import { saveBase64Image, generateStoreCode } from '../helpers.js';
+import { saveBase64Image, generateStoreCode, UnsupportedImageTypeError } from '../helpers.js';
 import type { AuthRequest } from '../types.js';
 
 export const authRouter = express.Router();
 
 // Local helper — only called from auth handlers in this file
-function issueJwt(req: express.Request, res: express.Response, user: { id: number; username: string; role: string; store_name: string; store_id: number; token_version?: number }) {
+function issueJwt(
+  req: express.Request,
+  res: express.Response,
+  user: {
+    id: number;
+    username: string;
+    role: string;
+    store_name: string;
+    store_id: number;
+    token_version?: number;
+  }
+) {
   const token = jwt.sign(
-    { id: user.id, username: user.username, role: user.role, store_name: user.store_name, store_id: user.store_id, token_version: user.token_version ?? 1 },
+    {
+      id: user.id,
+      username: user.username,
+      role: user.role,
+      store_name: user.store_name,
+      store_id: user.store_id,
+      token_version: user.token_version ?? 1,
+    },
     process.env.JWT_SECRET!,
     { expiresIn: '8h', algorithm: 'HS256', issuer: 'opticapture', audience: 'opticapture-app' }
   );
@@ -38,10 +56,14 @@ authRouter.post('/login', authLimiter, async (req, res) => {
   if (store_code) {
     const store = db.prepare('SELECT id FROM stores WHERE store_code = ?').get(store_code) as any;
     if (!store) return res.status(401).json({ error: 'Invalid store code' });
-    user = db.prepare('SELECT * FROM users WHERE username = ? AND store_id = ?').get(username, store.id);
+    user = db
+      .prepare('SELECT * FROM users WHERE username = ? AND store_id = ?')
+      .get(username, store.id);
   } else {
     // No store code — superadmin only
-    user = db.prepare("SELECT * FROM users WHERE username = ? AND role = 'superadmin'").get(username);
+    user = db
+      .prepare("SELECT * FROM users WHERE username = ? AND role = 'superadmin'")
+      .get(username);
   }
 
   // Always run bcrypt regardless of whether the user exists — prevents username enumeration
@@ -57,25 +79,42 @@ authRouter.post('/login', authLimiter, async (req, res) => {
   const lockedUntilMs = user.locked_until ? Date.parse(user.locked_until) : NaN;
   if (!Number.isNaN(lockedUntilMs) && lockedUntilMs > Date.now()) {
     const minutesLeft = Math.ceil((lockedUntilMs - Date.now()) / 60000);
-    return res.status(429).json({ error: `Account locked. Try again in ${minutesLeft} minute(s).` });
+    return res
+      .status(429)
+      .json({ error: `Account locked. Try again in ${minutesLeft} minute(s).` });
   }
 
   if (!passwordMatch) {
     const newAttempts = (user.failed_login_attempts || 0) + 1;
     if (newAttempts >= 5) {
       const lockedUntil = new Date(Date.now() + 15 * 60 * 1000).toISOString();
-      db.prepare('UPDATE users SET failed_login_attempts = ?, locked_until = ? WHERE id = ?').run(newAttempts, lockedUntil, user.id);
+      db.prepare('UPDATE users SET failed_login_attempts = ?, locked_until = ? WHERE id = ?').run(
+        newAttempts,
+        lockedUntil,
+        user.id
+      );
     } else {
-      db.prepare('UPDATE users SET failed_login_attempts = ? WHERE id = ?').run(newAttempts, user.id);
+      db.prepare('UPDATE users SET failed_login_attempts = ? WHERE id = ?').run(
+        newAttempts,
+        user.id
+      );
     }
     return res.status(401).json({ error: 'Invalid credentials' });
   }
 
   // Reset failed attempts on successful login
-  db.prepare('UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = ?').run(user.id);
+  db.prepare('UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = ?').run(
+    user.id
+  );
 
   issueJwt(req, res, user);
-  res.json({ id: user.id, username: user.username, role: user.role, store_name: user.store_name, store_id: user.store_id });
+  res.json({
+    id: user.id,
+    username: user.username,
+    role: user.role,
+    store_name: user.store_name,
+    store_id: user.store_id,
+  });
 });
 
 // Google OAuth — start
@@ -84,7 +123,10 @@ authRouter.get('/google', authLimiter, (req, res) => {
   const csrfToken = randomBytes(16).toString('hex');
   // Store state nonce in a short-lived httpOnly cookie to prevent CSRF (H-1)
   res.cookie('oauth_state', `${csrfToken}:${intent}`, {
-    httpOnly: true, secure: true, sameSite: 'lax', maxAge: 10 * 60 * 1000,
+    httpOnly: true,
+    secure: true,
+    sameSite: 'lax',
+    maxAge: 10 * 60 * 1000,
   });
   const url = googleClient.generateAuthUrl({
     access_type: 'offline',
@@ -115,11 +157,13 @@ authRouter.get('/google/callback', async (req: any, res) => {
     });
     const payload = ticket.getPayload()!;
     const googleId = payload.sub;
-    const email    = payload.email || '';
-    const name     = payload.name  || '';
+    const email = payload.email || '';
+    const name = payload.name || '';
 
     // 1. Look up by oauth_id
-    let user = db.prepare("SELECT * FROM users WHERE oauth_provider = 'google' AND oauth_id = ?").get(googleId) as any;
+    let user = db
+      .prepare("SELECT * FROM users WHERE oauth_provider = 'google' AND oauth_id = ?")
+      .get(googleId) as any;
 
     // 2. Fall back to matching by email — only safe to auto-link if:
     //    a) Google verified the email, AND
@@ -128,7 +172,10 @@ authRouter.get('/google/callback', async (req: any, res) => {
     if (!user && email && payload.email_verified) {
       const byEmail = db.prepare('SELECT * FROM users WHERE email = ?').get(email) as any;
       if (byEmail && !byEmail.password) {
-        db.prepare("UPDATE users SET oauth_provider = 'google', oauth_id = ? WHERE id = ?").run(googleId, byEmail.id);
+        db.prepare("UPDATE users SET oauth_provider = 'google', oauth_id = ? WHERE id = ?").run(
+          googleId,
+          byEmail.id
+        );
         user = { ...byEmail, oauth_provider: 'google', oauth_id: googleId };
       }
     }
@@ -154,24 +201,34 @@ authRouter.get('/google/pending', (req, res) => {
   const entry = pendingOAuth.get(key);
   if (!entry || entry.expiresAt < Date.now()) {
     pendingOAuth.delete(key);
-    return res.status(404).json({ error: 'Session expired. Please try signing in with Google again.' });
+    return res
+      .status(404)
+      .json({ error: 'Session expired. Please try signing in with Google again.' });
   }
   res.json({ email: entry.email, name: entry.name });
 });
 
 // Register new store + owner
 authRouter.post('/register', authLimiter, async (req, res) => {
-  const { store_name, street, zipcode, state, phone, email, username, password, oauth_key } = req.body;
+  const { store_name, street, zipcode, state, phone, email, username, password, oauth_key } =
+    req.body;
   if (!store_name || !username)
     return res.status(400).json({ error: 'Store name and username are required' });
-  if (store_name.length > 100) return res.status(400).json({ error: 'Store name must be 100 characters or fewer' });
-  if (username.length > 50) return res.status(400).json({ error: 'Username must be 50 characters or fewer' });
-  if (street && street.length > 200) return res.status(400).json({ error: 'Street address must be 200 characters or fewer' });
-  if (email && email.length > 200) return res.status(400).json({ error: 'Email must be 200 characters or fewer' });
-  if (!password && !oauth_key)
-    return res.status(400).json({ error: 'Password is required' });
+  if (store_name.length > 100)
+    return res.status(400).json({ error: 'Store name must be 100 characters or fewer' });
+  if (username.length > 50)
+    return res.status(400).json({ error: 'Username must be 50 characters or fewer' });
+  if (street && street.length > 200)
+    return res.status(400).json({ error: 'Street address must be 200 characters or fewer' });
+  if (email && email.length > 200)
+    return res.status(400).json({ error: 'Email must be 200 characters or fewer' });
+  if (!password && !oauth_key) return res.status(400).json({ error: 'Password is required' });
   if (password && (password.length < 8 || !/[A-Z]/.test(password) || !/\d/.test(password)))
-    return res.status(400).json({ error: 'Password must be at least 8 characters with 1 uppercase letter and 1 number' });
+    return res
+      .status(400)
+      .json({
+        error: 'Password must be at least 8 characters with 1 uppercase letter and 1 number',
+      });
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
     return res.status(400).json({ error: 'Invalid email address' });
   if (phone && !/^\d{10}$/.test(phone.replaceAll(/\D/g, '')))
@@ -185,7 +242,9 @@ authRouter.post('/register', authLimiter, async (req, res) => {
   const oauthEntry = oauth_key ? pendingOAuth.get(oauth_key) : null;
   if (oauth_key && (!oauthEntry || oauthEntry.expiresAt < Date.now())) {
     pendingOAuth.delete(oauth_key);
-    return res.status(400).json({ error: 'Google session expired. Please sign in with Google again.' });
+    return res
+      .status(400)
+      .json({ error: 'Google session expired. Please sign in with Google again.' });
   }
 
   const hashed = password ? await bcrypt.hash(password, 10) : null;
@@ -199,20 +258,40 @@ authRouter.post('/register', authLimiter, async (req, res) => {
       storeCode = generateStoreCode();
     }
 
-    const storeInfo = db.prepare(
-      'INSERT INTO stores (name, street, zipcode, state, phone, email, store_code) VALUES (?, ?, ?, ?, ?, ?, ?)'
-    ).run(store_name, street || null, zipcode || null, state || null, phone || '', email || '', storeCode);
+    const storeInfo = db
+      .prepare(
+        'INSERT INTO stores (name, street, zipcode, state, phone, email, store_code) VALUES (?, ?, ?, ?, ?, ?, ?)'
+      )
+      .run(
+        store_name,
+        street || null,
+        zipcode || null,
+        state || null,
+        phone || '',
+        email || '',
+        storeCode
+      );
     const storeId = storeInfo.lastInsertRowid as number;
-    const userInfo = db.prepare(
-      'INSERT INTO users (username, password, role, store_id, store_name, oauth_provider, oauth_id, email) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-    ).run(
-      username, hashed, 'owner', storeId, store_name,
-      oauthEntry ? 'google' : null,
-      oauthEntry ? oauthEntry.googleId : null,
-      oauthEntry ? oauthEntry.email : (email || null)
-    );
+    const userInfo = db
+      .prepare(
+        'INSERT INTO users (username, password, role, store_id, store_name, oauth_provider, oauth_id, email) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      )
+      .run(
+        username,
+        hashed,
+        'owner',
+        storeId,
+        store_name,
+        oauthEntry ? 'google' : null,
+        oauthEntry ? oauthEntry.googleId : null,
+        oauthEntry ? oauthEntry.email : email || null
+      );
     const userId = userInfo.lastInsertRowid as number;
-    db.prepare('INSERT OR IGNORE INTO user_stores (user_id, store_id, role) VALUES (?, ?, ?)').run(userId, storeId, 'owner');
+    db.prepare('INSERT OR IGNORE INTO user_stores (user_id, store_id, role) VALUES (?, ?, ?)').run(
+      userId,
+      storeId,
+      'owner'
+    );
 
     // Seed 4 default categories for the new store
     const catInsert = db.prepare('INSERT INTO categories (name, icon, store_id) VALUES (?, ?, ?)');
@@ -231,11 +310,22 @@ authRouter.post('/register', authLimiter, async (req, res) => {
     const { storeId, storeCode } = register();
     if (oauthEntry) {
       pendingOAuth.delete(oauth_key);
-      const newUser = db.prepare("SELECT * FROM users WHERE store_id = ? AND role = 'owner'").get(storeId) as any;
+      const newUser = db
+        .prepare("SELECT * FROM users WHERE store_id = ? AND role = 'owner'")
+        .get(storeId) as any;
       issueJwt(req, res, newUser);
-      return res.status(201).json({ message: 'Store registered', store_id: storeId, store_code: storeCode, redirect: '/' });
+      return res
+        .status(201)
+        .json({
+          message: 'Store registered',
+          store_id: storeId,
+          store_code: storeCode,
+          redirect: '/',
+        });
     }
-    res.status(201).json({ message: 'Store registered successfully', store_id: storeId, store_code: storeCode });
+    res
+      .status(201)
+      .json({ message: 'Store registered successfully', store_id: storeId, store_code: storeCode });
   } catch (err: any) {
     console.error('[auth:register]', err);
     res.status(500).json({ error: 'An internal error occurred' });
@@ -256,13 +346,17 @@ authRouter.get('/me', authenticateToken, (req: any, res) => {
 
 // My stores — list all stores this user has access to
 authRouter.get('/my-stores', authenticateToken, (req: any, res) => {
-  const stores = db.prepare(`
+  const stores = db
+    .prepare(
+      `
     SELECT s.id, s.name, s.logo, s.status, us.role
     FROM user_stores us
     JOIN stores s ON s.id = us.store_id
     WHERE us.user_id = ?
     ORDER BY s.name ASC
-  `).all(req.user.id);
+  `
+    )
+    .all(req.user.id);
   res.json(stores);
 });
 
@@ -270,12 +364,14 @@ authRouter.get('/my-stores', authenticateToken, (req: any, res) => {
 authRouter.post('/switch-store', authenticateToken, (req: any, res) => {
   const storeId = Number.parseInt(req.body.store_id);
   if (Number.isNaN(storeId)) return res.status(400).json({ error: 'Invalid store ID' });
-  const access = db.prepare('SELECT role FROM user_stores WHERE user_id = ? AND store_id = ?')
+  const access = db
+    .prepare('SELECT role FROM user_stores WHERE user_id = ? AND store_id = ?')
     .get(req.user.id, storeId) as any;
   if (!access) return res.status(403).json({ error: 'No access to that store' });
 
   const store = db.prepare('SELECT * FROM stores WHERE id = ?').get(storeId) as any;
-  if (!store || store.status === 'suspended') return res.status(403).json({ error: 'Store is suspended' });
+  if (!store || store.status === 'suspended')
+    return res.status(403).json({ error: 'Store is suspended' });
 
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id) as any;
   // Temporarily override store context for JWT issuance
@@ -290,7 +386,10 @@ authRouter.post('/switch-store', authenticateToken, (req: any, res) => {
 
 // Store Settings — get
 authRouter.get('/store/settings', authenticateToken, (req: any, res) => {
-  const store = db.prepare('SELECT id, name, street, zipcode, state, phone, email, status, logo, store_code FROM stores WHERE id = ?')
+  const store = db
+    .prepare(
+      'SELECT id, name, street, zipcode, state, phone, email, status, logo, store_code FROM stores WHERE id = ?'
+    )
     .get(req.user.store_id) as any;
   if (!store) return res.status(404).json({ error: 'Store not found' });
   res.json(store);
@@ -300,32 +399,70 @@ authRouter.get('/store/settings', authenticateToken, (req: any, res) => {
 authRouter.put('/store/settings', authenticateToken, (req: any, res) => {
   const { name, street, zipcode, state, phone, email, logo } = req.body;
   if (!name?.trim()) return res.status(400).json({ error: 'Store name is required' });
-  if (name.length > 100) return res.status(400).json({ error: 'Store name must be 100 characters or fewer' });
-  if (street && street.length > 200) return res.status(400).json({ error: 'Street address must be 200 characters or fewer' });
-  if (email && email.length > 200) return res.status(400).json({ error: 'Email must be 200 characters or fewer' });
-  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Invalid email address' });
-  if (phone && !/^\d{10}$/.test(phone.replaceAll(/\D/g, ''))) return res.status(400).json({ error: 'Phone must be 10 digits' });
-  if (zipcode && !/^\d{5}(-\d{4})?$/.test(zipcode)) return res.status(400).json({ error: 'Zipcode format: 12345 or 12345-6789' });
-  const savedLogo = logo ? (saveBase64Image(logo) || null) : null;
-  db.prepare('UPDATE stores SET name = ?, street = ?, zipcode = ?, state = ?, phone = ?, email = ?, logo = ? WHERE id = ?')
-    .run(name.trim(), street || null, zipcode || null, state || null, phone || null, email || null, savedLogo, req.user.store_id);
-  res.json({ success: true });
+  if (name.length > 100)
+    return res.status(400).json({ error: 'Store name must be 100 characters or fewer' });
+  if (street && street.length > 200)
+    return res.status(400).json({ error: 'Street address must be 200 characters or fewer' });
+  if (email && email.length > 200)
+    return res.status(400).json({ error: 'Email must be 200 characters or fewer' });
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+    return res.status(400).json({ error: 'Invalid email address' });
+  if (phone && !/^\d{10}$/.test(phone.replaceAll(/\D/g, '')))
+    return res.status(400).json({ error: 'Phone must be 10 digits' });
+  if (zipcode && !/^\d{5}(-\d{4})?$/.test(zipcode))
+    return res.status(400).json({ error: 'Zipcode format: 12345 or 12345-6789' });
+  try {
+    const savedLogo = logo ? saveBase64Image(logo) : null;
+    db.prepare(
+      'UPDATE stores SET name = ?, street = ?, zipcode = ?, state = ?, phone = ?, email = ?, logo = ? WHERE id = ?'
+    ).run(
+      name.trim(),
+      street || null,
+      zipcode || null,
+      state || null,
+      phone || null,
+      email || null,
+      savedLogo,
+      req.user.store_id
+    );
+
+    const updatedStore = db
+      .prepare(
+        'SELECT id, name, street, zipcode, state, phone, email, status, logo, store_code FROM stores WHERE id = ?'
+      )
+      .get(req.user.store_id);
+
+    res.json(updatedStore);
+  } catch (error) {
+    if (error instanceof UnsupportedImageTypeError) {
+      return res.status(400).json({ error: error.message });
+    }
+
+    console.error('[auth:store-settings]', error);
+    return res.status(500).json({ error: 'An internal error occurred' });
+  }
 });
 
 // Store Settings — change password
 authRouter.put('/store/password', authenticateToken, async (req: any, res) => {
   const { current_password, new_password } = req.body;
-  if (!current_password || !new_password) return res.status(400).json({ error: 'Both fields are required' });
+  if (!current_password || !new_password)
+    return res.status(400).json({ error: 'Both fields are required' });
   if (new_password.length < 8 || !/[A-Z]/.test(new_password) || !/\d/.test(new_password))
-    return res.status(400).json({ error: 'Password must be at least 8 characters with 1 uppercase letter and 1 number' });
+    return res
+      .status(400)
+      .json({
+        error: 'Password must be at least 8 characters with 1 uppercase letter and 1 number',
+      });
 
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id) as any;
-  if (!user || !await bcrypt.compare(current_password, user.password))
+  if (!user || !(await bcrypt.compare(current_password, user.password)))
     return res.status(401).json({ error: 'Current password is incorrect' });
 
   const newVersion = (user.token_version ?? 1) + 1;
-  db.prepare('UPDATE users SET password = ?, failed_login_attempts = 0, locked_until = NULL, token_version = ? WHERE id = ?')
-    .run(await bcrypt.hash(new_password, 10), newVersion, req.user.id);
+  db.prepare(
+    'UPDATE users SET password = ?, failed_login_attempts = 0, locked_until = NULL, token_version = ? WHERE id = ?'
+  ).run(await bcrypt.hash(new_password, 10), newVersion, req.user.id);
   // Re-issue JWT so the current session stays valid with the new version
   const updated = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id) as any;
   issueJwt(req, res, updated);

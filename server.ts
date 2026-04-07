@@ -56,17 +56,53 @@ app.use(helmet({
   referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
 }));
 
-app.use(express.json({ limit: '5mb' }));
+app.use(express.json({ limit: '50mb' }));
 app.use(cookieParser());
 app.use('/uploads', express.static(UPLOADS_DIR));
 app.use('/icons', express.static(path.join(process.cwd(), 'public', 'icons')));
 
 // Google Drive image proxy — fetches Drive thumbnails server-side so the browser
-// never needs a Google session. Only Drive file IDs are accepted (no open proxy).
-app.get('/api/drive-image/:fileId', (req, res) => {
+// never needs to follow a cross-origin Drive redirect. Only Drive file IDs are accepted.
+app.get('/api/drive-image/:fileId', async (req, res) => {
   const { fileId } = req.params;
   if (!/^[a-zA-Z0-9_-]+$/.test(fileId)) return res.status(400).end();
-  res.redirect(302, `https://drive.google.com/thumbnail?id=${fileId}&sz=w800`);
+
+  const candidateUrls = [
+    `https://drive.google.com/thumbnail?id=${fileId}&sz=w800`,
+    `https://drive.google.com/uc?export=view&id=${fileId}`,
+  ];
+
+  try {
+    for (const url of candidateUrls) {
+      const upstream = await fetch(url, {
+        headers: {
+          Accept: 'image/*',
+          'User-Agent': 'OptiCapture/1.0',
+        },
+      });
+
+      if (!upstream.ok) {
+        continue;
+      }
+
+      const contentType = upstream.headers.get('content-type') || '';
+      if (!contentType.startsWith('image/')) {
+        continue;
+      }
+
+      const cacheControl = upstream.headers.get('cache-control') || 'public, max-age=3600';
+      const buffer = Buffer.from(await upstream.arrayBuffer());
+
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Cache-Control', cacheControl);
+      return res.send(buffer);
+    }
+
+    return res.status(404).end();
+  } catch (error) {
+    console.error('[drive-image]', error);
+    return res.status(502).end();
+  }
 });
 
 app.use('/api', apiLimiter);

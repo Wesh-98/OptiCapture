@@ -12,12 +12,13 @@ import Signup from './pages/Signup';
 import SuperAdmin from './pages/SuperAdmin';
 import Dashboard from './pages/Dashboard';
 import MobileScan from './pages/MobileScan';
+import StoreSettings from './pages/StoreSettings';
 
 // Heavy pages — lazy-loaded so they don't bloat the initial bundle
 const Scan = lazy(() => import('./pages/Scan'));
 const Import = lazy(() => import('./pages/Import'));
 const Logs = lazy(() => import('./pages/Logs'));
-const StoreSettings = lazy(() => import('./pages/StoreSettings'));
+//const StoreSettings = lazy(() => import('./pages/StoreSettings'));
 
 interface ErrorBoundaryState { hasError: boolean; error: Error | null; }
 

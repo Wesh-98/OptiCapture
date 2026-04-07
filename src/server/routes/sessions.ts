@@ -123,6 +123,11 @@ sessionsRouter.get('/session/:id/items', scanLimiter, (req: any, res: any) => {
 
   if (!session) return res.status(403).json({ error: 'Invalid session or OTP' });
 
+  //Exoired sessions shouldn't be readable via OTP.
+  if (session.expires_at && new Date(session.expires_at) < new Date()) {
+    return res.status(410).json({ error: 'Session has expired. Please start a new session.' });
+  }
+  
   // If caller has a valid JWT, enforce store ownership (defence-in-depth for browser clients)
   try {
     const token = (req as any).cookies?.token;
