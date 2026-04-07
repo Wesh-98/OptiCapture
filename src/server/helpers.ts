@@ -13,8 +13,21 @@ if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR);
 
 // M-7: Only allow safe image extensions from base64 uploads
 const ALLOWED_IMAGE_TYPES: Record<string, string> = {
-  jpeg: 'jpg', jpg: 'jpg', png: 'png', gif: 'gif', webp: 'webp',
+  jpeg: 'jpg',
+  jpg: 'jpg',
+  png: 'png',
+  gif: 'gif',
+  webp: 'webp',
 };
+
+const ALLOWED_IMAGE_MIME_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'] as const;
+
+export class UnsupportedImageTypeError extends Error {
+  constructor() {
+    super('Unsupported image format. Use JPG, PNG, GIF, or WEBP.');
+    this.name = 'UnsupportedImageTypeError';
+  }
+}
 
 // Save base64 image to disk, return file path. Pass-through for URLs/paths.
 export function saveBase64Image(base64Data: string): string {
@@ -22,14 +35,16 @@ export function saveBase64Image(base64Data: string): string {
   if (!match) return base64Data;
 
   // Only allow safe image types
-  const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
   const mimeMatch = /^data:([^;]+);base64,/.exec(base64Data);
-  if (!mimeMatch || !allowedMimeTypes.includes(mimeMatch[1])) {
-    return ''; // Reject disallowed types silently
+  if (
+    !mimeMatch ||
+    !ALLOWED_IMAGE_MIME_TYPES.includes(mimeMatch[1] as (typeof ALLOWED_IMAGE_MIME_TYPES)[number])
+  ) {
+    throw new UnsupportedImageTypeError();
   }
 
   const ext = ALLOWED_IMAGE_TYPES[match[1].toLowerCase()];
-  if (!ext) return ''; // reject svg, php, or any unknown type
+  if (!ext) throw new UnsupportedImageTypeError();
   const buffer = Buffer.from(match[2], 'base64');
   const filename = `${randomUUID()}.${ext}`;
   fs.writeFileSync(path.join(UPLOADS_DIR, filename), buffer);
@@ -111,19 +126,23 @@ export function upcVariants(upc: string): string[] {
   return variants;
 }
 
-export async function fetchOpenFoodFacts(upc: string, signal: AbortSignal): Promise<LookupResult | null> {
+export async function fetchOpenFoodFacts(
+  upc: string,
+  signal: AbortSignal
+): Promise<LookupResult | null> {
   try {
     const res = await fetch(
       `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(upc)}.json`,
       { headers: { 'User-Agent': 'OptiCapture/1.0' }, signal }
     );
     if (!res.ok) return null;
-    const data = await res.json() as any;
+    const data = (await res.json()) as any;
     const p = data?.product;
     if (!p) return null;
     const product_name = p.product_name?.trim() || p.product_name_en?.trim() || null;
     if (!product_name) return null;
-    const brand = typeof p.brands === 'string' && p.brands.trim() ? p.brands.split(',')[0].trim() : null;
+    const brand =
+      typeof p.brands === 'string' && p.brands.trim() ? p.brands.split(',')[0].trim() : null;
     const image = p.image_front_url || p.image_url || null;
     return { product_name, brand, image, source: 'open_food_facts' };
   } catch {
@@ -131,7 +150,10 @@ export async function fetchOpenFoodFacts(upc: string, signal: AbortSignal): Prom
   }
 }
 
-export async function fetchUpcItemDb(upc: string, signal: AbortSignal): Promise<LookupResult | null> {
+export async function fetchUpcItemDb(
+  upc: string,
+  signal: AbortSignal
+): Promise<LookupResult | null> {
   try {
     const apiKey = process.env.UPCITEMDB_API_KEY?.trim();
     // Use paid /v1 endpoint when a key is configured, trial endpoint otherwise
@@ -139,7 +161,7 @@ export async function fetchUpcItemDb(upc: string, signal: AbortSignal): Promise<
     const headers: Record<string, string> = apiKey ? { 'x-user-key': apiKey } : {};
     const res = await fetch(url, { headers, signal });
     if (!res.ok) return null;
-    const data = await res.json() as any;
+    const data = (await res.json()) as any;
     const item = data?.items?.[0];
     if (!item?.title) return null;
     return {
@@ -165,8 +187,20 @@ export async function lookupProductByUpc(upc: string): Promise<LookupResult | nu
   // Try all UPC variants (with/without leading zero) — first non-null result wins per source
   const variants = upcVariants(cleanUpc);
   const [offResult, upcResult] = await Promise.allSettled([
-    (async () => { for (const v of variants) { const r = await fetchOpenFoodFacts(v, c1.signal); if (r) return r; } return null; })(),
-    (async () => { for (const v of variants) { const r = await fetchUpcItemDb(v, c2.signal); if (r) return r; } return null; })(),
+    (async () => {
+      for (const v of variants) {
+        const r = await fetchOpenFoodFacts(v, c1.signal);
+        if (r) return r;
+      }
+      return null;
+    })(),
+    (async () => {
+      for (const v of variants) {
+        const r = await fetchUpcItemDb(v, c2.signal);
+        if (r) return r;
+      }
+      return null;
+    })(),
   ]);
 
   clearTimeout(t1);
@@ -179,9 +213,9 @@ export async function lookupProductByUpc(upc: string): Promise<LookupResult | nu
   // When both have an image, prefer UPCitemdb — cleaner retail labelling.
   // When only one has a name, use that one regardless of source.
   if (off && upc_) {
-    if (upc_.image) return upc_;   // UPCitemdb has image — use it
-    if (off.image) return off;     // OFF has image, UPCitemdb doesn't
-    return upc_;                   // Both name-only — UPCitemdb has cleaner names
+    if (upc_.image) return upc_; // UPCitemdb has image — use it
+    if (off.image) return off; // OFF has image, UPCitemdb doesn't
+    return upc_; // Both name-only — UPCitemdb has cleaner names
   }
   return upc_ ?? off ?? null;
 }

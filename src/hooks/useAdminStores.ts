@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useState, type ChangeEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   StoreRow,
@@ -6,8 +6,19 @@ import {
   validatePhone,
   validateZipcode,
 } from '../components/superadmin/types';
+import { isSupportedUploadImageType, SUPPORTED_UPLOAD_IMAGE_ERROR } from '../lib/imageUpload';
 
 const MAX_LOGO_BYTES = 2 * 1024 * 1024; // 2 MB
+
+async function readErrorMessage(res: Response, fallback: string): Promise<string> {
+  const contentType = res.headers.get('content-type') || '';
+  if (contentType.includes('application/json')) {
+    const payload = (await res.json().catch(() => null)) as { error?: string } | null;
+    if (payload?.error) return payload.error;
+  }
+  const text = await res.text().catch(() => '');
+  return text.trim() || fallback;
+}
 
 export function useAdminStores() {
   const navigate = useNavigate();
@@ -39,7 +50,10 @@ export function useAdminStores() {
     setIsLoading(true);
     try {
       const res = await fetch('/api/admin/stores', { credentials: 'include' });
-      if (res.status === 401 || res.status === 403) { navigate('/login'); return; }
+      if (res.status === 401 || res.status === 403) {
+        navigate('/login');
+        return;
+      }
       if (res.ok) setStores(await res.json());
     } finally {
       setIsLoading(false);
@@ -57,7 +71,7 @@ export function useAdminStores() {
         body: JSON.stringify({ status: newStatus }),
       });
       if (res.ok) {
-        setStores(prev => prev.map(s => s.id === store.id ? { ...s, status: newStatus } : s));
+        setStores(prev => prev.map(s => (s.id === store.id ? { ...s, status: newStatus } : s)));
       } else {
         const data = await res.json().catch(() => ({}));
         setActionError(data.error || 'Failed to update store status');
@@ -79,8 +93,12 @@ export function useAdminStores() {
     if (!editStore.name.trim()) errs.name = 'Store name is required';
     if (editStore.email && !validateEmail(editStore.email)) errs.email = 'Enter a valid email';
     if (editStore.phone && !validatePhone(editStore.phone)) errs.phone = 'Phone must be 10 digits';
-    if (editStore.zipcode && !validateZipcode(editStore.zipcode)) errs.zipcode = 'Format: 12345 or 12345-6789';
-    if (Object.keys(errs).length) { setEditErrors(errs); return; }
+    if (editStore.zipcode && !validateZipcode(editStore.zipcode))
+      errs.zipcode = 'Format: 12345 or 12345-6789';
+    if (Object.keys(errs).length) {
+      setEditErrors(errs);
+      return;
+    }
     setEditErrors({});
     setEditSaving(true);
     setEditError('');
@@ -101,10 +119,10 @@ export function useAdminStores() {
       });
       if (res.ok) {
         const updated = await res.json();
-        setStores(prev => prev.map(s => s.id === editStore.id ? { ...s, ...updated } : s));
+        setStores(prev => prev.map(s => (s.id === editStore.id ? { ...s, ...updated } : s)));
         setEditStore(null);
       } else {
-        setEditError((await res.text()) || 'Failed to save changes');
+        setEditError(await readErrorMessage(res, 'Failed to save changes'));
       }
     } catch {
       setEditError('Failed to save changes');
@@ -113,11 +131,16 @@ export function useAdminStores() {
     }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !editStore) return;
     if (file.size > MAX_LOGO_BYTES) {
       setEditError('Logo must be under 2 MB');
+      e.target.value = '';
+      return;
+    }
+    if (!isSupportedUploadImageType(file)) {
+      setEditError(SUPPORTED_UPLOAD_IMAGE_ERROR);
       e.target.value = '';
       return;
     }
@@ -168,7 +191,8 @@ export function useAdminStores() {
   const filteredStores = stores
     .filter(s => {
       const q = storeSearch.trim().toLowerCase();
-      if (q && !s.name.toLowerCase().includes(q) && !(s.email ?? '').toLowerCase().includes(q)) return false;
+      if (q && !s.name.toLowerCase().includes(q) && !(s.email ?? '').toLowerCase().includes(q))
+        return false;
       if (statusFilter !== 'all' && s.status !== statusFilter) return false;
       return true;
     })
@@ -179,19 +203,40 @@ export function useAdminStores() {
 
   return {
     // data
-    stores, filteredStores, isLoading, actionError,
+    stores,
+    filteredStores,
+    isLoading,
+    actionError,
     // status toggle
-    togglingId, toggleStatus,
+    togglingId,
+    toggleStatus,
     // edit modal
-    editStore, setEditStore, editSaving, editError, editErrors,
-    openEdit, handleEditSave, handleFileUpload, removeLogo,
+    editStore,
+    setEditStore,
+    editSaving,
+    editError,
+    editErrors,
+    openEdit,
+    handleEditSave,
+    handleFileUpload,
+    removeLogo,
     // delete modal
-    deleteStore, deleteConfirmName, setDeleteConfirmName, deleting,
-    openDeleteConfirm, handleDeleteStore,
+    deleteStore,
+    deleteConfirmName,
+    setDeleteConfirmName,
+    deleting,
+    openDeleteConfirm,
+    handleDeleteStore,
     // filters
-    storeSearch, setStoreSearch, statusFilter, setStatusFilter,
-    joinedSort, setJoinedSort,
+    storeSearch,
+    setStoreSearch,
+    statusFilter,
+    setStatusFilter,
+    joinedSort,
+    setJoinedSort,
     // actions
-    fetchStores, handleLogout, setActionError,
+    fetchStores,
+    handleLogout,
+    setActionError,
   };
 }
