@@ -29,9 +29,10 @@ if (!JWT_SECRET) {
 }
 
 const app = express();
-// Trust the first proxy only in production (Cloudflare / nginx). In dev, trust proxy
-// would let any client spoof X-Forwarded-For and bypass all rate limiting.
-app.set('trust proxy', process.env.NODE_ENV === 'production' ? 1 : false);
+// Trust the first proxy hop — the tunnel (ngrok/cloudflare) in dev, nginx/Cloudflare in prod.
+// Without this, express-rate-limit throws ERR_ERL_UNEXPECTED_X_FORWARDED_FOR when the tunnel
+// injects X-Forwarded-For, and rate limiting keys off the tunnel IP instead of the real client.
+app.set('trust proxy', 1);
 
 const isProd = process.env.NODE_ENV === 'production';
 app.use(helmet({
