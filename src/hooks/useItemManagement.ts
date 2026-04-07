@@ -24,7 +24,7 @@ export function useItemManagement(
     if (res.ok) setItems(await res.json());
   };
 
-  const handleAddItem = async (e: React.FormEvent) => {
+  const handleAddItem = async (e: { preventDefault(): void }) => {
     e.preventDefault();
     if (!formData.image || !formData.item_name || !formData.category_id) {
       alert('Please fill in all required fields (*)');
@@ -52,7 +52,7 @@ export function useItemManagement(
     }
   };
 
-  const handleEditItem = async (e: React.FormEvent) => {
+  const handleEditItem = async (e: { preventDefault(): void }) => {
     e.preventDefault();
     if (!editingItem) return;
     try {
@@ -93,7 +93,7 @@ export function useItemManagement(
     });
   };
 
-  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>, target: 'add' | 'edit') => {
+  const handleImageUpload = async (e: { target: { files: FileList | null } }, target: 'add' | 'edit') => {
     const file = e.target.files?.[0];
     if (!file) return;
     const result = await readFileAsDataUrl(file);
