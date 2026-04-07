@@ -57,10 +57,18 @@ export const authenticateToken = (req: express.Request, res: express.Response, n
   });
 };
 
-// Role guard — only owners and superadmins may write/delete inventory or categories
+// Role guard — only owners and superadmins may manage categories, export, or batch import
 export const requireOwner = (req: express.Request, res: express.Response, next: express.NextFunction) => {
   const { role } = (req as AuthRequest).user;
   if (role !== 'owner' && role !== 'superadmin')
+    return res.status(403).json({ error: 'Insufficient permissions' });
+  next();
+};
+
+// Role guard — owners, superadmins, and takers may add/edit/delete individual inventory items
+export const requireOwnerOrTaker = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const { role } = (req as AuthRequest).user;
+  if (role !== 'owner' && role !== 'superadmin' && role !== 'taker')
     return res.status(403).json({ error: 'Insufficient permissions' });
   next();
 };

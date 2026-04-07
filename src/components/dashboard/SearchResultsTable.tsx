@@ -1,4 +1,4 @@
-import React from 'react';
+import type React from 'react';
 import { Search, Image as ImageIcon, Loader2, Pencil, Trash2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import type { InventoryItem } from './types';
@@ -7,7 +7,7 @@ interface Props {
   results: InventoryItem[];
   isSearching: boolean;
   globalSearch: string;
-  isOwner: boolean;
+  canEditItems: boolean;
   confirmDeleteItemId: number | null;
   deletingItemId: number | null;
   onEdit: (item: InventoryItem) => void;
@@ -16,7 +16,7 @@ interface Props {
 }
 
 export function SearchResultsTable({
-  results, isSearching, globalSearch, isOwner,
+  results, isSearching, globalSearch, canEditItems,
   confirmDeleteItemId, deletingItemId, onEdit, onConfirmDelete, onDelete,
 }: Readonly<Props>) {
   if (isSearching) {
@@ -80,13 +80,13 @@ export function SearchResultsTable({
               </td>
               <td className="px-6 py-4">
                 <div className="flex items-center gap-1">
-                  {isOwner && (
+                  {canEditItems && (
                     <button onClick={() => onEdit(item)}
                       className="p-1.5 hover:bg-slate-200 rounded-lg text-slate-400 hover:text-navy-900 transition-colors">
                       <Pencil size={15} />
                     </button>
                   )}
-                  {isOwner && (confirmDeleteItemId === item.id ? (
+                  {canEditItems && (confirmDeleteItemId === item.id ? (
                     <div className="flex items-center gap-1">
                       <button
                         onClick={() => onDelete(item.id)}

@@ -1,4 +1,3 @@
-import React from 'react';
 import { Image as ImageIcon, Pencil, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import type { InventoryItem } from './types';
@@ -6,7 +5,7 @@ import type { InventoryItem } from './types';
 interface Props {
   items: InventoryItem[];
   search: string;
-  isOwner: boolean;
+  canEditItems: boolean;
   pageSize: 50 | 100 | 200;
   currentPage: number;
   confirmDeleteItemId: number | null;
@@ -19,7 +18,7 @@ interface Props {
 }
 
 export function ItemsTable({
-  items, search, isOwner, pageSize, currentPage,
+  items, search, canEditItems, pageSize, currentPage,
   confirmDeleteItemId, deletingItemId,
   onPageSizeChange, onPageChange, onConfirmDelete, onDelete, onEdit,
 }: Readonly<Props>) {
@@ -81,7 +80,7 @@ export function ItemsTable({
                   ${item.sale_price?.toFixed(2) || '0.00'}
                 </td>
                 <td className="px-6 py-4">
-                  {isOwner && (
+                  {canEditItems && (
                     <div className="flex items-center gap-1">
                       <button onClick={() => onEdit(item)}
                         className="p-1.5 hover:bg-slate-200 rounded-lg text-slate-400 hover:text-navy-900 transition-colors">

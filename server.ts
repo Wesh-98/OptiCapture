@@ -129,7 +129,7 @@ app.get('/api/server-info', (_req, res) => {
   });
 });
 
-// HTTPS certificate helper
+// HTTPS certificate helper - only reads the runtime dev-key.pem / dev-cert.pem pair.
 function getHttpsOptions() {
   const devKeyPath = path.join(__dirname, 'dev-key.pem');
   const devCertPath = path.join(__dirname, 'dev-cert.pem');

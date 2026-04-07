@@ -4,7 +4,7 @@ import ExcelJS from 'exceljs';
 import Papa from 'papaparse';
 import PDFDocument from 'pdfkit';
 import { db } from '../db.js';
-import { authenticateToken, requireOwner } from '../middleware.js';
+import { authenticateToken, requireOwner, requireOwnerOrTaker } from '../middleware.js';
 import { upcCache } from '../cache.js';
 import { saveBase64Image, normalizeImageUrl, UnsupportedImageTypeError } from '../helpers.js';
 
@@ -221,7 +221,7 @@ inventoryRouter.get('/inventory/export', authenticateToken, requireOwner, async 
   res.send(Buffer.from(buf));
 });
 
-inventoryRouter.post('/inventory', authenticateToken, requireOwner, (req: any, res) => {
+inventoryRouter.post('/inventory', authenticateToken, requireOwnerOrTaker, (req: any, res) => {
   const {
     item_name,
     quantity,
@@ -292,7 +292,7 @@ inventoryRouter.post('/inventory', authenticateToken, requireOwner, (req: any, r
   }
 });
 
-inventoryRouter.put('/inventory/:id', authenticateToken, requireOwner, (req: any, res) => {
+inventoryRouter.put('/inventory/:id', authenticateToken, requireOwnerOrTaker, (req: any, res) => {
   const {
     item_name,
     quantity,
@@ -367,7 +367,7 @@ inventoryRouter.put('/inventory/:id', authenticateToken, requireOwner, (req: any
   }
 });
 
-inventoryRouter.delete('/inventory/:id', authenticateToken, requireOwner, (req: any, res) => {
+inventoryRouter.delete('/inventory/:id', authenticateToken, requireOwnerOrTaker, (req: any, res) => {
   const { id } = req.params;
   const user = req.user;
 

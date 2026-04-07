@@ -34,7 +34,7 @@ Express server (server.ts)
 - Development uses Vite in middleware mode on the same HTTP or HTTPS server instance as Express.
 - Production serves the prebuilt SPA from `dist/` and keeps the same API routes.
 - The app listens on port `3000`.
-- If `dev-key.pem` and `dev-cert.pem` exist, local development runs over HTTPS so camera scanning works on mobile devices.
+- If `dev-key.pem` and `dev-cert.pem` exist, local development runs over HTTPS so camera scanning works on mobile devices. `generate-certs.js` prepares those runtime files, preferring `mkcert` and falling back to OpenSSL when needed.
 
 ## Repository Layout
 
