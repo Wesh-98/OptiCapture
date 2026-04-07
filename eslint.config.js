@@ -42,6 +42,15 @@ export default [
     },
   },
   {
+    // Server files run in Node — add node globals so process/Buffer are recognised
+    files: ['src/server/**/*.ts'],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+      },
+    },
+  },
+  {
     ignores: ['dist/**', 'node_modules/**', '*.config.js', 'server.ts'],
   },
 ];

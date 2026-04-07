@@ -6,7 +6,6 @@ import { db } from '../db.js';
 import { authenticateToken, authLimiter, googleClient } from '../middleware.js';
 import { revokeToken, pendingOAuth, pendingOAuthSet, DUMMY_HASH } from '../cache.js';
 import { saveBase64Image, generateStoreCode, UnsupportedImageTypeError } from '../helpers.js';
-import type { AuthRequest } from '../types.js';
 
 export const authRouter = express.Router();
 

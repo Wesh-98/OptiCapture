@@ -186,7 +186,7 @@ export function useScanSession(addToast: (type: 'success' | 'error' | 'warning',
         setPollError('Could not refresh live scan feed.');
       }
     }
-  }, [sessionId, addToast]);
+  }, [sessionId]);
 
   const stopPolling = useCallback(() => {
     if (pollIntervalRef.current) {
