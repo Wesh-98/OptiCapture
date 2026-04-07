@@ -3,8 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { randomUUID, randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { upcCache, upcCacheSet, UPC_CACHE_TTL } from './cache.js';
-import type { LookupResult, UpcCacheEntry } from './types.js';
+import type { LookupResult } from './types.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Uploads directory lives at project root — two levels up from src/server/

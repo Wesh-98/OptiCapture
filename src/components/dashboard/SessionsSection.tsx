@@ -1,4 +1,3 @@
-import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ChevronDown, X } from 'lucide-react';
 import type { ActiveSession } from './types';
@@ -79,14 +78,14 @@ function SessionCard({ session: s, onDelete, now }: Readonly<SessionCardProps>) 
 interface Props {
   sessions: ActiveSession[];
   isOpen: boolean;
+  now: number;
   onToggle: () => void;
   onDelete: (sessionId: string) => void;
   onNewScan: () => void;
 }
 
-export function SessionsSection({ sessions, isOpen, onToggle, onDelete, onNewScan }: Readonly<Props>) {
+export function SessionsSection({ sessions, isOpen, now, onToggle, onDelete, onNewScan }: Readonly<Props>) {
   if (sessions.length === 0) return null;
-  const now = Date.now();
   return (
     <div className="border border-slate-200 rounded-xl bg-white overflow-hidden">
       <div className="flex items-center justify-between px-4 py-3">

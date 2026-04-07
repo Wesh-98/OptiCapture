@@ -89,6 +89,7 @@ export default function Dashboard() {
       <SessionsSection
         sessions={activeSessions}
         isOpen={sessionsOpen}
+        now={Date.now()}
         onToggle={() => setSessionsOpen(o => !o)}
         onDelete={deleteSession}
         onNewScan={() => navigate('/scan')}

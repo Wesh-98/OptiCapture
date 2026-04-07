@@ -286,7 +286,7 @@ runMigration(9, () => {
     const usedCodes = new Set<string>();
     const genUnique = () => {
       const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-      let code = '';
+      let code: string;
       do {
         const bytes = randomBytes(6);
         code = '';

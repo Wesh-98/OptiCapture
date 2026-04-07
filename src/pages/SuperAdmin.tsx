@@ -17,7 +17,8 @@ export default function SuperAdmin() {
   const admin = useAdminStores();
   const users = useStoreUsers();
 
-  useEffect(() => { admin.fetchStores(); }, [admin.fetchStores]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { admin.fetchStores(); }, []);
 
   const active    = admin.stores.filter(s => s.status === 'active').length;
   const suspended = admin.stores.filter(s => s.status === 'suspended').length;

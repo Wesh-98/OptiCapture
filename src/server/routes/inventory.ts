@@ -2,7 +2,6 @@ import express from 'express';
 import multer from 'multer';
 import ExcelJS from 'exceljs';
 import Papa from 'papaparse';
-import PDFDocument from 'pdfkit';
 import { db } from '../db.js';
 import { authenticateToken, requireOwner, requireOwnerOrTaker } from '../middleware.js';
 import { upcCache } from '../cache.js';
