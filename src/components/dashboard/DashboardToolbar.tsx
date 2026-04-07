@@ -1,4 +1,4 @@
-import React from 'react';
+import type React from 'react';
 import { Search, Plus, ArrowLeft, Box, Layers } from 'lucide-react';
 import type { Category } from './types';
 
@@ -6,6 +6,7 @@ interface Props {
   viewMode: 'categories' | 'items';
   selectedCategory: Category | null;
   isOwner: boolean;
+  canEditItems: boolean;
   search: string;
   onSearchChange: (v: string) => void;
   onBack: () => void;
@@ -14,7 +15,7 @@ interface Props {
 }
 
 export function DashboardToolbar({
-  viewMode, selectedCategory, isOwner, search, onSearchChange,
+  viewMode, selectedCategory, isOwner, canEditItems, search, onSearchChange,
   onBack, onAddCategory, onAddItem,
 }: Readonly<Props>) {
   return (
@@ -55,7 +56,7 @@ export function DashboardToolbar({
             </button>
           </>
         )}
-        {viewMode === 'items' && isOwner && (
+        {viewMode === 'items' && canEditItems && (
           <button
             onClick={onAddItem}
             className="flex items-center gap-1.5 px-2.5 py-1.5 bg-navy-900 hover:bg-navy-800 rounded-lg text-xs font-medium text-white transition-colors whitespace-nowrap"

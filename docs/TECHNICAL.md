@@ -133,7 +133,7 @@ npm run build
 
 **Dev proxy:** Vite forwards `/api/*` to `http://localhost:3000` — no CORS issues in dev.
 
-**HTTPS in dev:** `generate-certs.js` creates self-signed `dev-key.pem` / `dev-cert.pem` for local HTTPS. Required for camera access on mobile browsers.
+**HTTPS in dev:** `generate-certs.js` prepares the runtime HTTPS files `dev-key.pem` / `dev-cert.pem`, preferring trusted `mkcert` certificates and falling back to self-signed OpenSSL certificates. Those two `dev-*` files are the only certificate files used by the app at runtime. Required for camera access on mobile browsers.
 
 ---
 

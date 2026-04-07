@@ -24,7 +24,8 @@ import type { Category } from '../components/dashboard/types';
 export default function Dashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const isOwner = user?.role !== 'taker';
+  const isOwner = user?.role === 'owner' || user?.role === 'superadmin';
+  const canEditItems = isOwner || user?.role === 'taker';
   const prefersReducedMotion = useReducedMotion();
 
   const [viewMode, setViewMode] = useState<'categories' | 'items'>('categories');
@@ -116,6 +117,7 @@ export default function Dashboard() {
           viewMode={viewMode}
           selectedCategory={selectedCategory}
           isOwner={isOwner}
+          canEditItems={canEditItems}
           search={search}
           onSearchChange={setSearch}
           onBack={handleBack}
@@ -128,7 +130,7 @@ export default function Dashboard() {
             results={searchResults}
             isSearching={isSearching}
             globalSearch={globalSearch}
-            isOwner={isOwner}
+            canEditItems={canEditItems}
             confirmDeleteItemId={items.confirmDeleteItemId}
             deletingItemId={items.deletingItemId}
             onEdit={items.openEditModal}
@@ -153,7 +155,7 @@ export default function Dashboard() {
           <ItemsTable
             items={items.items}
             search={search}
-            isOwner={isOwner}
+            canEditItems={canEditItems}
             pageSize={pageSize}
             currentPage={currentPage}
             confirmDeleteItemId={items.confirmDeleteItemId}

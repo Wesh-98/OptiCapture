@@ -6,9 +6,9 @@ coverage/
 *.log
 .env*
 !.env.example
-opticapture.db
-opticapture.db-shm
-opticapture.db-wal
+*.db
+*.db-shm
+*.db-wal
 .tunnel-url
 uploads/
 
