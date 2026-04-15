@@ -4,6 +4,7 @@ import { AlertTriangle, Lock, Mail, MapPin, Phone, Store, User } from 'lucide-re
 import { US_STATES } from '../../lib/constants';
 import type { SignupFormData } from './types';
 
+//Google signup not working yet but set up is there.
 interface SignupFormCardProps {
   error: string;
   errors: Record<string, string>;
@@ -68,7 +69,7 @@ export function SignupFormCard({
               src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg"
               className="w-5 h-5"
               alt="Google"
-            />
+            />            
             Sign up with Google
           </button>
 

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { ServerInfo } from '../components/scan/types';
 
+//fetches /api/server-info for QR code, IP/URL display.
 export function useServerInfo() {
   const [serverInfo, setServerInfo] = useState<ServerInfo | null>(null);
   const [ipLoading, setIpLoading] = useState(false);

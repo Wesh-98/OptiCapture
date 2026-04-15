@@ -2,78 +2,118 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Preferred trusted mkcert files
-const mkcertKeyPath = path.join(__dirname, 'localhost+2-key.pem');
-const mkcertCertPath = path.join(__dirname, 'localhost+2.pem');
+// Runtime HTTPS files. server.ts only reads these two filenames.
+const runtimeKeyPath = path.join(__dirname, 'dev-key.pem');
+const runtimeCertPath = path.join(__dirname, 'dev-cert.pem');
 
-// App default cert filenames
-const devKeyPath = path.join(__dirname, 'dev-key.pem');
-const devCertPath = path.join(__dirname, 'dev-cert.pem');
+function hasFile(filePath) {
+  return fs.existsSync(filePath);
+}
 
-function copyFileIfNeeded(src, dest) {
-  if (!fs.existsSync(dest)) {
-    fs.copyFileSync(src, dest);
+function hasPair(keyPath, certPath) {
+  return hasFile(keyPath) && hasFile(certPath);
+}
+
+function hasIncompletePair(keyPath, certPath) {
+  return hasFile(keyPath) !== hasFile(certPath);
+}
+
+function commandExists(command, args) {
+  try {
+    execFileSync(command, args, { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
   }
 }
 
-function applyMkcertCertificates() {
-  console.log('✓ Trusted mkcert certificates found');
-  copyFileIfNeeded(mkcertKeyPath, devKeyPath);
-  copyFileIfNeeded(mkcertCertPath, devCertPath);
-  console.log('✓ Copied mkcert certificates to dev-key.pem and dev-cert.pem');
-  process.exit(0);
+function runCommand(command, args) {
+  execFileSync(command, args, { stdio: 'inherit' });
 }
 
-function applyExistingDevCertificates() {
-  console.log('✓ Existing SSL certificates already found');
-  process.exit(0);
+function useExistingRuntimeCertificates() {
+  console.log('Using existing runtime HTTPS certificates: dev-key.pem / dev-cert.pem');
+}
+
+function generateTrustedMkcertCertificates() {
+  console.log('Generating trusted local HTTPS certificates with mkcert...');
+  runCommand('mkcert', [
+    '-key-file',
+    runtimeKeyPath,
+    '-cert-file',
+    runtimeCertPath,
+    'localhost',
+    '127.0.0.1',
+    '::1',
+  ]);
+  console.log('Generated trusted HTTPS certificates: dev-key.pem / dev-cert.pem');
 }
 
 function generateSelfSignedCertificates() {
-  console.log('Generating self-signed SSL certificates with OpenSSL...');
+  console.log('Generating self-signed HTTPS certificates with OpenSSL...');
 
-  // openssl command is identical on Windows and Unix — kept explicit for clarity
-  const cmd = `openssl req -x509 -newkey rsa:2048 -keyout "${devKeyPath}" -out "${devCertPath}" -days 365 -nodes -subj "/C=US/ST=State/L=City/O=Org/CN=localhost"`;
+  // Use execFileSync so the same argument list works across shells and platforms.
+  runCommand('openssl', [
+    'req',
+    '-x509',
+    '-newkey',
+    'rsa:2048',
+    '-keyout',
+    runtimeKeyPath,
+    '-out',
+    runtimeCertPath,
+    '-days',
+    '365',
+    '-nodes',
+    '-subj',
+    '/C=US/ST=State/L=City/O=Org/CN=localhost',
+  ]);
 
-  execSync('openssl version', { stdio: 'ignore' });
-  execSync(cmd, { stdio: 'inherit' });
-
-  console.log('✓ Self-signed certificates generated successfully');
-  console.log('⚠ These may still show browser warnings unless you use mkcert');
-  process.exit(0);
+  console.log('Generated self-signed HTTPS certificates: dev-key.pem / dev-cert.pem');
+  console.log(
+    'Warning: self-signed certificates may still be rejected by some mobile browsers. Prefer mkcert or npm run dev:scan for camera testing.'
+  );
 }
 
 try {
-  // 1. Prefer trusted mkcert certificates
-  if (fs.existsSync(mkcertKeyPath) && fs.existsSync(mkcertCertPath)) {
-    applyMkcertCertificates();
+  if (hasIncompletePair(runtimeKeyPath, runtimeCertPath)) {
+    console.warn(
+      'Incomplete runtime HTTPS certificate pair found. Regenerating dev-key.pem / dev-cert.pem.'
+    );
   }
 
-  // 2. If app certs already exist, use them
-  if (fs.existsSync(devKeyPath) && fs.existsSync(devCertPath)) {
-    applyExistingDevCertificates();
+  if (hasPair(runtimeKeyPath, runtimeCertPath)) {
+    useExistingRuntimeCertificates();
+    process.exit(0);
   }
 
-  // 3. Otherwise generate self-signed certs
-  generateSelfSignedCertificates();
+  if (commandExists('mkcert', ['-help'])) {
+    generateTrustedMkcertCertificates();
+    process.exit(0);
+  }
+
+  if (commandExists('openssl', ['version'])) {
+    generateSelfSignedCertificates();
+    process.exit(0);
+  }
+
+  throw new Error('Neither mkcert nor OpenSSL is available.');
 } catch (error) {
-  console.warn('⚠ Could not prepare SSL certificates');
+  console.warn('Could not prepare HTTPS certificates.');
   console.warn(error?.message || error);
 
-  console.log('\nTo fix this, do one of these:');
-  console.log('1. Preferred: install mkcert and run:');
+  console.log('\nRecommended fix:');
+  console.log('1. Install mkcert and trust its local CA:');
   console.log('   mkcert -install');
-  console.log('   mkcert localhost 127.0.0.1 ::1');
+  console.log('2. Generate runtime certs directly into the filenames the app uses:');
+  console.log('   mkcert -key-file dev-key.pem -cert-file dev-cert.pem localhost 127.0.0.1 ::1');
   console.log('');
-  console.log('2. Or ensure OpenSSL is installed and available in PATH');
-  console.log('');
-  console.log('Expected trusted files in this folder:');
-  console.log('   localhost-key.pem');
-  console.log('   localhost.pem');
+  console.log('Fallback: install OpenSSL to generate self-signed runtime certs automatically.');
+  console.log('The app only reads dev-key.pem / dev-cert.pem at runtime.');
 
   process.exit(0);
 }

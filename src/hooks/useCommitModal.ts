@@ -1,11 +1,10 @@
 import { useState } from 'react';
 import type { MutableRefObject } from 'react';
-import type { SessionItem, Category, UiStatus } from '../components/scan/types';
+import type { Category, SessionItem, UiStatus } from '../components/scan/types';
 
 //Opens commit modal, fetches categories, handels per-item category assignments and commit.
 export function useCommitModal(
   sessionId: string | null,
-  items: SessionItem[],
   selectedIds: Set<number>,
   isBusyRef: MutableRefObject<boolean>,
   lastPollAtRef: MutableRefObject<number | null>,

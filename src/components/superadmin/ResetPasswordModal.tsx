@@ -29,13 +29,13 @@ export function ResetPasswordModal({ username, tempPassword, prefersReducedMotio
               <KeyRound size={18} className="text-amber-600" />
             </div>
             <div>
-              <h3 className="font-bold text-navy-900">Password Reset</h3>
+              <h3 className="font-bold text-navy-900">Temporary Password</h3>
               <p className="text-xs text-slate-500">For user: <span className="font-semibold">{username}</span></p>
             </div>
           </div>
 
           <p className="text-sm text-slate-600 mb-3">
-            Relay this temporary password to the user. They should change it after logging in.
+            Share this password with the user. They will be prompted to change it right after signing in.
           </p>
 
           <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 mb-4">

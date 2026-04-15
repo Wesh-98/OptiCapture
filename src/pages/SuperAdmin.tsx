@@ -133,13 +133,17 @@ export default function SuperAdmin() {
           users={users.storeUsers}
           loading={users.usersLoading}
           error={users.usersError}
+          userActionMode={users.userActionMode}
           newUsername={users.newUsername}
+          newEmail={users.newEmail}
           newRole={users.newRole}
           addingUser={users.addingUser}
           addError={users.addError}
           resettingUserId={users.resettingUserId}
           confirmDeleteUserId={users.confirmDeleteUserId}
+          onUserActionMode={users.handleUserActionModeChange}
           onNewUsername={users.setNewUsername}
+          onNewEmail={users.setNewEmail}
           onNewRole={users.setNewRole}
           onAddUser={users.addUser}
           onRemoveUser={users.removeUser}

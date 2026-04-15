@@ -23,8 +23,39 @@ export default defineConfig(() => {
     build: {
       rollupOptions: {
         output: {
-          manualChunks: {
-            vendor: ['react', 'react-dom', 'react-router-dom'],
+          manualChunks(id) {
+            const normalizedId = id.replaceAll('\\', '/');
+
+            if (!normalizedId.includes('/node_modules/')) {
+              return undefined;
+            }
+
+            if (
+              normalizedId.includes('/node_modules/react/') ||
+              normalizedId.includes('/node_modules/react-dom/') ||
+              normalizedId.includes('/node_modules/react-router/') ||
+              normalizedId.includes('/node_modules/react-router-dom/') ||
+              normalizedId.includes('/node_modules/scheduler/')
+            ) {
+              return 'vendor';
+            }
+
+            if (normalizedId.includes('/node_modules/lucide-react/')) {
+              return 'icons';
+            }
+
+            if (normalizedId.includes('/node_modules/motion/')) {
+              return 'motion';
+            }
+
+            if (
+              normalizedId.includes('/node_modules/@zxing/browser/') ||
+              normalizedId.includes('/node_modules/@zxing/library/')
+            ) {
+              return 'scanner';
+            }
+
+            return undefined;
           },
         },
       },

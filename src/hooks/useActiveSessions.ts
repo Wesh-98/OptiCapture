@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { ActiveSession } from '../components/dashboard/types';
 
+//loads active/draft sessions
 export function useActiveSessions() {
   const [activeSessions, setActiveSessions] = useState<ActiveSession[]>([]);
   const [sessionsOpen, setSessionsOpen] = useState(false);

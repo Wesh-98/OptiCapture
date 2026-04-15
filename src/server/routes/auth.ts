@@ -3,11 +3,39 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { db } from '../db.js';
-import { authenticateToken, authLimiter, googleClient } from '../middleware.js';
+import { authenticateToken, authLimiter, googleClient, requireOwner } from '../middleware.js';
 import { revokeToken, pendingOAuth, pendingOAuthSet, DUMMY_HASH } from '../cache.js';
 import { saveBase64Image, generateStoreCode, UnsupportedImageTypeError } from '../helpers.js';
 
 export const authRouter = express.Router();
+
+function buildScopedSessionUser(
+  userId: number,
+  storeId: number,
+  fallbackRole: string
+) {
+  const user = db
+    .prepare('SELECT id, username, token_version, must_reset_password FROM users WHERE id = ?')
+    .get(userId) as any;
+  const store = db.prepare('SELECT id, name FROM stores WHERE id = ?').get(storeId) as any;
+  const access = db
+    .prepare('SELECT role FROM user_stores WHERE user_id = ? AND store_id = ?')
+    .get(userId, storeId) as any;
+
+  if (!user || !store) {
+    return null;
+  }
+
+  return {
+    id: user.id,
+    username: user.username,
+    role: access?.role ?? fallbackRole,
+    store_id: store.id,
+    store_name: store.name,
+    token_version: user.token_version ?? 1,
+    must_reset_password: user.must_reset_password === 1,
+  };
+}
 
 // Local helper — only called from auth handlers in this file
 function issueJwt(
@@ -20,6 +48,7 @@ function issueJwt(
     store_name: string;
     store_id: number;
     token_version?: number;
+    must_reset_password?: boolean | number;
   }
 ) {
   const token = jwt.sign(
@@ -30,6 +59,7 @@ function issueJwt(
       store_name: user.store_name,
       store_id: user.store_id,
       token_version: user.token_version ?? 1,
+      must_reset_password: Boolean(user.must_reset_password),
     },
     process.env.JWT_SECRET!,
     { expiresIn: '8h', algorithm: 'HS256', issuer: 'opticapture', audience: 'opticapture-app' }
@@ -51,23 +81,69 @@ authRouter.post('/login', authLimiter, async (req, res) => {
     return res.status(400).json({ error: 'Username and password are required' });
   }
 
-  let user: any;
+  let user: any = null;
+  let passwordMatch = false;
+  let loginRole: string | null = null;
+  let loginStoreId: number | null = null;
+  let loginStoreName: string | null = null;
+
   if (store_code) {
-    const store = db.prepare('SELECT id FROM stores WHERE store_code = ?').get(store_code) as any;
+    const store = db
+      .prepare('SELECT id, name, status FROM stores WHERE store_code = ?')
+      .get(store_code) as any;
     if (!store) return res.status(401).json({ error: 'Invalid store code' });
-    user = db
-      .prepare('SELECT * FROM users WHERE username = ? AND store_id = ?')
-      .get(username, store.id);
+    if (store.status === 'suspended') {
+      return res.status(403).json({ error: 'Store account suspended' });
+    }
+
+    const matchingUsers = db
+      .prepare(
+        `
+        SELECT u.*, us.role AS access_role
+        FROM user_stores us
+        JOIN users u ON u.id = us.user_id
+        WHERE u.username = ? AND us.store_id = ?
+        ORDER BY CASE WHEN u.store_id = us.store_id THEN 0 ELSE 1 END, u.id ASC
+      `
+      )
+      .all(username, store.id) as any[];
+
+    if (matchingUsers.length > 1) {
+      for (const candidate of matchingUsers) {
+        const matchesPassword = await bcrypt.compare(password, candidate.password ?? DUMMY_HASH);
+        if (!matchesPassword) continue;
+
+        if (user) {
+          return res.status(409).json({
+            error: 'Multiple accounts match this username for the selected store. Contact support.',
+          });
+        }
+
+        user = candidate;
+        passwordMatch = true;
+      }
+    } else {
+      user = matchingUsers[0] ?? null;
+      passwordMatch = await bcrypt.compare(password, user?.password ?? DUMMY_HASH);
+    }
+
+    if (user) {
+      loginRole = user.access_role ?? user.role;
+      loginStoreId = store.id;
+      loginStoreName = store.name;
+    }
   } else {
     // No store code — superadmin only
     user = db
       .prepare("SELECT * FROM users WHERE username = ? AND role = 'superadmin'")
       .get(username);
+    passwordMatch = await bcrypt.compare(password, user?.password ?? DUMMY_HASH);
+    if (user) {
+      loginRole = user.role;
+      loginStoreId = user.store_id;
+      loginStoreName = user.store_name;
+    }
   }
-
-  // Always run bcrypt regardless of whether the user exists — prevents username enumeration
-  // via response timing. DUMMY_HASH is used when user is not found so bcrypt still takes ~100ms.
-  const passwordMatch = await bcrypt.compare(password, user?.password ?? DUMMY_HASH);
 
   if (!user) {
     return res.status(401).json({ error: 'Invalid credentials' });
@@ -106,13 +182,21 @@ authRouter.post('/login', authLimiter, async (req, res) => {
     user.id
   );
 
-  issueJwt(req, res, user);
+  const sessionUser = {
+    ...user,
+    role: loginRole ?? user.role,
+    store_id: loginStoreId ?? user.store_id,
+    store_name: loginStoreName ?? user.store_name,
+  };
+
+  issueJwt(req, res, sessionUser);
   res.json({
-    id: user.id,
-    username: user.username,
-    role: user.role,
-    store_name: user.store_name,
-    store_id: user.store_id,
+    id: sessionUser.id,
+    username: sessionUser.username,
+    role: sessionUser.role,
+    store_name: sessionUser.store_name,
+    store_id: sessionUser.store_id,
+    must_reset_password: Boolean(sessionUser.must_reset_password),
   });
 });
 
@@ -372,12 +456,12 @@ authRouter.post('/switch-store', authenticateToken, (req: any, res) => {
   if (!store || store.status === 'suspended')
     return res.status(403).json({ error: 'Store is suspended' });
 
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id) as any;
-  // Temporarily override store context for JWT issuance
-  user.store_id = store.id;
-  user.store_name = store.name;
-  user.role = access.role;
-  issueJwt(req, res, user);
+  const sessionUser = buildScopedSessionUser(req.user.id, store.id, access.role);
+  if (!sessionUser) {
+    return res.status(404).json({ error: 'User or store not found' });
+  }
+
+  issueJwt(req, res, sessionUser);
   res.json({ success: true, store_name: store.name, store_logo: store.logo || null });
 });
 
@@ -395,7 +479,7 @@ authRouter.get('/store/settings', authenticateToken, (req: any, res) => {
 });
 
 // Store Settings — update store info
-authRouter.put('/store/settings', authenticateToken, (req: any, res) => {
+authRouter.put('/store/settings', authenticateToken, requireOwner, (req: any, res) => {
   const { name, street, zipcode, state, phone, email, logo } = req.body;
   if (!name?.trim()) return res.status(400).json({ error: 'Store name is required' });
   if (name.length > 100)
@@ -424,12 +508,18 @@ authRouter.put('/store/settings', authenticateToken, (req: any, res) => {
       savedLogo,
       req.user.store_id
     );
+    db.prepare('UPDATE users SET store_name = ? WHERE store_id = ?').run(name.trim(), req.user.store_id);
 
     const updatedStore = db
       .prepare(
         'SELECT id, name, street, zipcode, state, phone, email, status, logo, store_code FROM stores WHERE id = ?'
       )
       .get(req.user.store_id);
+
+    const sessionUser = buildScopedSessionUser(req.user.id, req.user.store_id, req.user.role);
+    if (sessionUser) {
+      issueJwt(req, res, sessionUser);
+    }
 
     res.json(updatedStore);
   } catch (error) {
@@ -460,10 +550,14 @@ authRouter.put('/store/password', authenticateToken, async (req: any, res) => {
 
   const newVersion = (user.token_version ?? 1) + 1;
   db.prepare(
-    'UPDATE users SET password = ?, failed_login_attempts = 0, locked_until = NULL, token_version = ? WHERE id = ?'
+    'UPDATE users SET password = ?, failed_login_attempts = 0, locked_until = NULL, must_reset_password = 0, token_version = ? WHERE id = ?'
   ).run(await bcrypt.hash(new_password, 10), newVersion, req.user.id);
-  // Re-issue JWT so the current session stays valid with the new version
-  const updated = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id) as any;
-  issueJwt(req, res, updated);
+  // Re-issue JWT so the current session stays valid and the reset-required flag drops immediately.
+  const sessionUser = buildScopedSessionUser(req.user.id, req.user.store_id, req.user.role);
+  if (!sessionUser) {
+    return res.status(404).json({ error: 'User or store not found' });
+  }
+
+  issueJwt(req, res, sessionUser);
   res.json({ success: true });
 });

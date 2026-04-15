@@ -15,6 +15,7 @@ export interface JwtPayload {
   store_name: string;
   store_id: number;
   token_version: number;
+  must_reset_password: boolean;
 }
 
 export interface AuthRequest extends express.Request {

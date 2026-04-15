@@ -25,6 +25,7 @@ export default function Layout({ children }: Readonly<{ children: React.ReactNod
   }, []);
 
   if (!user) return <>{children}</>;
+  const hasForcedReset = user.must_reset_password;
 
   const allNavItems = [
     { href: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -33,7 +34,13 @@ export default function Layout({ children }: Readonly<{ children: React.ReactNod
     { href: '/logs', label: 'Activity Logs', icon: History },
     { href: '/settings', label: 'Store Settings', icon: Settings },
   ];
-  const navItems = allNavItems.filter(item => !item.ownerOnly || user?.role !== 'taker');
+  const navItems = allNavItems.filter(item => {
+    if (hasForcedReset) {
+      return item.href === '/settings';
+    }
+
+    return !item.ownerOnly || user.role !== 'taker';
+  });
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row">

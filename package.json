@@ -7,7 +7,7 @@
     "dev": "node generate-certs.js && tsx server.ts",
     "build": "vite build",
     "preview": "vite preview",
-    "clean": "rm -rf dist",
+    "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true });\"",
     "lint": "tsc --noEmit",
     "lint:eslint": "eslint src --max-warnings 0",
     "format": "prettier --write src/**/*.{ts,tsx}",

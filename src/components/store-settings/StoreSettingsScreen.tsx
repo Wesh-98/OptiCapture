@@ -8,6 +8,7 @@ import { StorePasswordCard } from './StorePasswordCard';
 export function StoreSettingsScreen() {
   const { user } = useAuth();
   const isTaker = user?.role === 'taker';
+  const mustResetPassword = Boolean(user?.must_reset_password);
   const storeSettings = useStoreSettings(isTaker);
 
   if (storeSettings.loading) {
@@ -23,11 +24,20 @@ export function StoreSettingsScreen() {
       <div>
         <h1 className="text-2xl font-bold text-navy-900">Store Settings</h1>
         <p className="text-slate-500 mt-1">
-          Manage your store profile, branding and account security
+          {mustResetPassword
+            ? 'Set a new password before continuing into the app'
+            : 'Manage your store profile, branding and account security'}
         </p>
       </div>
 
-      {storeSettings.storeCode && (
+      {mustResetPassword && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-800">
+          Your account was created or reset with a temporary password. Update it here to unlock
+          the rest of the app.
+        </div>
+      )}
+
+      {!mustResetPassword && storeSettings.storeCode && (
         <StoreCodeCard
           storeCode={storeSettings.storeCode}
           showCode={storeSettings.showCode}
@@ -37,21 +47,25 @@ export function StoreSettingsScreen() {
         />
       )}
 
-      <StoreInfoCard
-        storeInfo={storeSettings.storeInfo}
-        infoErrors={storeSettings.infoErrors}
-        isTaker={isTaker}
-        storeSaving={storeSettings.storeSaving}
-        storeSuccess={storeSettings.storeSuccess}
-        storeError={storeSettings.storeError}
-        onFieldChange={storeSettings.handleStoreInfoChange}
-        onZipcodeChange={storeSettings.handleZipcodeChange}
-        onLogoFileChange={storeSettings.handleLogoFileChange}
-        onRemoveLogo={storeSettings.removeLogo}
-        onSubmit={storeSettings.handleStoreSubmit}
-      />
+      {!mustResetPassword && (
+        // Store profile edits stay hidden until the user replaces their temporary password.
+        <StoreInfoCard
+          storeInfo={storeSettings.storeInfo}
+          infoErrors={storeSettings.infoErrors}
+          isTaker={isTaker}
+          storeSaving={storeSettings.storeSaving}
+          storeSuccess={storeSettings.storeSuccess}
+          storeError={storeSettings.storeError}
+          onFieldChange={storeSettings.handleStoreInfoChange}
+          onZipcodeChange={storeSettings.handleZipcodeChange}
+          onLogoFileChange={storeSettings.handleLogoFileChange}
+          onRemoveLogo={storeSettings.removeLogo}
+          onSubmit={storeSettings.handleStoreSubmit}
+        />
+      )}
 
       <StorePasswordCard
+        mustResetPassword={mustResetPassword}
         passwordForm={storeSettings.passwordForm}
         passwordSaving={storeSettings.passwordSaving}
         passwordSuccess={storeSettings.passwordSuccess}

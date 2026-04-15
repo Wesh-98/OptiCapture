@@ -3,6 +3,7 @@ import { AlertTriangle, CheckCircle, Loader2, Lock } from 'lucide-react';
 import type { PasswordField, PasswordForm } from './types';
 
 interface StorePasswordCardProps {
+  mustResetPassword: boolean;
   passwordError: string;
   passwordForm: PasswordForm;
   passwordSaving: boolean;
@@ -22,6 +23,7 @@ const passwordFields: ReadonlyArray<{
 ];
 
 export function StorePasswordCard({
+  mustResetPassword,
   passwordError,
   passwordForm,
   passwordSaving,
@@ -29,6 +31,12 @@ export function StorePasswordCard({
   onFieldChange,
   onSubmit,
 }: StorePasswordCardProps) {
+  const passwordTitle = mustResetPassword ? 'Reset Required' : 'Change Password';
+  const passwordDescription = mustResetPassword
+    ? 'Use your temporary password once, then set a permanent one.'
+    : 'Update your account password';
+  const submitLabel = mustResetPassword ? 'Set Password' : 'Update Password';
+
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
       <div className="flex items-center gap-3 mb-5">
@@ -36,8 +44,8 @@ export function StorePasswordCard({
           <Lock size={18} className="text-navy-700" />
         </div>
         <div>
-          <h2 className="text-base font-bold text-navy-900">Change Password</h2>
-          <p className="text-xs text-slate-500">Update your account password</p>
+          <h2 className="text-base font-bold text-navy-900">{passwordTitle}</h2>
+          <p className="text-xs text-slate-500">{passwordDescription}</p>
         </div>
       </div>
 
@@ -48,7 +56,7 @@ export function StorePasswordCard({
               htmlFor={`ss-${field}`}
               className="block text-sm font-medium text-slate-700 mb-1"
             >
-              {label}
+              {field === 'current_password' && mustResetPassword ? 'Temporary Password' : label}
             </label>
             <input
               id={`ss-${field}`}
@@ -85,7 +93,7 @@ export function StorePasswordCard({
           className="flex items-center gap-2 px-5 py-2.5 bg-navy-900 text-white rounded-xl text-sm font-semibold hover:bg-navy-800 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
         >
           {passwordSaving && <Loader2 className="animate-spin" size={16} />}
-          Update Password
+          {submitLabel}
         </button>
       </form>
     </div>
