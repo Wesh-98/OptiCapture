@@ -20,6 +20,7 @@ async function readErrorMessage(res: Response, fallback: string): Promise<string
   return text.trim() || fallback;
 }
 
+//Store list, create/edit/suspend/delete stores, logo upload
 export function useAdminStores() {
   const navigate = useNavigate();
 

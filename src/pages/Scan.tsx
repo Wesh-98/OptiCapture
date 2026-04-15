@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import { useMemo } from 'react';
 import { Loader2, RefreshCw } from 'lucide-react';
 import { useReducedMotion } from 'motion/react';
 import { useAuth } from '../context/AuthContext';
@@ -48,7 +48,6 @@ export default function Scan() {
 
   const commit = useCommitModal(
     session.sessionId,
-    session.items,
     session.selectedIds,
     session.isBusyRef,
     session.lastPollAtRef,

@@ -54,6 +54,7 @@ db.exec(`
     role TEXT,
     store_id INTEGER NOT NULL DEFAULT 1,
     store_name TEXT DEFAULT 'Main Store',
+    must_reset_password INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY(store_id) REFERENCES stores(id)
   );
 
@@ -315,6 +316,7 @@ runMigration(10, () => {
         role TEXT NOT NULL DEFAULT 'owner',
         store_id INTEGER,
         store_name TEXT,
+        must_reset_password INTEGER NOT NULL DEFAULT 0,
         email TEXT,
         oauth_provider TEXT,
         oauth_id TEXT,
@@ -323,7 +325,8 @@ runMigration(10, () => {
         UNIQUE(username, store_id)
       );
       INSERT OR IGNORE INTO users_new
-        SELECT id, username, password, role, store_id, store_name, email,
+        SELECT id, username, password, role, store_id, store_name,
+               COALESCE(must_reset_password, 0), email,
                oauth_provider, oauth_id, failed_login_attempts, locked_until
         FROM users;
       DROP TABLE users;
@@ -345,6 +348,13 @@ runMigration(12, () => {
   const cols = (db.prepare('PRAGMA table_info(users)').all() as any[]).map((c: any) => c.name);
   if (!cols.includes('token_version')) {
     db.prepare("ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 1").run();
+  }
+});
+
+runMigration(13, () => {
+  const cols = (db.prepare('PRAGMA table_info(users)').all() as any[]).map((c: any) => c.name);
+  if (!cols.includes('must_reset_password')) {
+    db.prepare("ALTER TABLE users ADD COLUMN must_reset_password INTEGER NOT NULL DEFAULT 0").run();
   }
 });
 

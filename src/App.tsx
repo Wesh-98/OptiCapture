@@ -4,21 +4,36 @@
  */
 
 import React, { Suspense, lazy } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Layout from './components/Layout';
-import Login from './pages/Login';
-import Signup from './pages/Signup';
-import SuperAdmin from './pages/SuperAdmin';
-import Dashboard from './pages/Dashboard';
-import MobileScan from './pages/MobileScan';
-import StoreSettings from './pages/StoreSettings';
+const Login = lazy(() => import('./pages/Login'));
+const Signup = lazy(() => import('./pages/Signup'));
+const SuperAdmin = lazy(() => import('./pages/SuperAdmin'));
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const MobileScan = lazy(() => import('./pages/MobileScan'));
+const StoreSettings = lazy(() => import('./pages/StoreSettings'));
 
 // Heavy pages — lazy-loaded so they don't bloat the initial bundle
 const Scan = lazy(() => import('./pages/Scan'));
 const Import = lazy(() => import('./pages/Import'));
 const Logs = lazy(() => import('./pages/Logs'));
-//const StoreSettings = lazy(() => import('./pages/StoreSettings'));
+
+function FullPageLoader() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-400 text-sm">
+      Loading...
+    </div>
+  );
+}
+
+function ContentLoader() {
+  return (
+    <div className="flex items-center justify-center h-64 text-slate-400 text-sm">
+      Loading...
+    </div>
+  );
+}
 
 interface ErrorBoundaryState { hasError: boolean; error: Error | null; }
 
@@ -61,38 +76,68 @@ class ErrorBoundary extends React.Component<Readonly<{ children: React.ReactNode
 
 function ProtectedRoute({ children }: Readonly<{ children: React.ReactNode }>) {
   const { user, isLoading } = useAuth();
+  const location = useLocation();
 
-  if (isLoading) return <div className="min-h-screen flex items-center justify-center bg-slate-50">Loading...</div>;
+  if (isLoading) return <FullPageLoader />;
   if (!user) return <Navigate to="/login" />;
   if (user.role === 'superadmin') return <Navigate to="/admin" replace />;
+  if (user.must_reset_password && location.pathname !== '/settings') {
+    return <Navigate to="/settings" replace />;
+  }
 
-  return <Layout><Suspense fallback={<div className="flex items-center justify-center h-64 text-slate-400 text-sm">Loading...</div>}>{children}</Suspense></Layout>;
+  return (
+    <Layout>
+      <Suspense fallback={<ContentLoader />}>{children}</Suspense>
+    </Layout>
+  );
 }
 
 function AdminRoute({ children }: Readonly<{ children: React.ReactNode }>) {
   const { user, isLoading } = useAuth();
 
-  if (isLoading) return <div className="min-h-screen flex items-center justify-center bg-slate-50">Loading...</div>;
+  if (isLoading) return <FullPageLoader />;
   if (!user) return <Navigate to="/login" />;
   if (user.role !== 'superadmin') return <Navigate to="/" replace />;
 
-  return <>{children}</>;
+  return <Suspense fallback={<FullPageLoader />}>{children}</Suspense>;
 }
 
+//Route definitions are all declared here in one place for easy overview and to avoid circular imports between pages/layout.
 export default function App() {
   return (
     <ErrorBoundary>
       <Router>
         <AuthProvider>
           <Routes>
-            <Route path="/login" element={<Login />} />
-            <Route path="/signup" element={<Signup />} />
+            <Route
+              path="/login"
+              element={
+                <Suspense fallback={<FullPageLoader />}>
+                  <Login />
+                </Suspense>
+              }
+            />
+            <Route
+              path="/signup"
+              element={
+                <Suspense fallback={<FullPageLoader />}>
+                  <Signup />
+                </Suspense>
+              }
+            />
             <Route path="/admin" element={
               <AdminRoute>
                 <SuperAdmin />
               </AdminRoute>
             } />
-            <Route path="/mobile-scan/:sessionId" element={<MobileScan />} />
+            <Route
+              path="/mobile-scan/:sessionId"
+              element={
+                <Suspense fallback={<FullPageLoader />}>
+                  <MobileScan />
+                </Suspense>
+              }
+            />
             <Route path="/" element={
               <ProtectedRoute>
                 <Dashboard />

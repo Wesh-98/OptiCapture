@@ -1,10 +1,10 @@
-import React from 'react';
+﻿import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Save, Image as ImageIcon, Loader2, AlertTriangle,
   Pencil, Trash2, Smartphone, ScanBarcode,
 } from 'lucide-react';
-import { cn } from '../../lib/utils';
+import { cn, formatServerTime } from '../../lib/utils';
 import type { SessionItem, UiStatus } from './types';
 
 function StatusBadge({ item }: Readonly<{ item: SessionItem }>) {
@@ -124,7 +124,7 @@ export function FeedPanel({
                       if (e.key === 'Enter') { onConfirmDraft(draftNameInput); }
                       else if (e.key === 'Escape') { onCloseDraftPopover(); }
                     }}
-                    placeholder="e.g. Morning scan · Aisle 3"
+                    placeholder="e.g. Morning scan·Aisle 3"
                     className="w-full px-3 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 mb-2"
                   />
                   <div className="flex gap-2">
@@ -208,7 +208,7 @@ export function FeedPanel({
             onClick={onDismissAlert}
             className="text-amber-600 hover:text-amber-800 shrink-0 text-lg leading-none"
           >
-            ×
+            Ã—
           </button>
         </div>
       )}
@@ -216,11 +216,11 @@ export function FeedPanel({
       {/* Committed (read-only) banner */}
       {sessionStatus === 'completed' && (
         <div className="flex items-center gap-3 px-4 py-3 rounded-xl text-sm mx-4" style={{ background: '#eef2f8', border: '1px solid #b6c8e0', color: '#1e3a5f' }}>
-          <span className="text-lg">✅</span>
+          <span className="text-lg">âœ…</span>
           <span className="flex-1">
             {sessionLabel
-              ? <><strong>{sessionLabel}</strong> — committed to inventory. View only.</>
-              : 'This session has been committed to inventory — view only.'}
+              ? <><strong>{sessionLabel}</strong> â€” committed to inventory. View only.</>
+              : 'This session has been committed to inventory â€” view only.'}
           </span>
         </div>
       )}
@@ -228,11 +228,11 @@ export function FeedPanel({
       {/* Draft mode banner */}
       {sessionStatus === 'draft' && (
         <div className="flex items-center gap-3 px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-800 mx-4">
-          <span className="text-lg">🔒</span>
+          {/* <span className="text-lg">🔒</span> */}
           <span className="flex-1">
             {sessionLabel
-              ? <><strong>{sessionLabel}</strong> — draft, scanning paused.</>
-              : 'Draft — scanning paused. Edit items below, then commit or resume scanning.'}
+              ? <><strong>{sessionLabel}</strong> Draft Mode. Scanning paused.</>
+              : 'Draft Mode. Scanning paused. Edit items below, then commit or resume scanning.'}
           </span>
           <div className="flex items-center gap-2 shrink-0">
             <button
@@ -283,6 +283,7 @@ export function FeedPanel({
           ) : (
             visibleItems.map(item => {
               const selected = selectedIds.has(item.id);
+              const displayUnit = item.unit?.trim() ?? '';
               return (
                 <motion.div
                   key={item.id}
@@ -313,11 +314,24 @@ export function FeedPanel({
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-start justify-between gap-2">
-                        <p className="font-semibold text-navy-900 text-sm leading-tight">
-                          {item.product_name || (
-                            <span className="text-slate-400 italic">No product name</span>
-                          )}
-                        </p>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                            <p className="text-sm font-semibold leading-tight text-navy-900">
+                              {item.product_name || (
+                                <span className="text-slate-400 italic">No product name</span>
+                              )}
+                            </p>
+                            {displayUnit && (
+                              <span className="text-sm font-medium text-slate-600">
+                                {displayUnit}
+                              </span>
+                            )}
+                          </div>
+                          <p className="mt-1 break-all text-xs">
+                            <span className="text-slate-500">UPC:</span>{' '}
+                            <span className="font-medium text-slate-700">{item.upc}</span>
+                          </p>
+                        </div>
                         <div className="flex items-center gap-2 shrink-0">
                           <StatusBadge item={item} />
                           {sessionStatus !== 'completed' && (<>
@@ -338,26 +352,25 @@ export function FeedPanel({
                           </>)}
                         </div>
                       </div>
-                      <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                        {item.brand && (
-                          <span className="text-xs text-slate-500">{item.brand}</span>
-                        )}
-                        {item.brand && <span className="text-slate-300">·</span>}
-                        <SourcePill source={item.source} />
-                      </div>
-                      <div className="grid grid-cols-2 gap-x-4 mt-1.5 text-xs text-slate-500">
-                        <div>
-                          <span className="text-slate-600 uppercase text-[10px] font-semibold tracking-wider">UPC</span>
-                          <p className="font-mono text-slate-700 truncate">{item.upc}</p>
+                      <div className="mt-1.5 flex items-center gap-3 text-xs">
+                        <div className="min-w-0 flex-1">
+                          {item.brand && (
+                            <p className="truncate">
+                              <span className="text-slate-500">Brand:</span>{' '}
+                              <span className="font-medium text-slate-700">{item.brand}</span>
+                            </p>
+                          )}
                         </div>
-                        <div>
-                          <span className="text-slate-600 uppercase text-[10px] font-semibold tracking-wider">Scanned</span>
-                          <p className="text-slate-700">{new Date(item.scanned_at).toLocaleTimeString()}</p>
+                        <div className="ml-auto shrink-0">
+                          <SourcePill source={item.source} />
                         </div>
+                        <span className="shrink-0 font-medium text-slate-600">
+                          Scanned {formatServerTime(item.scanned_at)}
+                        </span>
                       </div>
                     </div>
-                    <div className="shrink-0 px-2.5 py-1 bg-navy-50 text-navy-700 rounded-lg font-mono font-bold text-sm self-center">
-                      ×{item.quantity}
+                    <div className="shrink-0 rounded-lg bg-navy-50 px-2.5 py-1 font-mono text-sm font-bold text-navy-700 self-center">
+                      x{item.quantity}
                     </div>
                   </div>
                 </motion.div>
@@ -367,10 +380,11 @@ export function FeedPanel({
         </AnimatePresence>
         {items.length > RENDER_LIMIT && (
           <div className="py-3 text-center text-xs text-slate-400">
-            Showing {RENDER_LIMIT} of {items.length} items — all items included in commit
+            Showing {RENDER_LIMIT} of {items.length} items - all items included in commit
           </div>
         )}
       </div>
     </div>
   );
 }
+

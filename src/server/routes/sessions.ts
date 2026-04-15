@@ -9,6 +9,14 @@ import { SESSION_STATUS } from '../types.js';
 
 export const sessionsRouter = express.Router();
 
+function getMergedDeviceId(
+  existingDeviceId: string | null,
+  nextDeviceId: string | null
+): string | null {
+  if (existingDeviceId === null || nextDeviceId === null) return null;
+  return existingDeviceId === nextDeviceId ? existingDeviceId : null;
+}
+
 sessionsRouter.post('/session/create', authenticateToken, (req: any, res) => {
   // Reuse an existing active empty session for this user — prevents a new session
   // being registered every time the Scan page is opened without scanning anything
@@ -231,7 +239,7 @@ sessionsRouter.post('/session/:id/scan', scanLimiter, async (req, res) => {
 
   // Try exact UPC first, then leading-zero variant (EAN-13 ↔ UPC-A)
   const inventoryMatch = upcVariants(cleanUpc)
-    .map(v => db.prepare('SELECT id, item_name, image FROM inventory WHERE upc = ? AND store_id = ? LIMIT 1').get(v, session.store_id) as any)
+    .map(v => db.prepare('SELECT id, item_name, image, unit FROM inventory WHERE upc = ? AND store_id = ? LIMIT 1').get(v, session.store_id) as any)
     .find(Boolean) ?? null;
 
   // --- Resolve product info (cache-first, non-blocking for external lookups) ---
@@ -239,6 +247,7 @@ sessionsRouter.post('/session/:id/scan', scanLimiter, async (req, res) => {
   let productName: string | null = null;
   let brand: string | null = null;
   let image: string | null = null;
+  let unit: string | null = null;
   let source = 'scan_only';
   let existsInInventory = 0;
   let needsBackgroundLookup = false;
@@ -248,6 +257,7 @@ sessionsRouter.post('/session/:id/scan', scanLimiter, async (req, res) => {
     lookupStatus = 'existing';
     productName = inventoryMatch.item_name || null;
     image = inventoryMatch.image || null;
+    unit = inventoryMatch.unit || null;
     source = 'inventory';
     existsInInventory = 1;
   } else if (item_name) {
@@ -274,29 +284,40 @@ sessionsRouter.post('/session/:id/scan', scanLimiter, async (req, res) => {
   // SQLite serializes all write transactions so the SELECT-then-INSERT/UPDATE is race-free.
   const upsertScan = db.transaction(() => {
     const existing = db.prepare(
-      'SELECT id FROM session_items WHERE session_id = ? AND upc = ?'
+      'SELECT id, device_id FROM session_items WHERE session_id = ? AND upc = ?'
     ).get(id, cleanUpc) as any;
 
     if (existing) {
+      const mergedDeviceId = getMergedDeviceId(existing.device_id ?? null, deviceId);
       db.prepare(`
         UPDATE session_items
         SET quantity = quantity + 1, scanned_at = CURRENT_TIMESTAMP,
             lookup_status = ?, product_name = COALESCE(?, product_name),
             brand = COALESCE(?, brand), image = COALESCE(?, image),
-            source = ?, exists_in_inventory = ?
+            unit = COALESCE(?, unit), source = ?, exists_in_inventory = ?, device_id = ?
         WHERE id = ?
-      `).run(lookupStatus, productName, brand, image, source, existsInInventory, existing.id);
+      `).run(
+        lookupStatus,
+        productName,
+        brand,
+        image,
+        unit,
+        source,
+        existsInInventory,
+        mergedDeviceId,
+        existing.id
+      );
     } else {
       db.prepare(`
-        INSERT INTO session_items (session_id, upc, quantity, lookup_status, product_name, brand, image, source, exists_in_inventory, device_id)
-        VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
-      `).run(id, cleanUpc, lookupStatus, productName, brand, image, source, existsInInventory, deviceId);
+        INSERT INTO session_items (session_id, upc, quantity, lookup_status, product_name, brand, image, source, exists_in_inventory, unit, device_id)
+        VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(id, cleanUpc, lookupStatus, productName, brand, image, source, existsInInventory, unit, deviceId);
     }
 
     db.prepare("UPDATE scan_sessions SET expires_at = datetime('now', '+8 hours') WHERE session_id = ?").run(id);
 
     return db.prepare(`
-      SELECT id, session_id, upc, quantity, scanned_at, lookup_status, product_name, brand, image, source, exists_in_inventory
+      SELECT id, session_id, upc, quantity, scanned_at, lookup_status, product_name, brand, image, source, exists_in_inventory, unit
       FROM session_items WHERE session_id = ? AND upc = ?
     `).get(id, cleanUpc);
   });

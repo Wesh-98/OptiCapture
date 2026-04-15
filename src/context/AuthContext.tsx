@@ -8,6 +8,7 @@ interface User {
   store_id: number;
   store_name: string;
   store_logo?: string | null;
+  must_reset_password: boolean;
 }
 
 interface StoreAccess {
@@ -20,11 +21,12 @@ interface StoreAccess {
 
 interface AuthContextType {
   user: User | null;
-  login: (user: User) => void;
+  login: (user: User) => Promise<void>;
   logout: () => void;
   isLoading: boolean;
   myStores: StoreAccess[];
   switchStore: (storeId: number) => Promise<void>;
+  refreshUser: () => Promise<User | null>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -35,29 +37,59 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
   const [myStores, setMyStores] = useState<StoreAccess[]>([]);
   const navigate = useNavigate();
 
+  const loadMyStores = useCallback(async () => {
+    const storesRes = await fetch('/api/auth/my-stores', { credentials: 'include' });
+    if (!storesRes.ok) {
+      setMyStores([]);
+      return [];
+    }
+
+    const stores = (await storesRes.json().catch(() => [])) as StoreAccess[];
+    setMyStores(Array.isArray(stores) ? stores : []);
+    return Array.isArray(stores) ? stores : [];
+  }, []);
+
+  const refreshUser = useCallback(async () => {
+    const res = await fetch('/api/auth/me', { credentials: 'include' });
+    if (!res.ok) {
+      setUser(null);
+      setMyStores([]);
+      return null;
+    }
+
+    const userData = (await res.json()) as User;
+    setUser(userData);
+    await loadMyStores();
+    return userData;
+  }, [loadMyStores]);
+
   useEffect(() => {
     const checkAuth = async () => {
       try {
-        const res = await fetch('/api/auth/me', { credentials: 'include' });
-        if (res.ok) {
-          const userData = await res.json();
-          setUser(userData);
-          const storesRes = await fetch('/api/auth/my-stores', { credentials: 'include' });
-          if (storesRes.ok) setMyStores(await storesRes.json());
-        }
+        await refreshUser();
       } catch (error) {
         console.error('Auth check failed', error);
       } finally {
         setIsLoading(false);
       }
     };
-    checkAuth();
-  }, []);
 
-  const login = useCallback((userData: User) => {
+    void checkAuth();
+  }, [refreshUser]);
+
+  const login = useCallback(async (userData: User) => {
     setUser(userData);
-    navigate(userData.role === 'superadmin' ? '/admin' : '/');
-  }, [navigate]);
+    const refreshedUser = await refreshUser().catch(() => null);
+    const nextUser = refreshedUser ?? userData;
+
+    // Newly created and reset accounts should land in Settings before the rest of the app opens up.
+    if (nextUser.must_reset_password) {
+      navigate('/settings');
+      return;
+    }
+
+    navigate(nextUser.role === 'superadmin' ? '/admin' : '/');
+  }, [navigate, refreshUser]);
 
   const switchStore = useCallback(async (storeId: number) => {
     const res = await fetch('/api/auth/switch-store', {
@@ -72,13 +104,8 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
     sessionStorage.removeItem('scan_session_id');
     sessionStorage.removeItem('scan_otp');
     sessionStorage.removeItem('scan_store_id');
-    // Re-fetch user to get updated JWT context
-    const meRes = await fetch('/api/auth/me', { credentials: 'include' });
-    if (meRes.ok) {
-      const userData = await meRes.json();
-      setUser(userData);
-    }
-  }, []);
+    await refreshUser().catch(() => null);
+  }, [refreshUser]);
 
   const logout = useCallback(async () => {
     await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
@@ -91,8 +118,8 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
   }, [navigate]);
 
   const value = useMemo(
-    () => ({ user, login, logout, isLoading, myStores, switchStore }),
-    [user, login, logout, isLoading, myStores, switchStore]
+    () => ({ user, login, logout, isLoading, myStores, switchStore, refreshUser }),
+    [user, login, logout, isLoading, myStores, switchStore, refreshUser]
   );
 
   return (

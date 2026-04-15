@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { StoreRow, StoreUser } from '../components/superadmin/types';
+import { StoreRow, StoreUser, validateEmail } from '../components/superadmin/types';
 
 export function useStoreUsers() {
   const [usersStore, setUsersStore] = useState<StoreRow | null>(null);
@@ -7,7 +7,9 @@ export function useStoreUsers() {
   const [usersLoading, setUsersLoading] = useState(false);
   const [usersError, setUsersError] = useState('');
 
+  const [userActionMode, setUserActionMode] = useState<'create' | 'existing'>('create');
   const [newUsername, setNewUsername] = useState('');
+  const [newEmail, setNewEmail] = useState('');
   const [newRole, setNewRole] = useState<'owner' | 'taker'>('owner');
   const [addingUser, setAddingUser] = useState(false);
   const [addError, setAddError] = useState('');
@@ -17,16 +19,33 @@ export function useStoreUsers() {
 
   const [confirmDeleteUserId, setConfirmDeleteUserId] = useState<number | null>(null);
 
+  const loadUsersForStore = async (storeId: number) => {
+    const res = await fetch(`/api/admin/stores/${storeId}/users`, { credentials: 'include' });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      const message =
+        data && typeof data === 'object' && 'error' in data && typeof data.error === 'string'
+          ? data.error
+          : 'Failed to load store users';
+      throw new Error(message);
+    }
+    setStoreUsers(Array.isArray(data) ? data : []);
+  };
+
   const openUsers = async (store: StoreRow) => {
     setUsersStore(store);
     setAddError('');
     setUsersError('');
+    setUserActionMode('create');
     setNewUsername('');
+    setNewEmail('');
+    setResetResult(null);
     setConfirmDeleteUserId(null);
     setUsersLoading(true);
     try {
-      const res = await fetch(`/api/admin/stores/${store.id}/users`, { credentials: 'include' });
-      if (res.ok) setStoreUsers(await res.json());
+      await loadUsersForStore(store.id);
+    } catch (error) {
+      setUsersError(error instanceof Error ? error.message : 'Failed to load store users');
     } finally {
       setUsersLoading(false);
     }
@@ -38,8 +57,22 @@ export function useStoreUsers() {
     setUsersError('');
   };
 
+  const handleUserActionModeChange = (value: 'create' | 'existing') => {
+    setUserActionMode(value);
+    setAddError('');
+    if (value === 'existing') {
+      setNewEmail('');
+    }
+  };
+
   const addUser = async () => {
     if (!usersStore || !newUsername.trim()) return;
+
+    if (userActionMode === 'create' && newEmail.trim() && !validateEmail(newEmail.trim())) {
+      setAddError('Enter a valid email address');
+      return;
+    }
+
     setAddingUser(true);
     setAddError('');
     try {
@@ -47,13 +80,30 @@ export function useStoreUsers() {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: newUsername.trim(), role: newRole }),
+        body: JSON.stringify({
+          mode: userActionMode,
+          username: newUsername.trim(),
+          email: userActionMode === 'create' ? newEmail.trim() || undefined : undefined,
+          role: newRole,
+        }),
       });
-      const data = await res.json();
-      if (!res.ok) { setAddError(data.error || 'Failed to add user'); return; }
-      // Append the new user directly from the response rather than re-fetching
-      setStoreUsers(prev => [...prev, data]);
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        const message =
+          data && typeof data === 'object' && 'error' in data && typeof data.error === 'string'
+            ? data.error
+            : 'Failed to add user';
+        setAddError(message);
+        return;
+      }
+      await loadUsersForStore(usersStore.id);
       setNewUsername('');
+      setNewEmail('');
+      if (data && typeof data === 'object' && 'tempPassword' in data && typeof data.tempPassword === 'string') {
+        setResetResult({ username: data.username, tempPassword: data.tempPassword });
+      }
+    } catch {
+      setAddError('Failed to add user');
     } finally {
       setAddingUser(false);
     }
@@ -97,7 +147,8 @@ export function useStoreUsers() {
 
   return {
     usersStore, storeUsers, usersLoading, usersError, setUsersError,
-    newUsername, setNewUsername, newRole, setNewRole, addingUser, addError,
+    userActionMode, handleUserActionModeChange,
+    newUsername, setNewUsername, newEmail, setNewEmail, newRole, setNewRole, addingUser, addError,
     resetResult, setResetResult, resettingUserId,
     confirmDeleteUserId, setConfirmDeleteUserId,
     openUsers, closeUsers, addUser, removeUser, handleResetPassword,

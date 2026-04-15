@@ -34,7 +34,7 @@ export default function Login() {
       });
       if (res.ok) {
         const user = await res.json();
-        login(user);
+        await login(user);
       } else {
         const body = await res.json().catch(() => ({}));
         setError((body as any)?.error || 'Invalid username or password');

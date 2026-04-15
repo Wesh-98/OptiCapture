@@ -20,6 +20,7 @@ import {
   saveStoreSettings,
   updateStorePassword,
 } from '../components/store-settings/storeSettingsApi';
+import { useAuth } from '../context/AuthContext';
 import { isSupportedUploadImageType, readFileAsDataUrl, SUPPORTED_UPLOAD_IMAGE_ERROR } from '../lib/imageUpload';
 
 const SUCCESS_RESET_MS = 3000;
@@ -48,6 +49,7 @@ function scheduleReset(
 
 
 export function useStoreSettings(isTaker: boolean) {
+  const { refreshUser } = useAuth();
   const [storeInfo, setStoreInfo] = useState(EMPTY_STORE_INFO);
   const [passwordForm, setPasswordForm] = useState(EMPTY_PASSWORD_FORM);
   const [infoErrors, setInfoErrors] = useState<Record<string, string>>({});
@@ -188,6 +190,7 @@ export function useStoreSettings(isTaker: boolean) {
         const data = await saveStoreSettings(storeInfo);
         setStoreInfo(data.storeInfo);
         setStoreCode(data.storeCode);
+        await refreshUser().catch(() => null);
         setStoreSuccess('Store information updated.');
         scheduleReset(storeSuccessTimerRef, () => setStoreSuccess(''), SUCCESS_RESET_MS);
       } catch (error) {
@@ -198,7 +201,7 @@ export function useStoreSettings(isTaker: boolean) {
         setStoreSaving(false);
       }
     },
-    [isTaker, storeInfo]
+    [isTaker, refreshUser, storeInfo]
   );
 
   const handlePasswordSubmit = useCallback(
@@ -219,6 +222,7 @@ export function useStoreSettings(isTaker: boolean) {
 
       try {
         await updateStorePassword(passwordForm);
+        await refreshUser().catch(() => null);
         setPasswordSuccess('Password updated successfully.');
         setPasswordForm(EMPTY_PASSWORD_FORM);
         scheduleReset(passwordSuccessTimerRef, () => setPasswordSuccess(''), SUCCESS_RESET_MS);
@@ -228,7 +232,7 @@ export function useStoreSettings(isTaker: boolean) {
         setPasswordSaving(false);
       }
     },
-    [passwordForm]
+    [passwordForm, refreshUser]
   );
 
   return {

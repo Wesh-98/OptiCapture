@@ -1,6 +1,20 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { UiStatus } from '../components/scan/types';
 
+function isEditableTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLElement &&
+    (target.isContentEditable ||
+      target.tagName === 'INPUT' ||
+      target.tagName === 'TEXTAREA' ||
+      target.tagName === 'SELECT')
+  );
+}
+
+// Handles hardware scanner input via a keydown listener, submits scans to the backend,
+// and stores the last scanned code for UI display.
+// Only active when scanInputMode is 'hardware' and session is ready.
+// Scan input mode is persisted in sessionStorage.
 export function useHardwareScanner(
   sessionId: string | null,
   otp: string | null,
@@ -12,19 +26,15 @@ export function useHardwareScanner(
   );
   const [lastHardwareScan, setLastHardwareScan] = useState<string | null>(null);
 
-  const lastScannedUpcRef = useRef<string | null>(null);
-  const lastScannedAtRef = useRef<number>(0);
-
   useEffect(() => {
     sessionStorage.setItem('scan_input_mode', scanInputMode);
   }, [scanInputMode]);
 
   const submitHardwareScan = useCallback(async (upc: string) => {
     if (!sessionId || !otp) return;
-    const now = Date.now();
-    if (upc === lastScannedUpcRef.current && now - lastScannedAtRef.current < 1500) return;
-    lastScannedUpcRef.current = upc;
-    lastScannedAtRef.current = now;
+
+    // Hardware scanners already emit a single burst per trigger, so repeated UPCs
+    // should immediately increment quantity instead of being time-deduped.
     setLastHardwareScan(upc);
     try {
       const res = await fetch(`/api/session/${sessionId}/scan`, {
@@ -48,6 +58,12 @@ export function useHardwareScanner(
     let lastKeyTime = 0;
 
     const onKeyDown = (e: KeyboardEvent) => {
+      // Let operators type normally into modal fields without the scanner listener
+      // stealing those keystrokes and treating Enter as a barcode submit.
+      if (isEditableTarget(e.target) || e.altKey || e.ctrlKey || e.metaKey) {
+        return;
+      }
+
       const now = Date.now();
       if (now - lastKeyTime > 80) buffer = '';
       lastKeyTime = now;

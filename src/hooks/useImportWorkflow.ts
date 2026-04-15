@@ -3,6 +3,7 @@ import type { ChangeEvent } from 'react';
 import { confirmImport, uploadFile } from '../components/import/importApi';
 import type { DestinationField, ImportState } from '../components/import/types';
 
+//Import wizard - file parse, column mapping and import.
 const initialState: ImportState = {
   step: 'upload',
   file: null,
