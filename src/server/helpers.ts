@@ -22,10 +22,29 @@ const ALLOWED_IMAGE_TYPES: Record<string, string> = {
 const ALLOWED_IMAGE_MIME_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'] as const;
 
 export class UnsupportedImageTypeError extends Error {
-  constructor() {
-    super('Unsupported image format. Use JPG, PNG, GIF, or WEBP.');
+  constructor(message = 'Unsupported image format. Use JPG, PNG, GIF, or WEBP.') {
+    super(message);
     this.name = 'UnsupportedImageTypeError';
   }
+}
+
+// Verify the buffer's actual binary magic bytes match the declared MIME type.
+// The MIME string in the data URI is attacker-controlled; magic bytes are not.
+function verifyImageMagicBytes(buffer: Buffer, mimeType: string): boolean {
+  if (buffer.length < 4) return false;
+  if (mimeType === 'image/jpeg' || mimeType === 'image/jpg') {
+    return buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+  }
+  if (mimeType === 'image/png') {
+    return buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47;
+  }
+  if (mimeType === 'image/gif') {
+    return buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x38;
+  }
+  if (mimeType === 'image/webp') {
+    return buffer.length >= 12 && buffer.toString('ascii', 8, 12) === 'WEBP';
+  }
+  return false;
 }
 
 // Save base64 image to disk, return file path. Pass-through for URLs/paths.
@@ -45,6 +64,17 @@ export function saveBase64Image(base64Data: string): string {
   const ext = ALLOWED_IMAGE_TYPES[match[1].toLowerCase()];
   if (!ext) throw new UnsupportedImageTypeError();
   const buffer = Buffer.from(match[2], 'base64');
+
+  // Size guard — 5 MB cap before writing to disk (body-parser limit is the outer bound)
+  if (buffer.length > 5 * 1024 * 1024) {
+    throw new UnsupportedImageTypeError('Image too large. Maximum size is 5 MB.');
+  }
+
+  // Magic-byte check — validate actual binary content matches the declared MIME type
+  if (!verifyImageMagicBytes(buffer, mimeMatch[1])) {
+    throw new UnsupportedImageTypeError();
+  }
+
   const filename = `${randomUUID()}.${ext}`;
   fs.writeFileSync(path.join(UPLOADS_DIR, filename), buffer);
   return `/uploads/${filename}`;

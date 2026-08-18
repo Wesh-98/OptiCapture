@@ -20,6 +20,33 @@ jobs:
       - run: npm run lint
       - run: npm run lint:eslint
 
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    needs: type-check
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run test:coverage
+
+  e2e:
+    name: E2E
+    runs-on: ubuntu-latest
+    needs: type-check
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+
   build:
     name: Build
     runs-on: ubuntu-latest
@@ -34,3 +61,8 @@ jobs:
       - run: npm run build
         env:
           NODE_ENV: production
+      # The category icons live in public/ and are copied into dist/ by Vite.
+      # A case mismatch on the public directory silently produces an icon-less
+      # build on Linux while still working on a case-insensitive dev machine.
+      - name: Verify static assets were emitted
+        run: test -d dist/icons && test "$(ls -1 dist/icons | wc -l)" -gt 0

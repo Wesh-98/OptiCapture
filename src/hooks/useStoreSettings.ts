@@ -21,7 +21,11 @@ import {
   updateStorePassword,
 } from '../components/store-settings/storeSettingsApi';
 import { useAuth } from '../context/AuthContext';
-import { isSupportedUploadImageType, readFileAsDataUrl, SUPPORTED_UPLOAD_IMAGE_ERROR } from '../lib/imageUpload';
+import {
+  isSupportedUploadImageType,
+  readFileAsDataUrl,
+  SUPPORTED_UPLOAD_IMAGE_ERROR,
+} from '../lib/imageUpload';
 
 const SUCCESS_RESET_MS = 3000;
 const COPIED_RESET_MS = 2000;
@@ -45,8 +49,6 @@ function scheduleReset(
   clearTimer(timerRef);
   timerRef.current = globalThis.setTimeout(callback, delay);
 }
-
-
 
 export function useStoreSettings(isTaker: boolean) {
   const { refreshUser } = useAuth();

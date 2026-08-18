@@ -1,4 +1,3 @@
-import React from 'react';
 import { Trash2, Loader2 } from 'lucide-react';
 import { StoreRow } from './types';
 
@@ -11,7 +10,14 @@ interface Props {
   onClose: () => void;
 }
 
-export function DeleteStoreModal({ store, confirmName, deleting, onConfirmNameChange, onDelete, onClose }: Props) {
+export function DeleteStoreModal({
+  store,
+  confirmName,
+  deleting,
+  onConfirmNameChange,
+  onDelete,
+  onClose,
+}: Props) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
@@ -22,7 +28,9 @@ export function DeleteStoreModal({ store, confirmName, deleting, onConfirmNameCh
             </div>
             <div>
               <h3 className="text-lg font-bold text-slate-900">Delete Store</h3>
-              <p className="text-sm text-slate-500">This action is permanent and cannot be undone.</p>
+              <p className="text-sm text-slate-500">
+                This action is permanent and cannot be undone.
+              </p>
             </div>
           </div>
 
@@ -37,7 +45,8 @@ export function DeleteStoreModal({ store, confirmName, deleting, onConfirmNameCh
           </div>
 
           <p className="text-sm text-slate-600 mb-2">
-            Type <span className="font-mono font-semibold text-slate-800">{store.name}</span> to confirm:
+            Type <span className="font-mono font-semibold text-slate-800">{store.name}</span> to
+            confirm:
           </p>
           <input
             type="text"
@@ -60,9 +69,15 @@ export function DeleteStoreModal({ store, confirmName, deleting, onConfirmNameCh
               disabled={confirmName !== store.name || deleting}
               className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              {deleting
-                ? <><Loader2 size={14} className="animate-spin" /> Deleting…</>
-                : <><Trash2 size={14} /> Delete Store</>}
+              {deleting ? (
+                <>
+                  <Loader2 size={14} className="animate-spin" /> Deleting…
+                </>
+              ) : (
+                <>
+                  <Trash2 size={14} /> Delete Store
+                </>
+              )}
             </button>
           </div>
         </div>

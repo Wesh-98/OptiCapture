@@ -2,6 +2,8 @@ node_modules/
 build/
 dist/
 coverage/
+playwright-report/
+test-results/
 .DS_Store
 *.log
 .env*
@@ -18,3 +20,12 @@ uploads/
 # Local planning / docs not for the repo
 goal/
 .claude/
+
+# Scratch notes, scraped reference material and exported report binaries.
+# None of these are referenced by any code, config or doc in the project.
+Opti/
+Notes.txt
+FCMG.txt
+17082876300.txt
+*.docx
+OptiCapture — Project Oveview.pdf

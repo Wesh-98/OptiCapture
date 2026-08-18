@@ -15,9 +15,7 @@ export function MobileScanToast({ toast, prefersReducedMotion }: MobileScanToast
           initial={prefersReducedMotion ? false : { y: 80, opacity: 0 }}
           animate={prefersReducedMotion ? {} : { y: 0, opacity: 1 }}
           exit={prefersReducedMotion ? {} : { y: 80, opacity: 0 }}
-          transition={
-            prefersReducedMotion ? {} : { type: 'spring', stiffness: 400, damping: 30 }
-          }
+          transition={prefersReducedMotion ? {} : { type: 'spring', stiffness: 400, damping: 30 }}
           className={`fixed bottom-6 left-4 right-4 z-50 px-4 py-3 rounded-2xl flex items-center gap-3 shadow-2xl ${
             toast.type === 'success' ? 'bg-emerald-600' : 'bg-red-600'
           }`}

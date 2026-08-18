@@ -1,4 +1,3 @@
-import React from 'react';
 import { Download } from 'lucide-react';
 import type { DashboardStats } from './types';
 

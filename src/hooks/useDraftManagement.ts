@@ -27,14 +27,25 @@ interface DraftManagementDeps {
 
 export function useDraftManagement(deps: DraftManagementDeps) {
   const {
-    sessionId, sessionLabel, setSessionStatus, setSessionLabel,
-    setDraftAlert, setItems, setSelectedIds, manuallyDeselectedRef,
-    sessionStartTimeRef, idleAlertFiredRef, lastLongSessionAlertRef,
-    createSession, addToast,
+    sessionId,
+    sessionLabel,
+    setSessionStatus,
+    setSessionLabel,
+    setDraftAlert,
+    setItems,
+    setSelectedIds,
+    manuallyDeselectedRef,
+    sessionStartTimeRef,
+    idleAlertFiredRef,
+    lastLongSessionAlertRef,
+    createSession,
+    addToast,
   } = deps;
 
   const [showDraftPopover, setShowDraftPopover] = useState(false);
   const [draftNameInput, setDraftNameInput] = useState('');
+  const [clearItemsConfirmPending, setClearItemsConfirmPending] = useState(false);
+  const [deleteDraftConfirmPending, setDeleteDraftConfirmPending] = useState(false);
 
   const openDraftPopover = () => {
     setDraftNameInput(sessionLabel ?? defaultDraftName());
@@ -45,7 +56,8 @@ export function useDraftManagement(deps: DraftManagementDeps) {
     if (!sessionId) return false;
     try {
       const res = await fetch(`/api/session/${sessionId}/status`, {
-        method: 'PATCH', credentials: 'include',
+        method: 'PATCH',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
@@ -59,7 +71,7 @@ export function useDraftManagement(deps: DraftManagementDeps) {
   };
 
   const handleSaveDraft = async () => {
-    if (!await patchStatus({ status: 'draft' }, 'Failed to save draft')) return;
+    if (!(await patchStatus({ status: 'draft' }, 'Failed to save draft'))) return;
     setSessionStatus('draft');
     setDraftAlert({ message: '', visible: false });
     addToast('success', 'Session saved as draft — scanning paused');
@@ -68,7 +80,10 @@ export function useDraftManagement(deps: DraftManagementDeps) {
   const handleConfirmDraft = async (label: string) => {
     if (!sessionId) return;
     setShowDraftPopover(false);
-    if (!await patchStatus({ status: 'draft', label: label.trim() || null }, 'Failed to save draft')) return;
+    if (
+      !(await patchStatus({ status: 'draft', label: label.trim() || null }, 'Failed to save draft'))
+    )
+      return;
     setSessionStatus('draft');
     setSessionLabel(label.trim() || null);
     setDraftAlert({ message: '', visible: false });
@@ -76,7 +91,7 @@ export function useDraftManagement(deps: DraftManagementDeps) {
   };
 
   const handleResumeScan = async () => {
-    if (!await patchStatus({ status: 'active' }, 'Failed to resume scanning')) return;
+    if (!(await patchStatus({ status: 'active' }, 'Failed to resume scanning'))) return;
     setSessionStatus('active');
     sessionStartTimeRef.current = Date.now();
     idleAlertFiredRef.current = false;
@@ -85,9 +100,14 @@ export function useDraftManagement(deps: DraftManagementDeps) {
     addToast('success', 'Scanning resumed — phone can now scan again');
   };
 
-  const handleClearAllItems = async () => {
+  const handleClearAllItems = () => {
     if (!sessionId) return;
-    if (!globalThis.confirm('Clear all scanned items? This cannot be undone.')) return;
+    setClearItemsConfirmPending(true);
+  };
+
+  const handleConfirmClearAllItems = async () => {
+    if (!sessionId) return;
+    setClearItemsConfirmPending(false);
     try {
       const res = await fetch(`/api/session/${sessionId}/items`, {
         method: 'DELETE',
@@ -103,9 +123,14 @@ export function useDraftManagement(deps: DraftManagementDeps) {
     }
   };
 
-  const handleDeleteDraft = async () => {
+  const handleDeleteDraft = () => {
     if (!sessionId) return;
-    if (!globalThis.confirm('Delete this draft entirely? All scanned items will be lost.')) return;
+    setDeleteDraftConfirmPending(true);
+  };
+
+  const handleConfirmDeleteDraft = async () => {
+    if (!sessionId) return;
+    setDeleteDraftConfirmPending(false);
     try {
       const res = await fetch(`/api/session/${sessionId}`, {
         method: 'DELETE',
@@ -124,11 +149,17 @@ export function useDraftManagement(deps: DraftManagementDeps) {
     setShowDraftPopover,
     draftNameInput,
     setDraftNameInput,
+    clearItemsConfirmPending,
+    setClearItemsConfirmPending,
+    deleteDraftConfirmPending,
+    setDeleteDraftConfirmPending,
     openDraftPopover,
     handleSaveDraft,
     handleConfirmDraft,
     handleResumeScan,
     handleClearAllItems,
+    handleConfirmClearAllItems,
     handleDeleteDraft,
+    handleConfirmDeleteDraft,
   };
 }

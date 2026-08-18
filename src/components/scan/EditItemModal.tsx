@@ -1,4 +1,3 @@
-import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Loader2, X } from 'lucide-react';
 import type { EditDraft } from './types';
@@ -13,7 +12,14 @@ interface Props {
   onClose: () => void;
 }
 
-export function EditItemModal({ editItem, editSaving, prefersReducedMotion, onChange, onSave, onClose }: Readonly<Props>) {
+export function EditItemModal({
+  editItem,
+  editSaving,
+  prefersReducedMotion,
+  onChange,
+  onSave,
+  onClose,
+}: Readonly<Props>) {
   return (
     <AnimatePresence>
       {editItem && (
@@ -32,7 +38,12 @@ export function EditItemModal({ editItem, editSaving, prefersReducedMotion, onCh
             </div>
             <div className="p-5 space-y-4 overflow-y-auto max-h-[90vh]">
               <div>
-                <label htmlFor="scan-edit-name" className="block text-sm font-medium text-slate-700 mb-1">Product Name</label>
+                <label
+                  htmlFor="scan-edit-name"
+                  className="block text-sm font-medium text-slate-700 mb-1"
+                >
+                  Product Name
+                </label>
                 <input
                   id="scan-edit-name"
                   type="text"
@@ -43,7 +54,12 @@ export function EditItemModal({ editItem, editSaving, prefersReducedMotion, onCh
                 />
               </div>
               <div>
-                <label htmlFor="scan-edit-brand" className="block text-sm font-medium text-slate-700 mb-1">Brand</label>
+                <label
+                  htmlFor="scan-edit-brand"
+                  className="block text-sm font-medium text-slate-700 mb-1"
+                >
+                  Brand
+                </label>
                 <input
                   id="scan-edit-brand"
                   type="text"
@@ -54,7 +70,12 @@ export function EditItemModal({ editItem, editSaving, prefersReducedMotion, onCh
                 />
               </div>
               <div>
-                <label htmlFor="scan-edit-qty" className="block text-sm font-medium text-slate-700 mb-1">Quantity</label>
+                <label
+                  htmlFor="scan-edit-qty"
+                  className="block text-sm font-medium text-slate-700 mb-1"
+                >
+                  Quantity
+                </label>
                 <input
                   id="scan-edit-qty"
                   type="number"
@@ -65,9 +86,16 @@ export function EditItemModal({ editItem, editSaving, prefersReducedMotion, onCh
                 />
               </div>
               <div>
-                <label htmlFor="scan-edit-price" className="block text-sm font-medium text-slate-700 mb-1">Sale Price</label>
+                <label
+                  htmlFor="scan-edit-price"
+                  className="block text-sm font-medium text-slate-700 mb-1"
+                >
+                  Sale Price
+                </label>
                 <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">$</span>
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">
+                    $
+                  </span>
                   <input
                     id="scan-edit-price"
                     type="number"
@@ -81,7 +109,12 @@ export function EditItemModal({ editItem, editSaving, prefersReducedMotion, onCh
                 </div>
               </div>
               <div>
-                <label htmlFor="scan-edit-unit" className="block text-sm font-medium text-slate-700 mb-1">Unit</label>
+                <label
+                  htmlFor="scan-edit-unit"
+                  className="block text-sm font-medium text-slate-700 mb-1"
+                >
+                  Unit
+                </label>
                 <input
                   id="scan-edit-unit"
                   type="text"
@@ -109,7 +142,12 @@ export function EditItemModal({ editItem, editSaving, prefersReducedMotion, onCh
                 </datalist>
               </div>
               <div>
-                <label htmlFor="scan-edit-upc" className="block text-sm font-medium text-slate-700 mb-1">UPC / Barcode</label>
+                <label
+                  htmlFor="scan-edit-upc"
+                  className="block text-sm font-medium text-slate-700 mb-1"
+                >
+                  UPC / Barcode
+                </label>
                 <input
                   id="scan-edit-upc"
                   type="text"
@@ -120,7 +158,9 @@ export function EditItemModal({ editItem, editSaving, prefersReducedMotion, onCh
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Product Image</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Product Image
+                </label>
                 {editItem.image ? (
                   <div className="flex items-center gap-3">
                     <img
@@ -141,7 +181,7 @@ export function EditItemModal({ editItem, editSaving, prefersReducedMotion, onCh
                     <input
                       type="file"
                       accept="image/*"
-                      onChange={async (e) => {
+                      onChange={async e => {
                         const file = e.target.files?.[0];
                         if (!file) return;
                         const result = await readFileAsDataUrl(file);
@@ -156,7 +196,12 @@ export function EditItemModal({ editItem, editSaving, prefersReducedMotion, onCh
                 )}
               </div>
               <div>
-                <label htmlFor="scan-edit-tags" className="block text-sm font-medium text-slate-700 mb-1">Tags</label>
+                <label
+                  htmlFor="scan-edit-tags"
+                  className="block text-sm font-medium text-slate-700 mb-1"
+                >
+                  Tags
+                </label>
                 <textarea
                   id="scan-edit-tags"
                   rows={2}

@@ -11,7 +11,10 @@ export function useServerInfo() {
     const controller = new AbortController();
     const timeout = globalThis.setTimeout(() => controller.abort(), 5000);
     try {
-      const res = await fetch('/api/server-info', { credentials: 'include', signal: controller.signal });
+      const res = await fetch('/api/server-info', {
+        credentials: 'include',
+        signal: controller.signal,
+      });
       if (!res.ok) throw new Error(`Server info request failed: ${res.status}`);
       const data = await res.json();
       setServerInfo({

@@ -1,4 +1,3 @@
-import React from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Smartphone, Wifi, ShieldCheck, ScanBarcode, CheckCircle2, Loader2, X } from 'lucide-react';
 import { cn } from '../../lib/utils';
@@ -17,8 +16,15 @@ interface Props {
 }
 
 export function ScannerPanel({
-  scanInputMode, setScanInputMode, serverInfo, ipLoading, otp, mobileUrl,
-  uiStatus, lastHardwareScan, onResetSession,
+  scanInputMode,
+  setScanInputMode,
+  serverInfo,
+  ipLoading,
+  otp,
+  mobileUrl,
+  uiStatus,
+  lastHardwareScan,
+  onResetSession,
 }: Readonly<Props>) {
   return (
     <div className="lg:col-span-1">
@@ -90,7 +96,9 @@ export function ScannerPanel({
                 </div>
                 <div className="flex items-center gap-2 text-xs font-mono text-emerald-400">
                   <ShieldCheck size={14} />
-                  <span>Protocol: {globalThis.location.protocol.replaceAll(':', '').toUpperCase()}</span>
+                  <span>
+                    Protocol: {globalThis.location.protocol.replaceAll(':', '').toUpperCase()}
+                  </span>
                 </div>
                 {otp && (
                   <p className="text-xs font-mono text-emerald-400">
@@ -114,14 +122,19 @@ export function ScannerPanel({
               </div>
               <h3 className="text-lg font-bold mb-2">Hardware Scanner</h3>
               <p className="text-navy-200 text-sm mb-6">
-                Plug in a USB barcode scanner or pair a Bluetooth scanner, then pull the trigger on any product.
+                Plug in a USB barcode scanner or pair a Bluetooth scanner, then pull the trigger on
+                any product.
               </p>
 
               {/* Ready indicator */}
-              <div className={cn(
-                'flex flex-col items-center justify-center gap-3 py-8 rounded-xl mb-4',
-                uiStatus === 'ready' ? 'bg-emerald-950/40 border border-emerald-800/50' : 'bg-navy-950/50 border border-navy-700'
-              )}>
+              <div
+                className={cn(
+                  'flex flex-col items-center justify-center gap-3 py-8 rounded-xl mb-4',
+                  uiStatus === 'ready'
+                    ? 'bg-emerald-950/40 border border-emerald-800/50'
+                    : 'bg-navy-950/50 border border-navy-700'
+                )}
+              >
                 {uiStatus === 'ready' ? (
                   <>
                     <div className="relative flex items-center justify-center">
@@ -156,11 +169,15 @@ export function ScannerPanel({
 
               {/* Last scanned */}
               <div className="bg-navy-950/50 p-4 rounded-lg text-left space-y-1">
-                <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold">Last Scanned</p>
+                <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold">
+                  Last Scanned
+                </p>
                 {lastHardwareScan ? (
                   <div className="flex items-center gap-2">
                     <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />
-                    <p className="font-mono text-emerald-300 text-sm tracking-widest truncate">{lastHardwareScan}</p>
+                    <p className="font-mono text-emerald-300 text-sm tracking-widest truncate">
+                      {lastHardwareScan}
+                    </p>
                   </div>
                 ) : (
                   <p className="text-slate-500 text-xs italic">No barcode scanned yet</p>
@@ -168,7 +185,12 @@ export function ScannerPanel({
               </div>
 
               <div className="mt-4 flex items-center justify-center gap-2 text-xs text-navy-300 font-mono bg-navy-950/50 py-2 rounded-lg">
-                <div className={cn('w-2 h-2 rounded-full', uiStatus === 'ready' ? 'bg-emerald-500 animate-pulse' : 'bg-slate-600')} />
+                <div
+                  className={cn(
+                    'w-2 h-2 rounded-full',
+                    uiStatus === 'ready' ? 'bg-emerald-500 animate-pulse' : 'bg-slate-600'
+                  )}
+                />
                 {uiStatus === 'ready' ? 'Listening for scans' : 'Session not ready'}
               </div>
             </>

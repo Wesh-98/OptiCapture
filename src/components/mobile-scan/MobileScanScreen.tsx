@@ -18,8 +18,8 @@ export function MobileScanScreen() {
 
   const scan = useMobileScan({ sessionId, otp });
 
-  if (scan.sessionDraft) {
-    return <MobileScanDraftState scanCount={scan.scanCount} />;
+  if (scan.sessionStatus === 'draft' || scan.sessionStatus === 'completed') {
+    return <MobileScanDraftState scanCount={scan.scanCount} sessionStatus={scan.sessionStatus} />;
   }
 
   return (
@@ -62,10 +62,7 @@ export function MobileScanScreen() {
         />
       )}
 
-      <MobileScanItemsList
-        items={scan.scannedItems}
-        prefersReducedMotion={prefersReducedMotion}
-      />
+      <MobileScanItemsList items={scan.scannedItems} prefersReducedMotion={prefersReducedMotion} />
 
       {!scan.isConnected && (
         <MobileScanConnectionBanner

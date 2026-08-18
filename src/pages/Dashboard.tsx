@@ -8,6 +8,7 @@ import { useActiveSessions } from '../hooks/useActiveSessions';
 import { useGlobalSearch } from '../hooks/useGlobalSearch';
 import { useCategoryManagement } from '../hooks/useCategoryManagement';
 import { useItemManagement } from '../hooks/useItemManagement';
+import { useToast } from '../hooks/useToast';
 import { StatsHeader } from '../components/dashboard/StatsHeader';
 import { SessionsSection } from '../components/dashboard/SessionsSection';
 import { DashboardToolbar } from '../components/dashboard/DashboardToolbar';
@@ -18,6 +19,7 @@ import { AddItemModal } from '../components/dashboard/AddItemModal';
 import { EditItemModal } from '../components/dashboard/EditItemModal';
 import { CategoryModal } from '../components/dashboard/CategoryModal';
 import { ExportModal } from '../components/dashboard/ExportModal';
+import { ToastContainer } from '../components/scan/ToastContainer';
 import { emptyForm } from '../components/dashboard/types';
 import type { Category } from '../components/dashboard/types';
 
@@ -37,54 +39,77 @@ export default function Dashboard() {
   const [pageSize, setPageSize] = useState<50 | 100 | 200>(50);
   const [currentPage, setCurrentPage] = useState(1);
 
+  const { toasts, addToast } = useToast();
   const { stats, fetchStats } = useDashboardStats();
-  const { activeSessions, sessionsOpen, setSessionsOpen, fetchActiveSessions, deleteSession } = useActiveSessions();
+  const { activeSessions, sessionsOpen, setSessionsOpen, fetchActiveSessions, deleteSession } =
+    useActiveSessions();
   const { globalSearch, setGlobalSearch, searchResults, isSearching } = useGlobalSearch();
 
   const cats = useCategoryManagement(fetchStats);
 
-  const items = useItemManagement(viewMode, selectedCategory?.id ?? null, fetchStats);
+  const items = useItemManagement(viewMode, selectedCategory?.id ?? null, fetchStats, addToast);
 
   // Initial fetch
   useEffect(() => {
     fetchStats();
     cats.fetchCategories();
     fetchActiveSessions();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Fetch items when view/category changes
   useEffect(() => {
-    if (viewMode === 'items' && selectedCategory) {
-      items.fetchItems(selectedCategory.id);
+    if (viewMode === 'items') {
       setCurrentPage(1);
+      void items.fetchItems(selectedCategory?.id ?? null, 1, pageSize);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewMode, selectedCategory]);
 
   // Reset pagination on search change
-  useEffect(() => { setCurrentPage(1); }, [search]);
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search]);
 
   const handleViewItems = (cat: Category) => {
     setSelectedCategory(cat);
     setViewMode('items');
-    items.fetchItems(cat.id);
+    setSearch('');
+    setCurrentPage(1);
+    void items.fetchItems(cat.id, 1, pageSize);
+    setActiveActionMenu(null);
+  };
+
+  const handleViewAllItems = () => {
+    setSelectedCategory(null);
+    setViewMode('items');
+    setSearch('');
+    setCurrentPage(1);
+    void items.fetchItems(null, 1, pageSize);
     setActiveActionMenu(null);
   };
 
   const handleBack = () => {
     setViewMode('categories');
+    setSelectedCategory(null);
     setSearch('');
   };
 
   const handleOpenAddItem = () => {
-    items.setFormData({ ...emptyForm, category_id: viewMode === 'items' ? String(selectedCategory?.id ?? '') : '' });
+    items.setFormData({
+      ...emptyForm,
+      category_id: viewMode === 'items' ? String(selectedCategory?.id ?? '') : '',
+    });
     items.setIsAddModalOpen(true);
   };
 
   return (
     <div className="space-y-6">
-      <StatsHeader stats={stats} isOwner={isOwner} onExportClick={() => items.setShowExportModal(true)} />
+      <StatsHeader
+        stats={stats}
+        isOwner={isOwner}
+        onExportClick={() => items.setShowExportModal(true)}
+      />
 
       <SessionsSection
         sessions={activeSessions}
@@ -106,7 +131,10 @@ export default function Dashboard() {
           className="w-full pl-9 pr-9 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-navy-700 shadow-sm"
         />
         {globalSearch && (
-          <button onClick={() => setGlobalSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+          <button
+            onClick={() => setGlobalSearch('')}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+          >
             <X size={16} />
           </button>
         )}
@@ -122,6 +150,7 @@ export default function Dashboard() {
           search={search}
           onSearchChange={setSearch}
           onBack={handleBack}
+          onViewAllItems={handleViewAllItems}
           onAddCategory={cats.openAddCat}
           onAddItem={handleOpenAddItem}
         />
@@ -155,14 +184,22 @@ export default function Dashboard() {
         ) : (
           <ItemsTable
             items={items.items}
+            total={items.totalItems}
             search={search}
             canEditItems={canEditItems}
             pageSize={pageSize}
             currentPage={currentPage}
             confirmDeleteItemId={items.confirmDeleteItemId}
             deletingItemId={items.deletingItemId}
-            onPageSizeChange={(size) => { setPageSize(size); setCurrentPage(1); }}
-            onPageChange={setCurrentPage}
+            onPageSizeChange={size => {
+              setPageSize(size);
+              setCurrentPage(1);
+              void items.fetchItems(selectedCategory?.id ?? null, 1, size);
+            }}
+            onPageChange={page => {
+              setCurrentPage(page);
+              void items.fetchItems(selectedCategory?.id ?? null, page, pageSize);
+            }}
             onConfirmDelete={items.setConfirmDeleteItemId}
             onDelete={items.handleDeleteItem}
             onEdit={items.openEditModal}
@@ -176,7 +213,7 @@ export default function Dashboard() {
         categories={cats.categories}
         prefersReducedMotion={prefersReducedMotion}
         onChange={items.setFormData}
-        onImageChange={(e) => items.handleImageUpload(e, 'add')}
+        onImageChange={e => items.handleImageUpload(e, 'add')}
         onSubmit={items.handleAddItem}
         onClose={() => items.setIsAddModalOpen(false)}
       />
@@ -187,7 +224,7 @@ export default function Dashboard() {
         categories={cats.categories}
         prefersReducedMotion={prefersReducedMotion}
         onChange={items.setEditFormData}
-        onImageChange={(e) => items.handleImageUpload(e, 'edit')}
+        onImageChange={e => items.handleImageUpload(e, 'edit')}
         onSubmit={items.handleEditItem}
         onClose={() => items.setEditingItem(null)}
       />
@@ -200,7 +237,10 @@ export default function Dashboard() {
         catSaving={cats.catSaving}
         onChange={cats.setCatForm}
         onSave={cats.handleSaveCategory}
-        onClose={() => { cats.setShowCatModal(false); cats.setEditingCategory(null); }}
+        onClose={() => {
+          cats.setShowCatModal(false);
+          cats.setEditingCategory(null);
+        }}
       />
 
       <ExportModal
@@ -211,6 +251,8 @@ export default function Dashboard() {
         onExport={items.handleExport}
         onClose={() => items.setShowExportModal(false)}
       />
+
+      <ToastContainer toasts={toasts} prefersReducedMotion={prefersReducedMotion} />
     </div>
   );
 }

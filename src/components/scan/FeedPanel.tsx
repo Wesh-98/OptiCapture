@@ -1,28 +1,49 @@
-﻿import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
-  Save, Image as ImageIcon, Loader2, AlertTriangle,
-  Pencil, Trash2, Smartphone, ScanBarcode,
+  Save,
+  Image as ImageIcon,
+  Loader2,
+  AlertTriangle,
+  Pencil,
+  Trash2,
+  Smartphone,
+  ScanBarcode,
 } from 'lucide-react';
 import { cn, formatServerTime } from '../../lib/utils';
 import type { SessionItem, UiStatus } from './types';
 
 function StatusBadge({ item }: Readonly<{ item: SessionItem }>) {
   if (item.exists_in_inventory === 1) {
-    return <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600">In Stock</span>;
+    return (
+      <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600">
+        In Stock
+      </span>
+    );
   }
   if (item.lookup_status === 'new_candidate') {
-    return <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-700">New</span>;
+    return (
+      <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-700">
+        New
+      </span>
+    );
   }
-  return <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-700">Unknown</span>;
+  return (
+    <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-700">
+      Unknown
+    </span>
+  );
 }
 
 function SourcePill({ source }: Readonly<{ source: string | null }>) {
   if (!source || source === 'scan_only') return null;
   const label =
-    source === 'open_food_facts' ? 'OFF' :
-    source === 'upcitemdb' ? 'UPC DB' :
-    source === 'inventory' ? 'Inventory' : source;
+    source === 'open_food_facts'
+      ? 'OFF'
+      : source === 'upcitemdb'
+        ? 'UPC DB'
+        : source === 'inventory'
+          ? 'Inventory'
+          : source;
   return (
     <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-medium bg-slate-100 text-slate-500 border border-slate-200">
       {label}
@@ -55,8 +76,13 @@ interface Props {
   onResumeScan: () => void;
   onSaveDraft: () => void;
   onDismissAlert: () => void;
+  clearItemsConfirmPending: boolean;
+  deleteDraftConfirmPending: boolean;
   onClearAllItems: () => void;
+  onConfirmClearAllItems: () => void;
   onDeleteDraft: () => void;
+  onConfirmDeleteDraft: () => void;
+  onCancelConfirm: () => void;
   onEditItem: (item: SessionItem) => void;
   onDeleteItem: (id: number) => void;
   onSelectAll: () => void;
@@ -65,17 +91,48 @@ interface Props {
 }
 
 export function FeedPanel({
-  items, visibleItems, selectedIds, uiStatus, statusMessage, sessionStatus,
-  sessionLabel, pollError, draftAlert, isTaker, prefersReducedMotion,
-  scanInputMode, showDraftPopover, draftNameInput, RENDER_LIMIT,
-  onToggleItem, onCommitClick, onOpenDraftPopover, onCloseDraftPopover,
-  onDraftNameChange, onConfirmDraft, onResumeScan, onSaveDraft, onDismissAlert,
-  onClearAllItems, onDeleteDraft, onEditItem, onDeleteItem,
-  onSelectAll, onDeselectAll, onSelectNewOnly,
+  items,
+  visibleItems,
+  selectedIds,
+  uiStatus,
+  statusMessage,
+  sessionStatus,
+  sessionLabel,
+  pollError,
+  draftAlert,
+  isTaker,
+  prefersReducedMotion,
+  scanInputMode,
+  showDraftPopover,
+  draftNameInput,
+  RENDER_LIMIT,
+  onToggleItem,
+  onCommitClick,
+  onOpenDraftPopover,
+  onCloseDraftPopover,
+  onDraftNameChange,
+  onConfirmDraft,
+  onResumeScan,
+  onSaveDraft,
+  onDismissAlert,
+  clearItemsConfirmPending,
+  deleteDraftConfirmPending,
+  onClearAllItems,
+  onConfirmClearAllItems,
+  onDeleteDraft,
+  onConfirmDeleteDraft,
+  onCancelConfirm,
+  onEditItem,
+  onDeleteItem,
+  onSelectAll,
+  onDeselectAll,
+  onSelectNewOnly,
 }: Readonly<Props>) {
   const newItems = items.filter(i => i.lookup_status === 'new_candidate' && !i.exists_in_inventory);
   const inStockItems = items.filter(i => i.exists_in_inventory === 1);
-  const unknownItems = items.filter(i => i.lookup_status !== 'new_candidate' && !i.exists_in_inventory);
+  const unknownItems = items.filter(
+    i => i.lookup_status !== 'new_candidate' && !i.exists_in_inventory
+  );
   const allSelected = items.length > 0 && items.every(i => selectedIds.has(i.id));
 
   return (
@@ -114,15 +171,20 @@ export function FeedPanel({
               </button>
               {showDraftPopover && (
                 <div className="absolute right-0 top-full mt-2 z-30 bg-white border border-slate-200 rounded-xl shadow-lg p-3 w-64">
-                  <p className="text-xs font-semibold text-slate-600 mb-2">Name this draft (optional)</p>
+                  <p className="text-xs font-semibold text-slate-600 mb-2">
+                    Name this draft (optional)
+                  </p>
                   <input
                     autoFocus
                     type="text"
                     value={draftNameInput}
                     onChange={e => onDraftNameChange(e.target.value)}
                     onKeyDown={e => {
-                      if (e.key === 'Enter') { onConfirmDraft(draftNameInput); }
-                      else if (e.key === 'Escape') { onCloseDraftPopover(); }
+                      if (e.key === 'Enter') {
+                        onConfirmDraft(draftNameInput);
+                      } else if (e.key === 'Escape') {
+                        onCloseDraftPopover();
+                      }
                     }}
                     placeholder="e.g. Morning scan·Aisle 3"
                     className="w-full px-3 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 mb-2"
@@ -158,13 +220,18 @@ export function FeedPanel({
 
       {/* Status + counts bar */}
       <div className="px-4 py-2.5 border-b border-slate-100 bg-white flex flex-wrap items-center gap-3 text-sm">
-        <span className={cn(
-          'px-2.5 py-1 rounded-full font-medium text-xs',
-          uiStatus === 'error' ? 'bg-red-50 text-red-600'
-          : uiStatus === 'committing' ? 'bg-amber-50 text-amber-700'
-          : uiStatus === 'ready' ? 'bg-emerald-50 text-emerald-700'
-          : 'bg-slate-100 text-slate-600'
-        )}>
+        <span
+          className={cn(
+            'px-2.5 py-1 rounded-full font-medium text-xs',
+            uiStatus === 'error'
+              ? 'bg-red-50 text-red-600'
+              : uiStatus === 'committing'
+                ? 'bg-amber-50 text-amber-700'
+                : uiStatus === 'ready'
+                  ? 'bg-emerald-50 text-emerald-700'
+                  : 'bg-slate-100 text-slate-600'
+          )}
+        >
           {statusMessage}
         </span>
         {items.length > 0 && (
@@ -182,8 +249,12 @@ export function FeedPanel({
               New Only
             </button>
             <span className="text-xs text-emerald-700 font-semibold">New: {newItems.length}</span>
-            <span className="text-xs text-slate-600 font-semibold">In Stock: {inStockItems.length}</span>
-            <span className="text-xs text-amber-700 font-semibold">Unknown: {unknownItems.length}</span>
+            <span className="text-xs text-slate-600 font-semibold">
+              In Stock: {inStockItems.length}
+            </span>
+            <span className="text-xs text-amber-700 font-semibold">
+              Unknown: {unknownItems.length}
+            </span>
           </>
         )}
         {pollError && (
@@ -215,45 +286,99 @@ export function FeedPanel({
 
       {/* Committed (read-only) banner */}
       {sessionStatus === 'completed' && (
-        <div className="flex items-center gap-3 px-4 py-3 rounded-xl text-sm mx-4" style={{ background: '#eef2f8', border: '1px solid #b6c8e0', color: '#1e3a5f' }}>
+        <div
+          className="flex items-center gap-3 px-4 py-3 rounded-xl text-sm mx-4"
+          style={{ background: '#eef2f8', border: '1px solid #b6c8e0', color: '#1e3a5f' }}
+        >
           <span className="text-lg">âœ…</span>
           <span className="flex-1">
-            {sessionLabel
-              ? <><strong>{sessionLabel}</strong> â€” committed to inventory. View only.</>
-              : 'This session has been committed to inventory â€” view only.'}
+            {sessionLabel ? (
+              <>
+                <strong>{sessionLabel}</strong> â€” committed to inventory. View only.
+              </>
+            ) : (
+              'This session has been committed to inventory â€” view only.'
+            )}
           </span>
         </div>
       )}
 
       {/* Draft mode banner */}
       {sessionStatus === 'draft' && (
-        <div className="flex items-center gap-3 px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-800 mx-4">
-          {/* <span className="text-lg">🔒</span> */}
-          <span className="flex-1">
-            {sessionLabel
-              ? <><strong>{sessionLabel}</strong> Draft Mode. Scanning paused.</>
-              : 'Draft Mode. Scanning paused. Edit items below, then commit or resume scanning.'}
-          </span>
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              onClick={onClearAllItems}
-              className="px-3 py-1.5 border border-amber-300 text-amber-700 rounded-lg text-xs font-semibold hover:bg-amber-100 transition-colors"
-            >
-              Clear Items
-            </button>
-            <button
-              onClick={onDeleteDraft}
-              className="px-3 py-1.5 border border-red-300 text-red-600 rounded-lg text-xs font-semibold hover:bg-red-50 transition-colors"
-            >
-              Delete Draft
-            </button>
-            <button
-              onClick={onResumeScan}
-              className="px-3 py-1.5 bg-amber-600 text-white rounded-lg text-xs font-semibold hover:bg-amber-700 transition-colors"
-            >
-              Resume Scanning
-            </button>
+        <div className="flex flex-col gap-2 px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-800 mx-4">
+          <div className="flex items-center gap-3">
+            <span className="flex-1">
+              {sessionLabel ? (
+                <>
+                  <strong>{sessionLabel}</strong> Draft Mode. Scanning paused.
+                </>
+              ) : (
+                'Draft Mode. Scanning paused. Edit items below, then commit or resume scanning.'
+              )}
+            </span>
+            <div className="flex items-center gap-2 shrink-0">
+              {!clearItemsConfirmPending && !deleteDraftConfirmPending && (
+                <>
+                  <button
+                    onClick={onClearAllItems}
+                    className="px-3 py-1.5 border border-amber-300 text-amber-700 rounded-lg text-xs font-semibold hover:bg-amber-100 transition-colors"
+                  >
+                    Clear Items
+                  </button>
+                  <button
+                    onClick={onDeleteDraft}
+                    className="px-3 py-1.5 border border-red-300 text-red-600 rounded-lg text-xs font-semibold hover:bg-red-50 transition-colors"
+                  >
+                    Delete Draft
+                  </button>
+                </>
+              )}
+              <button
+                onClick={onResumeScan}
+                className="px-3 py-1.5 bg-amber-600 text-white rounded-lg text-xs font-semibold hover:bg-amber-700 transition-colors"
+              >
+                Resume Scanning
+              </button>
+            </div>
           </div>
+          {clearItemsConfirmPending && (
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-amber-700 font-medium">
+                Clear all scanned items? This cannot be undone.
+              </span>
+              <button
+                onClick={onConfirmClearAllItems}
+                className="px-2 py-1 bg-amber-600 text-white rounded font-semibold hover:bg-amber-700 transition-colors"
+              >
+                Yes, clear
+              </button>
+              <button
+                onClick={onCancelConfirm}
+                className="px-2 py-1 border border-amber-300 text-amber-700 rounded font-semibold hover:bg-amber-100 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+          {deleteDraftConfirmPending && (
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-red-600 font-medium">
+                Delete this draft? All scanned items will be lost.
+              </span>
+              <button
+                onClick={onConfirmDeleteDraft}
+                className="px-2 py-1 bg-red-600 text-white rounded font-semibold hover:bg-red-700 transition-colors"
+              >
+                Yes, delete
+              </button>
+              <button
+                onClick={onCancelConfirm}
+                className="px-2 py-1 border border-red-300 text-red-600 rounded font-semibold hover:bg-red-50 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -293,9 +418,11 @@ export function FeedPanel({
                   layout
                   className={cn(
                     'bg-white rounded-xl border transition-all',
-                    selected && item.exists_in_inventory ? 'border-slate-400 shadow-sm'
-                    : selected ? 'border-emerald-400 shadow-sm shadow-emerald-50 ring-1 ring-emerald-100'
-                    : 'border-slate-300'
+                    selected && item.exists_in_inventory
+                      ? 'border-slate-400 shadow-sm'
+                      : selected
+                        ? 'border-emerald-400 shadow-sm shadow-emerald-50 ring-1 ring-emerald-100'
+                        : 'border-slate-300'
                   )}
                 >
                   <div className="flex items-start gap-2 p-2">
@@ -334,22 +461,24 @@ export function FeedPanel({
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
                           <StatusBadge item={item} />
-                          {sessionStatus !== 'completed' && (<>
-                            <button
-                              onClick={() => onEditItem(item)}
-                              className="p-1 text-slate-400 hover:text-navy-700 hover:bg-slate-100 rounded transition-colors"
-                              title="Edit item"
-                            >
-                              <Pencil size={13} />
-                            </button>
-                            <button
-                              onClick={() => onDeleteItem(item.id)}
-                              className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
-                              title="Remove from session"
-                            >
-                              <Trash2 size={13} />
-                            </button>
-                          </>)}
+                          {sessionStatus !== 'completed' && (
+                            <>
+                              <button
+                                onClick={() => onEditItem(item)}
+                                className="p-1 text-slate-400 hover:text-navy-700 hover:bg-slate-100 rounded transition-colors"
+                                title="Edit item"
+                              >
+                                <Pencil size={13} />
+                              </button>
+                              <button
+                                onClick={() => onDeleteItem(item.id)}
+                                className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+                                title="Remove from session"
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </>
+                          )}
                         </div>
                       </div>
                       <div className="mt-1.5 flex items-center gap-3 text-xs">
@@ -387,4 +516,3 @@ export function FeedPanel({
     </div>
   );
 }
-

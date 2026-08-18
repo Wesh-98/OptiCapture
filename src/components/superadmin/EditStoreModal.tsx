@@ -1,5 +1,5 @@
 import React from 'react';
-import { X } from 'lucide-react';
+import { Building2, ImagePlus, Store, Upload, X } from 'lucide-react';
 import { US_STATES } from '../../lib/constants';
 import { SUPPORTED_UPLOAD_IMAGE_ACCEPT } from '../../lib/imageUpload';
 import { StoreRow } from './types';
@@ -41,6 +41,7 @@ export function EditStoreModal({
 
   const inputClass =
     'w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-navy-700 focus:border-transparent';
+  const logoLabelClass = 'flex items-center gap-1.5 text-sm font-medium text-slate-700 mb-1';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
@@ -63,30 +64,107 @@ export function EditStoreModal({
           )}
 
           <div className="space-y-4">
-            {field(
-              'sa-edit-name',
-              'Store Name *',
-              <input
-                id="sa-edit-name"
-                type="text"
-                value={store.name}
-                className={inputClass}
-                onChange={e => onChange({ ...store, name: e.target.value })}
-              />,
-              'name'
-            )}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
+              <div>
+                <label
+                  htmlFor="sa-edit-name"
+                  className="block text-sm font-medium text-slate-700 mb-1"
+                >
+                  <span className="inline-flex items-center gap-1.5">
+                    <Store size={14} className="text-slate-400" />
+                    Store Name *
+                  </span>
+                </label>
+                <input
+                  id="sa-edit-name"
+                  type="text"
+                  value={store.name}
+                  className={inputClass}
+                  onChange={e => onChange({ ...store, name: e.target.value })}
+                />
+                {fieldErrors.name && (
+                  <p className="text-xs text-red-500 mt-1">{fieldErrors.name}</p>
+                )}
+              </div>
 
-            {field(
-              'sa-edit-street',
-              'Street Address',
-              <input
-                id="sa-edit-street"
-                type="text"
-                value={store.street || ''}
-                className={inputClass}
-                onChange={e => onChange({ ...store, street: e.target.value })}
-              />
-            )}
+              <div>
+                <label className={logoLabelClass}>
+                  <ImagePlus size={14} className="text-slate-400" />
+                  Logo
+                </label>
+                {store.logo ? (
+                  <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <img
+                      src={store.logo}
+                      alt="Store logo"
+                      className="w-16 h-16 rounded-xl object-cover border border-slate-200 bg-white"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-slate-700">Store logo uploaded</p>
+                      <button
+                        type="button"
+                        onClick={onRemoveLogo}
+                        className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors"
+                      >
+                        <X size={14} />
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <label className="flex min-h-[104px] cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-5 text-center transition-colors hover:border-slate-400 hover:bg-slate-100">
+                    <Upload size={18} className="text-slate-400" />
+                    <div className="space-y-0.5">
+                      <p className="text-sm font-medium text-slate-700">Upload store logo</p>
+                      <p className="text-xs text-slate-500">PNG, JPG, WebP, or GIF</p>
+                    </div>
+                    <input
+                      type="file"
+                      accept={SUPPORTED_UPLOAD_IMAGE_ACCEPT}
+                      onChange={onFileUpload}
+                      className="sr-only"
+                    />
+                  </label>
+                )}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {field(
+                'sa-edit-street',
+                'Street Address',
+                <input
+                  id="sa-edit-street"
+                  type="text"
+                  value={store.street || ''}
+                  className={inputClass}
+                  onChange={e => onChange({ ...store, street: e.target.value })}
+                />,
+                'street'
+              )}
+              <div>
+                <label
+                  htmlFor="sa-edit-city"
+                  className="block text-sm font-medium text-slate-700 mb-1"
+                >
+                  <span className="inline-flex items-center gap-1.5">
+                    <Building2 size={14} className="text-slate-400" />
+                    City/Town
+                  </span>
+                </label>
+                <input
+                  id="sa-edit-city"
+                  type="text"
+                  value={store.city || ''}
+                  className={inputClass}
+                  onChange={e => onChange({ ...store, city: e.target.value })}
+                  placeholder="City/Town"
+                />
+                {fieldErrors.city && (
+                  <p className="text-xs text-red-500 mt-1">{fieldErrors.city}</p>
+                )}
+              </div>
+            </div>
 
             <div className="grid grid-cols-2 gap-3">
               {field(
@@ -152,32 +230,6 @@ export function EditStoreModal({
               />,
               'email'
             )}
-
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Logo</label>
-              {store.logo ? (
-                <div className="flex items-center gap-3">
-                  <img
-                    src={store.logo}
-                    alt="Store logo"
-                    className="w-15 h-15 rounded-lg object-cover border border-slate-200"
-                  />
-                  <button
-                    onClick={onRemoveLogo}
-                    className="px-3 py-1.5 text-sm bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors"
-                  >
-                    Remove
-                  </button>
-                </div>
-              ) : (
-                <input
-                  type="file"
-                  accept={SUPPORTED_UPLOAD_IMAGE_ACCEPT}
-                  onChange={onFileUpload}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-navy-700 focus:border-transparent"
-                />
-              )}
-            </div>
           </div>
 
           <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-slate-200">

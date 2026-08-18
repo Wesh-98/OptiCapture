@@ -8,10 +8,7 @@ interface MobileScanItemsListProps {
   prefersReducedMotion: boolean;
 }
 
-export function MobileScanItemsList({
-  items,
-  prefersReducedMotion,
-}: MobileScanItemsListProps) {
+export function MobileScanItemsList({ items, prefersReducedMotion }: MobileScanItemsListProps) {
   return (
     <div className="flex-1 overflow-y-auto mx-4 mt-3 pb-2 min-h-0">
       {items.length === 0 ? (

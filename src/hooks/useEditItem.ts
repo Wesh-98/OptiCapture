@@ -5,7 +5,7 @@ export function useEditItem(
   sessionId: string | null,
   setItems: (updater: (prev: SessionItem[]) => SessionItem[]) => void,
   setSelectedIds: (updater: (prev: Set<number>) => Set<number>) => void,
-  addToast: (type: 'success' | 'error' | 'warning', message: string) => void,
+  addToast: (type: 'success' | 'error' | 'warning', message: string) => void
 ) {
   const [editItem, setEditItem] = useState<EditDraft | null>(null);
   const [editSaving, setEditSaving] = useState(false);
@@ -43,25 +43,36 @@ export function useEditItem(
           unit: editItem.unit || null,
         }),
       });
-      if (!res.ok) throw new Error('Save failed');
-      setItems(prev => prev.map(i => {
-        if (i.id !== editItem.id) return i;
-        return {
-          ...i,
-          product_name: editItem.product_name || null,
-          brand: editItem.brand || null,
-          quantity: editItem.quantity,
-          upc: editItem.upc,
-          image: editItem.image || null,
-          lookup_status: 'new_candidate',
-          sale_price: editItem.sale_price ? Number.parseFloat(editItem.sale_price) : null,
-          unit: editItem.unit || null,
-        };
-      }));
+      const payload = (await res.json().catch(() => null)) as {
+        error?: string;
+        item?: SessionItem;
+      } | null;
+      if (!res.ok) throw new Error(payload?.error || 'Save failed');
+
+      const updatedItem = payload?.item;
+      setItems(prev =>
+        prev.map(i => {
+          if (i.id !== editItem.id) return i;
+          if (updatedItem) {
+            return updatedItem;
+          }
+          return {
+            ...i,
+            product_name: editItem.product_name || null,
+            brand: editItem.brand || null,
+            quantity: editItem.quantity,
+            upc: editItem.upc,
+            image: editItem.image || null,
+            lookup_status: 'new_candidate',
+            sale_price: editItem.sale_price ? Number.parseFloat(editItem.sale_price) : null,
+            unit: editItem.unit || null,
+          };
+        })
+      );
       setSelectedIds(prev => new Set([...prev, editItem.id]));
       setEditItem(null);
-    } catch {
-      addToast('error', 'Failed to save changes.');
+    } catch (error) {
+      addToast('error', error instanceof Error ? error.message : 'Failed to save changes.');
     } finally {
       setEditSaving(false);
     }
@@ -76,7 +87,11 @@ export function useEditItem(
       });
       if (!res.ok) throw new Error('Delete failed');
       setItems(prev => prev.filter(i => i.id !== itemId));
-      setSelectedIds(prev => { const next = new Set(prev); next.delete(itemId); return next; });
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        next.delete(itemId);
+        return next;
+      });
     } catch {
       addToast('error', 'Failed to delete item');
     }

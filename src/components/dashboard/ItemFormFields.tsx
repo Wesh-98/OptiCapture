@@ -10,7 +10,13 @@ interface Props {
   imageRequired?: boolean;
 }
 
-export function ItemFormFields({ data, onChange, onImageChange, categories, imageRequired = true }: Readonly<Props>) {
+export function ItemFormFields({
+  data,
+  onChange,
+  onImageChange,
+  categories,
+  imageRequired = true,
+}: Readonly<Props>) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
       <div className="col-span-full">
@@ -50,7 +56,9 @@ export function ItemFormFields({ data, onChange, onImageChange, categories, imag
       </div>
 
       <div>
-        <label htmlFor="dash-item-name" className="block text-sm font-medium text-slate-700 mb-1">Item Name *</label>
+        <label htmlFor="dash-item-name" className="block text-sm font-medium text-slate-700 mb-1">
+          Item Name *
+        </label>
         <input
           id="dash-item-name"
           type="text"
@@ -62,7 +70,9 @@ export function ItemFormFields({ data, onChange, onImageChange, categories, imag
       </div>
 
       <div>
-        <label htmlFor="dash-item-upc" className="block text-sm font-medium text-slate-700 mb-1">UPC / Barcode</label>
+        <label htmlFor="dash-item-upc" className="block text-sm font-medium text-slate-700 mb-1">
+          UPC / Barcode
+        </label>
         <input
           id="dash-item-upc"
           type="text"
@@ -74,7 +84,12 @@ export function ItemFormFields({ data, onChange, onImageChange, categories, imag
       </div>
 
       <div>
-        <label htmlFor="dash-item-category" className="block text-sm font-medium text-slate-700 mb-1">Category *</label>
+        <label
+          htmlFor="dash-item-category"
+          className="block text-sm font-medium text-slate-700 mb-1"
+        >
+          Category *
+        </label>
         <select
           id="dash-item-category"
           value={data.category_id}
@@ -84,13 +99,17 @@ export function ItemFormFields({ data, onChange, onImageChange, categories, imag
         >
           <option value="">Select Category</option>
           {categories.map(cat => (
-            <option key={cat.id} value={cat.id}>{cat.name}</option>
+            <option key={cat.id} value={cat.id}>
+              {cat.name}
+            </option>
           ))}
         </select>
       </div>
 
       <div>
-        <label htmlFor="dash-item-qty" className="block text-sm font-medium text-slate-700 mb-1">Quantity *</label>
+        <label htmlFor="dash-item-qty" className="block text-sm font-medium text-slate-700 mb-1">
+          Quantity *
+        </label>
         <input
           id="dash-item-qty"
           type="number"
@@ -103,7 +122,9 @@ export function ItemFormFields({ data, onChange, onImageChange, categories, imag
       </div>
 
       <div>
-        <label htmlFor="dash-item-unit" className="block text-sm font-medium text-slate-700 mb-1">Unit</label>
+        <label htmlFor="dash-item-unit" className="block text-sm font-medium text-slate-700 mb-1">
+          Unit
+        </label>
         <input
           id="dash-item-unit"
           type="text"
@@ -115,7 +136,9 @@ export function ItemFormFields({ data, onChange, onImageChange, categories, imag
       </div>
 
       <div>
-        <label htmlFor="dash-item-status" className="block text-sm font-medium text-slate-700 mb-1">Status *</label>
+        <label htmlFor="dash-item-status" className="block text-sm font-medium text-slate-700 mb-1">
+          Status *
+        </label>
         <select
           id="dash-item-status"
           value={data.status}
@@ -129,33 +152,43 @@ export function ItemFormFields({ data, onChange, onImageChange, categories, imag
       </div>
 
       <div>
-        <label htmlFor="dash-item-price" className="block text-sm font-medium text-slate-700 mb-1">Sale Price ($)</label>
+        <label htmlFor="dash-item-price" className="block text-sm font-medium text-slate-700 mb-1">
+          Sale Price ($)
+        </label>
         <input
           id="dash-item-price"
           type="number"
           step="0.01"
           value={data.sale_price}
           onFocus={e => e.target.select()}
-          onChange={e => onChange(prev => ({ ...prev, sale_price: parseFloat(e.target.value) || 0 }))}
+          onChange={e =>
+            onChange(prev => ({ ...prev, sale_price: parseFloat(e.target.value) || 0 }))
+          }
           className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-navy-700 focus:border-transparent"
         />
       </div>
 
       <div>
-        <label htmlFor="dash-item-tax" className="block text-sm font-medium text-slate-700 mb-1">Tax (%)</label>
+        <label htmlFor="dash-item-tax" className="block text-sm font-medium text-slate-700 mb-1">
+          Tax (%)
+        </label>
         <input
           id="dash-item-tax"
           type="number"
           step="0.1"
           value={data.tax_percent}
           onFocus={e => e.target.select()}
-          onChange={e => onChange(prev => ({ ...prev, tax_percent: parseFloat(e.target.value) || 0 }))}
+          onChange={e =>
+            onChange(prev => ({ ...prev, tax_percent: parseFloat(e.target.value) || 0 }))
+          }
           className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-navy-700 focus:border-transparent"
         />
       </div>
 
       <div className="col-span-full">
-        <label htmlFor="dash-item-desc" className="block text-sm font-medium text-slate-700 mb-1">Description</label>
+        <label htmlFor="dash-item-desc" className="block text-sm font-medium text-slate-700 mb-1">
+          Description
+        </label>
         <textarea
           id="dash-item-desc"
           value={data.description}
@@ -166,7 +199,9 @@ export function ItemFormFields({ data, onChange, onImageChange, categories, imag
       </div>
 
       <div className="col-span-full">
-        <label htmlFor="dash-item-tags" className="block text-sm font-medium text-slate-700 mb-1">Tags</label>
+        <label htmlFor="dash-item-tags" className="block text-sm font-medium text-slate-700 mb-1">
+          Tags
+        </label>
         <input
           id="dash-item-tags"
           type="text"

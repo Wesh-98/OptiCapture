@@ -1,6 +1,7 @@
 export interface SignupFormData {
   storeName: string;
   street: string;
+  city: string;
   zipcode: string;
   state: string;
   phone: string;
@@ -15,6 +16,7 @@ export type SignupField = keyof SignupFormData;
 export const EMPTY_SIGNUP_FORM: SignupFormData = {
   storeName: '',
   street: '',
+  city: '',
   zipcode: '',
   state: '',
   phone: '',
@@ -55,6 +57,10 @@ export function validateSignupForm(
 
   if (formData.phone && !validatePhone(formData.phone)) {
     errors.phone = 'Phone must be 10 digits';
+  }
+
+  if (formData.city && formData.city.length > 100) {
+    errors.city = 'City/Town must be 100 characters or fewer';
   }
 
   if (formData.zipcode && !validateZipcode(formData.zipcode)) {

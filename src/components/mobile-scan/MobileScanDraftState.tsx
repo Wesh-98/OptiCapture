@@ -2,9 +2,12 @@ import { AlertTriangle } from 'lucide-react';
 
 interface MobileScanDraftStateProps {
   scanCount: number;
+  sessionStatus: 'draft' | 'completed';
 }
 
-export function MobileScanDraftState({ scanCount }: MobileScanDraftStateProps) {
+export function MobileScanDraftState({ scanCount, sessionStatus }: MobileScanDraftStateProps) {
+  const isCompleted = sessionStatus === 'completed';
+
   return (
     <div className="fixed inset-0 flex flex-col items-center justify-center bg-[#0d1117] text-white px-6 gap-6">
       <div className="w-14 h-14 rounded-full bg-amber-500/20 flex items-center justify-center">
@@ -12,8 +15,14 @@ export function MobileScanDraftState({ scanCount }: MobileScanDraftStateProps) {
       </div>
 
       <div className="text-center">
-        <p className="text-lg font-bold text-white mb-1">Session in review mode</p>
-        <p className="text-sm text-slate-400">Scanning paused by the store owner.</p>
+        <p className="text-lg font-bold text-white mb-1">
+          {isCompleted ? 'Session complete' : 'Session in review mode'}
+        </p>
+        <p className="text-sm text-slate-400">
+          {isCompleted
+            ? 'This batch has already been committed to inventory.'
+            : 'Scanning paused by the store owner.'}
+        </p>
       </div>
 
       <div className="px-6 py-3 bg-white/5 rounded-2xl text-center">

@@ -1,4 +1,3 @@
-import React from 'react';
 import { useReducedMotion } from 'motion/react';
 import { ImportHeader } from './ImportHeader';
 import { ImportMappingPanel } from './ImportMappingPanel';

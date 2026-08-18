@@ -11,6 +11,8 @@ export interface SessionItem {
   exists_in_inventory: number;
   sale_price: number | null;
   unit: string | null;
+  updated_at?: string | null;
+  tag_names?: string | null;
 }
 
 export interface ServerInfo {
