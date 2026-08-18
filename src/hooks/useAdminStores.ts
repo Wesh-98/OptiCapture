@@ -92,8 +92,12 @@ export function useAdminStores() {
     if (!editStore) return;
     const errs: Record<string, string> = {};
     if (!editStore.name.trim()) errs.name = 'Store name is required';
+    if (editStore.street && editStore.street.length > 200)
+      errs.street = 'Street address must be 200 characters or fewer';
     if (editStore.email && !validateEmail(editStore.email)) errs.email = 'Enter a valid email';
     if (editStore.phone && !validatePhone(editStore.phone)) errs.phone = 'Phone must be 10 digits';
+    if (editStore.city && editStore.city.length > 100)
+      errs.city = 'City/Town must be 100 characters or fewer';
     if (editStore.zipcode && !validateZipcode(editStore.zipcode))
       errs.zipcode = 'Format: 12345 or 12345-6789';
     if (Object.keys(errs).length) {
@@ -111,6 +115,7 @@ export function useAdminStores() {
         body: JSON.stringify({
           name: editStore.name,
           street: editStore.street,
+          city: editStore.city,
           zipcode: editStore.zipcode,
           state: editStore.state,
           phone: editStore.phone,

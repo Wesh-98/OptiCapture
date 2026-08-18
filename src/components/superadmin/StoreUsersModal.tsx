@@ -1,4 +1,3 @@
-import React from 'react';
 import { X, UserPlus, Trash2, KeyRound, Loader2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { StoreRow, StoreUser } from './types';
@@ -28,11 +27,27 @@ interface Props {
 }
 
 export function StoreUsersModal({
-  store, users, loading, error,
-  userActionMode, newUsername, newEmail, newRole, addingUser, addError,
-  resettingUserId, confirmDeleteUserId,
-  onUserActionMode, onNewUsername, onNewEmail, onNewRole, onAddUser, onRemoveUser,
-  onResetPassword, onConfirmDelete, onClose,
+  store,
+  users,
+  loading,
+  error,
+  userActionMode,
+  newUsername,
+  newEmail,
+  newRole,
+  addingUser,
+  addError,
+  resettingUserId,
+  confirmDeleteUserId,
+  onUserActionMode,
+  onNewUsername,
+  onNewEmail,
+  onNewRole,
+  onAddUser,
+  onRemoveUser,
+  onResetPassword,
+  onConfirmDelete,
+  onClose,
 }: Props) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
@@ -58,63 +73,76 @@ export function StoreUsersModal({
             <p className="text-sm text-slate-400 text-center py-4">Loading...</p>
           ) : users.length === 0 ? (
             <p className="text-sm text-slate-400 text-center py-4">No users assigned yet.</p>
-          ) : users.map(u => {
-            const displayName = u.username?.trim() || 'Unknown user';
+          ) : (
+            users.map(u => {
+              const displayName = u.username?.trim() || 'Unknown user';
 
-            return (
-              <div key={u.id} className="flex items-center justify-between py-2 px-3 bg-slate-50 rounded-lg">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-full bg-navy-100 flex items-center justify-center text-navy-700 font-bold text-sm">
-                    {displayName.charAt(0).toUpperCase()}
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium text-slate-800">{displayName}</p>
-                    {u.email && <p className="text-xs text-slate-400">{u.email}</p>}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className={cn(
-                    'px-2 py-0.5 rounded-full text-xs font-medium capitalize',
-                    u.role === 'owner' ? 'bg-blue-100 text-blue-700' : 'bg-slate-200 text-slate-600'
-                  )}>{u.role}</span>
-                  <button
-                    onClick={() => onResetPassword(u.id)}
-                    disabled={resettingUserId === u.id}
-                    className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors disabled:opacity-40"
-                    title="Reset password"
-                  >
-                    {resettingUserId === u.id
-                      ? <Loader2 size={14} className="animate-spin" />
-                      : <KeyRound size={14} />}
-                  </button>
-                  {confirmDeleteUserId === u.id ? (
-                    <div className="flex items-center gap-1">
-                      <button
-                        onClick={() => onRemoveUser(u.id)}
-                        className="px-2 py-1 text-xs bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-semibold"
-                      >
-                        Confirm
-                      </button>
-                      <button
-                        onClick={() => onConfirmDelete(null)}
-                        className="px-2 py-1 text-xs bg-slate-200 text-slate-600 rounded-lg hover:bg-slate-300 transition-colors"
-                      >
-                        Cancel
-                      </button>
+              return (
+                <div
+                  key={u.id}
+                  className="flex items-center justify-between py-2 px-3 bg-slate-50 rounded-lg"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full bg-navy-100 flex items-center justify-center text-navy-700 font-bold text-sm">
+                      {displayName.charAt(0).toUpperCase()}
                     </div>
-                  ) : (
-                    <button
-                      onClick={() => onConfirmDelete(u.id)}
-                      className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                      title="Remove user"
+                    <div>
+                      <p className="text-sm font-medium text-slate-800">{displayName}</p>
+                      {u.email && <p className="text-xs text-slate-400">{u.email}</p>}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={cn(
+                        'px-2 py-0.5 rounded-full text-xs font-medium capitalize',
+                        u.role === 'owner'
+                          ? 'bg-blue-100 text-blue-700'
+                          : 'bg-slate-200 text-slate-600'
+                      )}
                     >
-                      <Trash2 size={14} />
+                      {u.role}
+                    </span>
+                    <button
+                      onClick={() => onResetPassword(u.id)}
+                      disabled={resettingUserId === u.id}
+                      className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors disabled:opacity-40"
+                      title="Reset password"
+                    >
+                      {resettingUserId === u.id ? (
+                        <Loader2 size={14} className="animate-spin" />
+                      ) : (
+                        <KeyRound size={14} />
+                      )}
                     </button>
-                  )}
+                    {confirmDeleteUserId === u.id ? (
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => onRemoveUser(u.id)}
+                          className="px-2 py-1 text-xs bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-semibold"
+                        >
+                          Confirm
+                        </button>
+                        <button
+                          onClick={() => onConfirmDelete(null)}
+                          className="px-2 py-1 text-xs bg-slate-200 text-slate-600 rounded-lg hover:bg-slate-300 transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => onConfirmDelete(u.id)}
+                        className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                        title="Remove user"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })
+          )}
         </div>
 
         <div className="p-5 border-t border-slate-200 space-y-3">
@@ -148,8 +176,8 @@ export function StoreUsersModal({
           {addError && <p className="text-xs text-red-500">{addError}</p>}
           {userActionMode === 'create' && (
             <p className="text-xs text-slate-500">
-              A temporary password will be shown once after creation, and the user will be forced
-              to change it after signing in.
+              A temporary password will be shown once after creation, and the user will be forced to
+              change it after signing in.
             </p>
           )}
           <div className="flex gap-2">

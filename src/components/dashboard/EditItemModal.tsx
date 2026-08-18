@@ -15,7 +15,16 @@ interface Props {
   onClose: () => void;
 }
 
-export function EditItemModal({ editingItem, editFormData, categories, prefersReducedMotion, onChange, onImageChange, onSubmit, onClose }: Readonly<Props>) {
+export function EditItemModal({
+  editingItem,
+  editFormData,
+  categories,
+  prefersReducedMotion,
+  onChange,
+  onImageChange,
+  onSubmit,
+  onClose,
+}: Readonly<Props>) {
   return (
     <AnimatePresence>
       {editingItem && (
@@ -28,13 +37,32 @@ export function EditItemModal({ editingItem, editFormData, categories, prefersRe
           >
             <div className="p-6 border-b border-slate-200 flex justify-between items-center sticky top-0 bg-white z-10">
               <h3 className="text-xl font-bold text-navy-900">Edit Item</h3>
-              <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X size={24} /></button>
+              <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
+                <X size={24} />
+              </button>
             </div>
             <form onSubmit={onSubmit} className="p-6 space-y-6">
-              <ItemFormFields data={editFormData} onChange={onChange} onImageChange={onImageChange} categories={categories} imageRequired={false} />
+              <ItemFormFields
+                data={editFormData}
+                onChange={onChange}
+                onImageChange={onImageChange}
+                categories={categories}
+                imageRequired={false}
+              />
               <div className="flex justify-end gap-3 pt-4 border-t border-slate-200">
-                <button type="button" onClick={onClose} className="px-6 py-2 text-slate-600 font-medium hover:bg-slate-100 rounded-lg transition-colors">Cancel</button>
-                <button type="submit" className="px-6 py-2 bg-navy-900 text-white font-medium rounded-lg hover:bg-navy-800 transition-colors shadow-lg shadow-navy-900/20">Save Changes</button>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="px-6 py-2 text-slate-600 font-medium hover:bg-slate-100 rounded-lg transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-6 py-2 bg-navy-900 text-white font-medium rounded-lg hover:bg-navy-800 transition-colors shadow-lg shadow-navy-900/20"
+                >
+                  Save Changes
+                </button>
               </div>
             </form>
           </motion.div>

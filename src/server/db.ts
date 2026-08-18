@@ -3,16 +3,21 @@ import bcrypt from 'bcryptjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
+import { normalizeImageUrl } from './helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// DB lives at project root — two levels up from src/server/
-const DB_PATH = path.join(__dirname, '..', '..', 'opticapture.db');
+// DATABASE_PATH env var overrides the default file path.
+// Tests set it to ':memory:' so every test worker gets a fresh, isolated
+// in-memory database with no leftover state from other runs.
+const DB_PATH = process.env.DATABASE_PATH ?? path.join(__dirname, '..', '..', 'opticapture.db');
 export const db = new Database(DB_PATH);
 // WAL mode: allows concurrent reads while a write is in progress — critical for
 // multiple phones scanning simultaneously into the same session
 db.pragma('journal_mode = WAL');
 // Wait up to 5 s instead of throwing SQLITE_BUSY immediately under write contention
 db.pragma('busy_timeout = 5000');
+// SQLite disables foreign key enforcement by default — enable it per-connection
+db.pragma('foreign_keys = ON');
 
 // Audit log retention — delete entries older than 90 days; run on startup and daily
 export function pruneAuditLogs() {
@@ -21,15 +26,19 @@ export function pruneAuditLogs() {
 
 // Database Initialization
 // Migration version tracking
-db.prepare(`
+db.prepare(
+  `
   CREATE TABLE IF NOT EXISTS schema_migrations (
     version INTEGER PRIMARY KEY,
     applied_at TEXT DEFAULT (datetime('now'))
   )
-`).run();
+`
+).run();
 
 const appliedMigrations = new Set(
-  (db.prepare('SELECT version FROM schema_migrations').all() as { version: number }[]).map(r => r.version)
+  (db.prepare('SELECT version FROM schema_migrations').all() as { version: number }[]).map(
+    r => r.version
+  )
 );
 
 function runMigration(version: number, fn: () => void) {
@@ -43,7 +52,6 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS stores (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
-
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -143,16 +151,29 @@ db.exec(`
   );
 `);
 
-// Migrate existing users into user_stores (runs once — INSERT OR IGNORE skips duplicates)
-db.prepare(`
-  INSERT OR IGNORE INTO user_stores (user_id, store_id, role)
-  SELECT id, store_id, role FROM users WHERE store_id != 0
-`).run();
+// NOTE: The user_stores backfill is intentionally placed AFTER the demo-user
+// seed block (further below). This matters for in-memory databases used in
+// tests: in a fresh :memory: db, the users table is empty at this point, so
+// running the backfill here would be a no-op — the seeded admin/taker would
+// never be added to user_stores and login would always return 401.
+//
+// For persistent file databases (production / dev) there is no behavioral
+// difference: INSERT OR IGNORE silently skips rows that already exist, and new
+// users created via /api/auth/register always get their own user_stores entry
+// at registration time.
+//
+// The backfill runs unconditionally on every server startup so it acts as a
+// safety net for any users that ended up in the users table without a
+// corresponding user_stores row (e.g. direct SQL inserts, legacy migration
+// edge cases).
 
 // Schema migrations for stores table
 runMigration(1, () => {
   ['street', 'zipcode', 'state', 'logo'].forEach(col => {
-    const exists = db.prepare(`PRAGMA table_info(stores)`).all().some((c: any) => c.name === col);
+    const exists = db
+      .prepare(`PRAGMA table_info(stores)`)
+      .all()
+      .some((c: any) => c.name === col);
     if (!exists) db.prepare(`ALTER TABLE stores ADD COLUMN ${col} TEXT`).run();
   });
 });
@@ -160,21 +181,34 @@ runMigration(1, () => {
 // Schema migrations for session_items table
 runMigration(2, () => {
   ['tag_names', 'sale_price', 'unit'].forEach(col => {
-    const exists = db.prepare(`PRAGMA table_info(session_items)`).all().some((c: any) => c.name === col);
+    const exists = db
+      .prepare(`PRAGMA table_info(session_items)`)
+      .all()
+      .some((c: any) => c.name === col);
     if (!exists) db.prepare(`ALTER TABLE session_items ADD COLUMN ${col} TEXT`).run();
   });
 });
 
 // Schema migrations for scan_sessions table — add OTP security columns
 runMigration(3, () => {
-  try { db.prepare("ALTER TABLE scan_sessions ADD COLUMN otp_attempts INTEGER DEFAULT 0").run(); } catch {}
-  try { db.prepare("ALTER TABLE scan_sessions ADD COLUMN expires_at TEXT").run(); } catch {}
+  // Use PRAGMA instead of bare catch {} — bare catch swallows all errors including
+  // SQLITE_CORRUPT and SQLITE_FULL, not just the 'duplicate column' case.
+  const cols = (db.prepare('PRAGMA table_info(scan_sessions)').all() as any[]).map(
+    (c: any) => c.name
+  );
+  if (!cols.includes('otp_attempts'))
+    db.prepare('ALTER TABLE scan_sessions ADD COLUMN otp_attempts INTEGER DEFAULT 0').run();
+  if (!cols.includes('expires_at'))
+    db.prepare('ALTER TABLE scan_sessions ADD COLUMN expires_at TEXT').run();
 });
 
 // Schema migrations for users table — add account lockout columns
 runMigration(4, () => {
-  try { db.prepare("ALTER TABLE users ADD COLUMN failed_login_attempts INTEGER DEFAULT 0").run(); } catch {}
-  try { db.prepare("ALTER TABLE users ADD COLUMN locked_until TEXT DEFAULT NULL").run(); } catch {}
+  const cols = (db.prepare('PRAGMA table_info(users)').all() as any[]).map((c: any) => c.name);
+  if (!cols.includes('failed_login_attempts'))
+    db.prepare('ALTER TABLE users ADD COLUMN failed_login_attempts INTEGER DEFAULT 0').run();
+  if (!cols.includes('locked_until'))
+    db.prepare('ALTER TABLE users ADD COLUMN locked_until TEXT DEFAULT NULL').run();
 });
 
 // Seed sentinel store (id=0) for superadmin — must exist before superadmin user is inserted
@@ -189,26 +223,41 @@ if (!checkStore) {
   db.prepare("INSERT INTO stores (id, name) VALUES (1, 'OptiMart Downtown')").run();
 }
 
-// Seed demo accounts only in development (C-2: never seed known credentials in production)
-if (process.env.NODE_ENV !== 'production') {
+// Seed demo accounts only when explicitly enabled (plus tests).
+// This avoids accidentally creating known credentials in a deployed environment
+// that forgot to set NODE_ENV=production.
+if (process.env.NODE_ENV === 'test' || process.env.ALLOW_DEMO_SEED === 'true') {
   const checkUser = db.prepare('SELECT * FROM users WHERE username = ?').get('admin');
   if (!checkUser) {
     const hashedPassword = bcrypt.hashSync('admin123', 10);
-    db.prepare('INSERT INTO users (username, password, role, store_id, store_name) VALUES (?, ?, ?, ?, ?)')
-      .run('admin', hashedPassword, 'owner', 1, 'OptiMart Downtown');
+    db.prepare(
+      'INSERT INTO users (username, password, role, store_id, store_name) VALUES (?, ?, ?, ?, ?)'
+    ).run('admin', hashedPassword, 'owner', 1, 'OptiMart Downtown');
 
     const takerPass = bcrypt.hashSync('taker123', 10);
-    db.prepare('INSERT INTO users (username, password, role, store_id, store_name) VALUES (?, ?, ?, ?, ?)')
-      .run('taker', takerPass, 'taker', 1, 'OptiMart Downtown');
+    db.prepare(
+      'INSERT INTO users (username, password, role, store_id, store_name) VALUES (?, ?, ?, ?, ?)'
+    ).run('taker', takerPass, 'taker', 1, 'OptiMart Downtown');
   }
 
   const checkSuper = db.prepare("SELECT id FROM users WHERE role = 'superadmin'").get();
   if (!checkSuper) {
     const superPass = bcrypt.hashSync('superadmin123', 10);
-    db.prepare('INSERT INTO users (username, password, role, store_id, store_name) VALUES (?, ?, ?, ?, ?)')
-      .run('superadmin', superPass, 'superadmin', 0, 'OptiCapture HQ');
+    db.prepare(
+      'INSERT INTO users (username, password, role, store_id, store_name) VALUES (?, ?, ?, ?, ?)'
+    ).run('superadmin', superPass, 'superadmin', 0, 'OptiCapture HQ');
   }
 }
+
+// Backfill user_stores for any users not yet in the junction table.
+// Runs after the demo seed block so the seeded admin/taker/superadmin are
+// included in :memory: databases (tests) where the table was empty at startup.
+db.prepare(
+  `
+  INSERT OR IGNORE INTO user_stores (user_id, store_id, role)
+  SELECT id, store_id, role FROM users WHERE store_id != 0
+`
+).run();
 
 // Seed default categories — always upsert icon so image paths stay current
 const upsertCat = db.prepare(`
@@ -216,65 +265,81 @@ const upsertCat = db.prepare(`
   ON CONFLICT(name, store_id) DO UPDATE SET icon = excluded.icon
 `);
 const seedCats: [string, string][] = [
-  ['Soft Drinks',              '/icons/soft-drinks.png'],
-  ['Snacks',                 '/icons/snack.png'],
-  ['Candy',                  '/icons/candy.png'],
-  ['Tobacco',                'Cigarette'],
-  ['Household Items',        '/icons/household-items.png'],
-  ['Automotive',             '/icons/automotive.png'],
-  ['Cold Coffee',            '/icons/cold-coffee.png'],
-  ['Dairy',                  '/icons/dairy.png'],
-  ['Electronics',            '/icons/electronics.png'],
-  ['Wine & Beer',            '/icons/beer-wine.png'],
-  ['Pets',                   '/icons/pet-food.png'],
-  ['Pastries',               '/icons/pastry.png'],
-  ['Newspapers',             '/icons/newspaper.png'],
-  ['Energy Drinks',          '/icons/energy-drink.png'],
-  ['Frozen Food',           '/icons/frozen-food.png'],
-  ['Grocery',                '/icons/grocery.png'],
-  ['Gum & Mints',            '/icons/gum-mint.png'],
-  ['Juices, Teas, Lemonades',  '/icons/juice-tea-lemonade.png'],
-  ['Non-Tobacco',            '/icons/non-tobacco.png'],
-  ['Nutrition Snacks',     '/icons/nutrition-snacks.png'],
-  ['Personal Care',          '/icons/personal-care.png'],
-  ['Sports Drinks',          '/icons/sports-drink.png'],
-  ['Water',                  '/icons/water.png'],
-  ['Scratch Tickets',        '/icons/scratch-tickets.png'],
-  ['Phone Cards',            '/icons/phone-cards.png'],
+  ['Soft Drinks', '/icons/soft-drinks.png'],
+  ['Snacks', '/icons/snack.png'],
+  ['Candy', '/icons/candy.png'],
+  ['Tobacco', 'Cigarette'],
+  ['Household Items', '/icons/household-items.png'],
+  ['Automotive', '/icons/automotive.png'],
+  ['Cold Coffee', '/icons/cold-coffee.png'],
+  ['Dairy', '/icons/dairy.png'],
+  ['Electronics', '/icons/electronics.png'],
+  ['Wine & Beer', '/icons/beer-wine.png'],
+  ['Pets', '/icons/pet-food.png'],
+  ['Pastries', '/icons/pastry.png'],
+  ['Newspapers', '/icons/newspaper.png'],
+  ['Energy Drinks', '/icons/energy-drink.png'],
+  ['Frozen Food', '/icons/frozen-food.png'],
+  ['Grocery', '/icons/grocery.png'],
+  ['Gum & Mints', '/icons/gum-mint.png'],
+  ['Juices, Teas, Lemonades', '/icons/juice-tea-lemonade.png'],
+  ['Non-Tobacco', '/icons/non-tobacco.png'],
+  ['Nutrition Snacks', '/icons/nutrition-snacks.png'],
+  ['Personal Care', '/icons/personal-care.png'],
+  ['Sports Drinks', '/icons/sports-drink.png'],
+  ['Water', '/icons/water.png'],
+  ['Scratch Tickets', '/icons/scratch-tickets.png'],
+  ['Phone Cards', '/icons/phone-cards.png'],
 ];
 for (const [name, icon] of seedCats) upsertCat.run(name, icon, 1);
 
 // Migrate stores table — add columns if missing
 runMigration(5, () => {
-  const storesCols = new Set((db.prepare('PRAGMA table_info(stores)').all() as any[]).map((c: any) => c.name));
-  if (!storesCols.has('address')) db.prepare("ALTER TABLE stores ADD COLUMN address TEXT DEFAULT ''").run();
-  if (!storesCols.has('phone'))   db.prepare("ALTER TABLE stores ADD COLUMN phone TEXT DEFAULT ''").run();
-  if (!storesCols.has('email'))   db.prepare("ALTER TABLE stores ADD COLUMN email TEXT DEFAULT ''").run();
-  if (!storesCols.has('status'))  db.prepare("ALTER TABLE stores ADD COLUMN status TEXT DEFAULT 'active'").run();
+  const storesCols = new Set(
+    (db.prepare('PRAGMA table_info(stores)').all() as any[]).map((c: any) => c.name)
+  );
+  if (!storesCols.has('address'))
+    db.prepare("ALTER TABLE stores ADD COLUMN address TEXT DEFAULT ''").run();
+  if (!storesCols.has('phone'))
+    db.prepare("ALTER TABLE stores ADD COLUMN phone TEXT DEFAULT ''").run();
+  if (!storesCols.has('email'))
+    db.prepare("ALTER TABLE stores ADD COLUMN email TEXT DEFAULT ''").run();
+  if (!storesCols.has('status'))
+    db.prepare("ALTER TABLE stores ADD COLUMN status TEXT DEFAULT 'active'").run();
 });
 
 // Migrate users table — add OAuth columns if missing
 runMigration(6, () => {
-  const usersCols = new Set((db.prepare('PRAGMA table_info(users)').all() as any[]).map((c: any) => c.name));
-  if (!usersCols.has('oauth_provider')) db.prepare("ALTER TABLE users ADD COLUMN oauth_provider TEXT DEFAULT NULL").run();
-  if (!usersCols.has('oauth_id'))       db.prepare("ALTER TABLE users ADD COLUMN oauth_id TEXT DEFAULT NULL").run();
-  if (!usersCols.has('email'))          db.prepare("ALTER TABLE users ADD COLUMN email TEXT DEFAULT NULL").run();
+  const usersCols = new Set(
+    (db.prepare('PRAGMA table_info(users)').all() as any[]).map((c: any) => c.name)
+  );
+  if (!usersCols.has('oauth_provider'))
+    db.prepare('ALTER TABLE users ADD COLUMN oauth_provider TEXT DEFAULT NULL').run();
+  if (!usersCols.has('oauth_id'))
+    db.prepare('ALTER TABLE users ADD COLUMN oauth_id TEXT DEFAULT NULL').run();
+  if (!usersCols.has('email'))
+    db.prepare('ALTER TABLE users ADD COLUMN email TEXT DEFAULT NULL').run();
 });
 
 // Migrate scan_sessions table — add label column for named drafts
 runMigration(7, () => {
-  const cols = (db.prepare('PRAGMA table_info(scan_sessions)').all() as any[]).map((c: any) => c.name);
-  if (!cols.includes('label')) db.prepare("ALTER TABLE scan_sessions ADD COLUMN label TEXT DEFAULT NULL").run();
+  const cols = (db.prepare('PRAGMA table_info(scan_sessions)').all() as any[]).map(
+    (c: any) => c.name
+  );
+  if (!cols.includes('label'))
+    db.prepare('ALTER TABLE scan_sessions ADD COLUMN label TEXT DEFAULT NULL').run();
 });
 
 // Migration 8: expire legacy sessions that have no expires_at (created before migration 3)
 // Sets them to expired so they no longer appear in the active sessions list
 runMigration(8, () => {
-  db.prepare(`
+  db.prepare(
+    `
     UPDATE scan_sessions
     SET expires_at = datetime('now', '-1 second')
     WHERE expires_at IS NULL AND status IN ('active', 'draft')
-  `).run();
+  `
+  ).run();
 });
 
 // Migration 9: add store_code to stores — unique 6-char code used at login
@@ -338,58 +403,102 @@ runMigration(10, () => {
 });
 
 runMigration(11, () => {
-  const cols = (db.prepare('PRAGMA table_info(session_items)').all() as any[]).map((c: any) => c.name);
+  const cols = (db.prepare('PRAGMA table_info(session_items)').all() as any[]).map(
+    (c: any) => c.name
+  );
   if (!cols.includes('device_id')) {
-    db.prepare("ALTER TABLE session_items ADD COLUMN device_id TEXT DEFAULT NULL").run();
+    db.prepare('ALTER TABLE session_items ADD COLUMN device_id TEXT DEFAULT NULL').run();
   }
 });
 
 runMigration(12, () => {
   const cols = (db.prepare('PRAGMA table_info(users)').all() as any[]).map((c: any) => c.name);
   if (!cols.includes('token_version')) {
-    db.prepare("ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 1").run();
+    db.prepare('ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 1').run();
   }
 });
 
 runMigration(13, () => {
   const cols = (db.prepare('PRAGMA table_info(users)').all() as any[]).map((c: any) => c.name);
   if (!cols.includes('must_reset_password')) {
-    db.prepare("ALTER TABLE users ADD COLUMN must_reset_password INTEGER NOT NULL DEFAULT 0").run();
+    db.prepare('ALTER TABLE users ADD COLUMN must_reset_password INTEGER NOT NULL DEFAULT 0').run();
   }
 });
 
-db.prepare(`
+runMigration(14, () => {
+  const cols = (db.prepare('PRAGMA table_info(session_items)').all() as any[]).map(
+    (c: any) => c.name
+  );
+  if (!cols.includes('updated_at')) {
+    db.prepare('ALTER TABLE session_items ADD COLUMN updated_at TEXT DEFAULT NULL').run();
+  }
+
+  db.prepare(
+    `
+    UPDATE session_items
+    SET updated_at = COALESCE(updated_at, scanned_at, datetime('now'))
+    WHERE updated_at IS NULL
+  `
+  ).run();
+});
+
+runMigration(15, () => {
+  const cols = (db.prepare('PRAGMA table_info(stores)').all() as any[]).map((c: any) => c.name);
+  if (!cols.includes('city')) {
+    db.prepare("ALTER TABLE stores ADD COLUMN city TEXT DEFAULT ''").run();
+  }
+});
+
+db.prepare(
+  `
   CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oauth
   ON users(oauth_provider, oauth_id)
   WHERE oauth_provider IS NOT NULL
-`).run();
+`
+).run();
 
 // Performance indexes
-db.prepare('CREATE INDEX IF NOT EXISTS idx_session_items_session_upc ON session_items(session_id, upc)').run();
-db.prepare('CREATE INDEX IF NOT EXISTS idx_session_items_session_at  ON session_items(session_id, scanned_at DESC)').run();
-db.prepare('CREATE INDEX IF NOT EXISTS idx_inventory_upc_store        ON inventory(upc, store_id)').run();
-db.prepare('CREATE INDEX IF NOT EXISTS idx_scan_sessions_store_status ON scan_sessions(store_id, status, expires_at)').run();
+db.prepare(
+  'CREATE INDEX IF NOT EXISTS idx_session_items_session_upc ON session_items(session_id, upc)'
+).run();
+db.prepare(
+  'CREATE INDEX IF NOT EXISTS idx_session_items_session_at  ON session_items(session_id, scanned_at DESC)'
+).run();
+db.prepare(
+  'CREATE INDEX IF NOT EXISTS idx_session_items_session_updated ON session_items(session_id, updated_at DESC, id DESC)'
+).run();
+db.prepare(
+  'CREATE INDEX IF NOT EXISTS idx_inventory_upc_store        ON inventory(upc, store_id)'
+).run();
+db.prepare(
+  'CREATE INDEX IF NOT EXISTS idx_scan_sessions_store_status ON scan_sessions(store_id, status, expires_at)'
+).run();
 
 // One-time migration: convert uc?export=view Drive URLs → server proxy path
-db.prepare(`
+db.prepare(
+  `
   UPDATE inventory
   SET image = '/api/drive-image/' || SUBSTR(image, INSTR(image, 'id=') + 3)
   WHERE image LIKE '%drive.google.com/uc?export=view%'
     AND image NOT LIKE '%/api/drive-image/%'
-`).run();
+`
+).run();
 
 // One-time migration: convert /file/d/FILE_ID/view sharing links → server proxy path
-db.prepare(`
+db.prepare(
+  `
   UPDATE inventory
   SET image = '/api/drive-image/' ||
               SUBSTR(image, INSTR(image, '/file/d/') + 8,
                 INSTR(SUBSTR(image, INSTR(image, '/file/d/') + 8), '/') - 1)
   WHERE image LIKE '%drive.google.com/file/d/%'
     AND image NOT LIKE '%/api/drive-image/%'
-`).run();
+`
+).run();
 
 // One-time migration: convert existing thumbnail?id= URLs → server proxy path
-db.prepare(`
+db.prepare(
+  `
   UPDATE inventory
   SET image = '/api/drive-image/' || SUBSTR(image, INSTR(image, 'thumbnail?id=') + 13,
                 CASE WHEN INSTR(SUBSTR(image, INSTR(image, 'thumbnail?id=') + 13), '&') > 0
@@ -397,8 +506,53 @@ db.prepare(`
                      ELSE LENGTH(image) END)
   WHERE image LIKE '%drive.google.com/thumbnail?id=%'
     AND image NOT LIKE '%/api/drive-image/%'
-`).run();
+`
+).run();
+
+// Normalize any remaining Google Drive/Docs image URLs through the proxy so
+// older rows created before the normalization hook still render consistently.
+{
+  const rows = db
+    .prepare(
+      `
+    SELECT id, image
+    FROM inventory
+    WHERE image IS NOT NULL
+      AND image NOT LIKE '/api/drive-image/%'
+      AND (image LIKE '%drive.google.com%' OR image LIKE '%docs.google.com%')
+  `
+    )
+    .all() as Array<{ id: number; image: string }>;
+
+  const updateImage = db.prepare('UPDATE inventory SET image = ? WHERE id = ?');
+
+  db.transaction(() => {
+    for (const row of rows) {
+      const normalized = normalizeImageUrl(row.image);
+      if (normalized !== row.image) updateImage.run(normalized, row.id);
+    }
+  })();
+}
 
 // Run after all table creation / migrations so the logs table is guaranteed to exist
 pruneAuditLogs();
-setInterval(pruneAuditLogs, 24 * 60 * 60 * 1000);
+// .unref() so the daily retention sweep does not keep the event loop alive on its own.
+setInterval(pruneAuditLogs, 24 * 60 * 60 * 1000).unref();
+
+// ── Performance indexes ───────────────────────────────────────────────────────
+// Idempotent — IF NOT EXISTS means safe to re-run on every boot after migrations.
+db.prepare('CREATE INDEX IF NOT EXISTS idx_logs_store_ts ON logs(store_id, timestamp DESC)').run();
+db.prepare(
+  'CREATE INDEX IF NOT EXISTS idx_inventory_category_store ON inventory(category_id, store_id)'
+).run();
+db.prepare(
+  'CREATE INDEX IF NOT EXISTS idx_inventory_name_store ON inventory(item_name, store_id)'
+).run();
+db.prepare(
+  'CREATE INDEX IF NOT EXISTS idx_inventory_store_updated ON inventory(store_id, updated_at DESC)'
+).run();
+db.prepare('CREATE INDEX IF NOT EXISTS idx_users_store_id ON users(store_id)').run();
+db.prepare('CREATE INDEX IF NOT EXISTS idx_categories_store ON categories(store_id)').run();
+db.prepare(
+  'CREATE INDEX IF NOT EXISTS idx_scan_sessions_user_store ON scan_sessions(user_id, store_id, status)'
+).run();

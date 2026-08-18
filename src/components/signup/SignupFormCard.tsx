@@ -1,6 +1,6 @@
 import type { FormEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, Lock, Mail, MapPin, Phone, Store, User } from 'lucide-react';
+import { AlertTriangle, Building2, Lock, Mail, MapPin, Phone, Store, User } from 'lucide-react';
 import { US_STATES } from '../../lib/constants';
 import type { SignupFormData } from './types';
 
@@ -69,7 +69,7 @@ export function SignupFormCard({
               src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg"
               className="w-5 h-5"
               alt="Google"
-            />            
+            />
             Sign up with Google
           </button>
 
@@ -125,7 +125,24 @@ export function SignupFormCard({
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <div className="relative">
+                  <Building2
+                    className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+                    size={17}
+                  />
+                  <input
+                    type="text"
+                    value={formData.city}
+                    onChange={event => onFieldChange('city', event.target.value)}
+                    className={inputClass}
+                    placeholder="City/Town"
+                  />
+                </div>
+                {errors.city && <p className="text-xs text-red-500 mt-1 pl-1">{errors.city}</p>}
+              </div>
+
               <div>
                 <input
                   type="text"
@@ -154,7 +171,7 @@ export function SignupFormCard({
               </select>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <div className="relative">
                   <Phone

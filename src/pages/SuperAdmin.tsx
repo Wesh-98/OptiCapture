@@ -1,14 +1,14 @@
-import React, { useEffect } from 'react';
+import { useEffect } from 'react';
 import { useReducedMotion } from 'motion/react';
 import { Store, Package, ShieldCheck, ShieldOff, LogOut } from 'lucide-react';
 import { AlertTriangle, X } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useAdminStores } from '../hooks/useAdminStores';
 import { useStoreUsers } from '../hooks/useStoreUsers';
-import { StoreTable }        from '../components/superadmin/StoreTable';
-import { EditStoreModal }    from '../components/superadmin/EditStoreModal';
-import { DeleteStoreModal }  from '../components/superadmin/DeleteStoreModal';
-import { StoreUsersModal }   from '../components/superadmin/StoreUsersModal';
+import { StoreTable } from '../components/superadmin/StoreTable';
+import { EditStoreModal } from '../components/superadmin/EditStoreModal';
+import { DeleteStoreModal } from '../components/superadmin/DeleteStoreModal';
+import { StoreUsersModal } from '../components/superadmin/StoreUsersModal';
 import { ResetPasswordModal } from '../components/superadmin/ResetPasswordModal';
 
 export default function SuperAdmin() {
@@ -16,11 +16,13 @@ export default function SuperAdmin() {
 
   const admin = useAdminStores();
   const users = useStoreUsers();
+  const { fetchStores } = admin;
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { admin.fetchStores(); }, []);
+  useEffect(() => {
+    fetchStores();
+  }, [fetchStores]);
 
-  const active    = admin.stores.filter(s => s.status === 'active').length;
+  const active = admin.stores.filter(s => s.status === 'active').length;
   const suspended = admin.stores.filter(s => s.status === 'suspended').length;
   const totalItems = admin.stores.reduce((n, s) => n + (s.item_count || 0), 0);
 
@@ -58,7 +60,10 @@ export default function SuperAdmin() {
           <div className="flex items-center gap-2 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
             <AlertTriangle size={16} className="shrink-0" />
             <span className="flex-1">{admin.actionError}</span>
-            <button onClick={() => admin.setActionError('')} className="text-red-400 hover:text-red-600">
+            <button
+              onClick={() => admin.setActionError('')}
+              className="text-red-400 hover:text-red-600"
+            >
               <X size={16} />
             </button>
           </div>
@@ -67,10 +72,20 @@ export default function SuperAdmin() {
         {/* Stats */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {[
-            { label: 'Total Stores', value: admin.stores.length, icon: Store,      color: 'text-navy-900' },
-            { label: 'Active',       value: active,              icon: ShieldCheck, color: 'text-emerald-600' },
-            { label: 'Suspended',    value: suspended,           icon: ShieldOff,   color: 'text-red-500' },
-            { label: 'Total Items',  value: totalItems.toLocaleString(), icon: Package, color: 'text-slate-700' },
+            {
+              label: 'Total Stores',
+              value: admin.stores.length,
+              icon: Store,
+              color: 'text-navy-900',
+            },
+            { label: 'Active', value: active, icon: ShieldCheck, color: 'text-emerald-600' },
+            { label: 'Suspended', value: suspended, icon: ShieldOff, color: 'text-red-500' },
+            {
+              label: 'Total Items',
+              value: totalItems.toLocaleString(),
+              icon: Package,
+              color: 'text-slate-700',
+            },
           ].map(({ label, value, icon: Icon, color }) => (
             <div key={label} className="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
               <div className="flex items-center gap-2 mb-1">
@@ -123,7 +138,10 @@ export default function SuperAdmin() {
           deleting={admin.deleting}
           onConfirmNameChange={admin.setDeleteConfirmName}
           onDelete={admin.handleDeleteStore}
-          onClose={() => { admin.openDeleteConfirm(null as any); admin.setDeleteConfirmName(''); }}
+          onClose={() => {
+            admin.openDeleteConfirm(null as any);
+            admin.setDeleteConfirmName('');
+          }}
         />
       )}
 

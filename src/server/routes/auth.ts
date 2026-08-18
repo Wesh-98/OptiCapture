@@ -6,32 +6,47 @@ import { db } from '../db.js';
 import { authenticateToken, authLimiter, googleClient, requireOwner } from '../middleware.js';
 import { revokeToken, pendingOAuth, pendingOAuthSet, DUMMY_HASH } from '../cache.js';
 import { saveBase64Image, generateStoreCode, UnsupportedImageTypeError } from '../helpers.js';
+import type { AuthRequest } from '../types.js';
 
 export const authRouter = express.Router();
 
-function buildScopedSessionUser(
-  userId: number,
-  storeId: number,
-  fallbackRole: string
-) {
-  const user = db
-    .prepare('SELECT id, username, token_version, must_reset_password FROM users WHERE id = ?')
-    .get(userId) as any;
-  const store = db.prepare('SELECT id, name FROM stores WHERE id = ?').get(storeId) as any;
-  const access = db
-    .prepare('SELECT role FROM user_stores WHERE user_id = ? AND store_id = ?')
-    .get(userId, storeId) as any;
+function normalizeUsername(value: unknown): string {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
 
-  if (!user || !store) {
+function incrementFailedLoginAttempts(users: any[]) {
+  const uniqueUsers = new Map<number, any>();
+  for (const user of users) {
+    if (user?.id != null) uniqueUsers.set(user.id, user);
+  }
+
+  const updateUser = db.prepare(
+    'UPDATE users SET failed_login_attempts = ?, locked_until = ? WHERE id = ?'
+  );
+
+  for (const user of uniqueUsers.values()) {
+    const newAttempts = (user.failed_login_attempts || 0) + 1;
+    const lockedUntil =
+      newAttempts >= 5 ? new Date(Date.now() + 15 * 60 * 1000).toISOString() : null;
+    updateUser.run(newAttempts, lockedUntil, user.id);
+  }
+}
+
+function buildAccountSessionUser(userId: number) {
+  const user = db
+    .prepare(
+      'SELECT id, username, role, store_id, token_version, must_reset_password FROM users WHERE id = ?'
+    )
+    .get(userId) as any;
+  if (!user) {
     return null;
   }
 
   return {
     id: user.id,
     username: user.username,
-    role: access?.role ?? fallbackRole,
-    store_id: store.id,
-    store_name: store.name,
+    role: user.role,
+    default_store_id: user.store_id ?? null,
     token_version: user.token_version ?? 1,
     must_reset_password: user.must_reset_password === 1,
   };
@@ -44,9 +59,8 @@ function issueJwt(
   user: {
     id: number;
     username: string;
-    role: string;
-    store_name: string;
-    store_id: number;
+    role?: string;
+    default_store_id?: number | null;
     token_version?: number;
     must_reset_password?: boolean | number;
   }
@@ -56,8 +70,7 @@ function issueJwt(
       id: user.id,
       username: user.username,
       role: user.role,
-      store_name: user.store_name,
-      store_id: user.store_id,
+      default_store_id: user.default_store_id ?? null,
       token_version: user.token_version ?? 1,
       must_reset_password: Boolean(user.must_reset_password),
     },
@@ -76,13 +89,17 @@ function issueJwt(
 
 authRouter.post('/login', authLimiter, async (req, res) => {
   const { username, password, store_code } = req.body;
+  const normalizedUsername = normalizeUsername(username);
 
-  if (!username || !password || typeof password !== 'string') {
+  if (!normalizedUsername || !password || typeof password !== 'string') {
     return res.status(400).json({ error: 'Username and password are required' });
   }
+  if (!store_code && normalizedUsername !== 'superadmin') {
+    return res.status(400).json({ error: 'Store Code Required' });
+  }
 
-  let user: any = null;
-  let passwordMatch = false;
+  let user: any;
+  let passwordMatch: boolean;
   let loginRole: string | null = null;
   let loginStoreId: number | null = null;
   let loginStoreName: string | null = null;
@@ -106,21 +123,29 @@ authRouter.post('/login', authLimiter, async (req, res) => {
         ORDER BY CASE WHEN u.store_id = us.store_id THEN 0 ELSE 1 END, u.id ASC
       `
       )
-      .all(username, store.id) as any[];
+      .all(normalizedUsername, store.id) as any[];
 
     if (matchingUsers.length > 1) {
+      const matchedUsers: any[] = [];
       for (const candidate of matchingUsers) {
         const matchesPassword = await bcrypt.compare(password, candidate.password ?? DUMMY_HASH);
         if (!matchesPassword) continue;
+        matchedUsers.push(candidate);
+      }
 
-        if (user) {
-          return res.status(409).json({
-            error: 'Multiple accounts match this username for the selected store. Contact support.',
-          });
-        }
+      if (matchedUsers.length > 1) {
+        return res.status(409).json({
+          error: 'Multiple accounts match this username for the selected store. Contact support.',
+        });
+      }
 
-        user = candidate;
+      if (matchedUsers.length === 1) {
+        user = matchedUsers[0];
         passwordMatch = true;
+      } else {
+        // When multiple accessible accounts share the same username for a store,
+        // a bad password attempt cannot be attributed safely to a single user.
+        return res.status(401).json({ error: 'Invalid credentials' });
       }
     } else {
       user = matchingUsers[0] ?? null;
@@ -136,7 +161,7 @@ authRouter.post('/login', authLimiter, async (req, res) => {
     // No store code — superadmin only
     user = db
       .prepare("SELECT * FROM users WHERE username = ? AND role = 'superadmin'")
-      .get(username);
+      .get(normalizedUsername);
     passwordMatch = await bcrypt.compare(password, user?.password ?? DUMMY_HASH);
     if (user) {
       loginRole = user.role;
@@ -160,20 +185,7 @@ authRouter.post('/login', authLimiter, async (req, res) => {
   }
 
   if (!passwordMatch) {
-    const newAttempts = (user.failed_login_attempts || 0) + 1;
-    if (newAttempts >= 5) {
-      const lockedUntil = new Date(Date.now() + 15 * 60 * 1000).toISOString();
-      db.prepare('UPDATE users SET failed_login_attempts = ?, locked_until = ? WHERE id = ?').run(
-        newAttempts,
-        lockedUntil,
-        user.id
-      );
-    } else {
-      db.prepare('UPDATE users SET failed_login_attempts = ? WHERE id = ?').run(
-        newAttempts,
-        user.id
-      );
-    }
+    incrementFailedLoginAttempts([user]);
     return res.status(401).json({ error: 'Invalid credentials' });
   }
 
@@ -189,7 +201,12 @@ authRouter.post('/login', authLimiter, async (req, res) => {
     store_name: loginStoreName ?? user.store_name,
   };
 
-  issueJwt(req, res, sessionUser);
+  const accountSession = buildAccountSessionUser(user.id);
+  if (!accountSession) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+
+  issueJwt(req, res, accountSession);
   res.json({
     id: sessionUser.id,
     username: sessionUser.username,
@@ -221,7 +238,7 @@ authRouter.get('/google', authLimiter, (req, res) => {
 });
 
 // Google OAuth — callback
-authRouter.get('/google/callback', async (req: any, res) => {
+authRouter.get('/google/callback', async (req, res) => {
   const { code, state } = req.query as { code: string; state: string };
 
   // H-1: Validate CSRF state nonce
@@ -264,7 +281,13 @@ authRouter.get('/google/callback', async (req: any, res) => {
     }
 
     if (user) {
-      issueJwt(req, res, user);
+      // Check suspension — the password login path does this at line 114, but
+      // the OAuth path was missing it, letting suspended owners log in via Google.
+      const store = db.prepare('SELECT status FROM stores WHERE id = ?').get(user.store_id) as any;
+      if (store?.status === 'suspended') return res.redirect('/login?error=suspended');
+      const accountSession = buildAccountSessionUser(user.id);
+      if (!accountSession) return res.redirect('/login?error=oauth_failed');
+      issueJwt(req, res, accountSession);
       return res.redirect(user.role === 'superadmin' ? '/admin' : '/');
     }
 
@@ -279,7 +302,7 @@ authRouter.get('/google/callback', async (req: any, res) => {
 });
 
 // Google OAuth — retrieve pending profile (called by signup page)
-authRouter.get('/google/pending', (req, res) => {
+authRouter.get('/google/pending', authLimiter, (req, res) => {
   const key = req.query.key as string;
   const entry = pendingOAuth.get(key);
   if (!entry || entry.expiresAt < Date.now()) {
@@ -293,25 +316,26 @@ authRouter.get('/google/pending', (req, res) => {
 
 // Register new store + owner
 authRouter.post('/register', authLimiter, async (req, res) => {
-  const { store_name, street, zipcode, state, phone, email, username, password, oauth_key } =
+  const { store_name, street, city, zipcode, state, phone, email, username, password, oauth_key } =
     req.body;
-  if (!store_name || !username)
+  const normalizedUsername = normalizeUsername(username);
+  if (!store_name || !normalizedUsername)
     return res.status(400).json({ error: 'Store name and username are required' });
   if (store_name.length > 100)
     return res.status(400).json({ error: 'Store name must be 100 characters or fewer' });
-  if (username.length > 50)
+  if (normalizedUsername.length > 50)
     return res.status(400).json({ error: 'Username must be 50 characters or fewer' });
   if (street && street.length > 200)
     return res.status(400).json({ error: 'Street address must be 200 characters or fewer' });
+  if (city && city.length > 100)
+    return res.status(400).json({ error: 'City/Town must be 100 characters or fewer' });
   if (email && email.length > 200)
     return res.status(400).json({ error: 'Email must be 200 characters or fewer' });
   if (!password && !oauth_key) return res.status(400).json({ error: 'Password is required' });
   if (password && (password.length < 8 || !/[A-Z]/.test(password) || !/\d/.test(password)))
-    return res
-      .status(400)
-      .json({
-        error: 'Password must be at least 8 characters with 1 uppercase letter and 1 number',
-      });
+    return res.status(400).json({
+      error: 'Password must be at least 8 characters with 1 uppercase letter and 1 number',
+    });
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
     return res.status(400).json({ error: 'Invalid email address' });
   if (phone && !/^\d{10}$/.test(phone.replaceAll(/\D/g, '')))
@@ -330,7 +354,7 @@ authRouter.post('/register', authLimiter, async (req, res) => {
       .json({ error: 'Google session expired. Please sign in with Google again.' });
   }
 
-  const hashed = password ? await bcrypt.hash(password, 10) : null;
+  const hashed = password ? await bcrypt.hash(password, 12) : null;
 
   const register = db.transaction(() => {
     // Generate a unique store code (retry on collision, bounded to prevent infinite loop)
@@ -343,11 +367,12 @@ authRouter.post('/register', authLimiter, async (req, res) => {
 
     const storeInfo = db
       .prepare(
-        'INSERT INTO stores (name, street, zipcode, state, phone, email, store_code) VALUES (?, ?, ?, ?, ?, ?, ?)'
+        'INSERT INTO stores (name, street, city, zipcode, state, phone, email, store_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
       )
       .run(
         store_name,
         street || null,
+        city || null,
         zipcode || null,
         state || null,
         phone || '',
@@ -360,7 +385,7 @@ authRouter.post('/register', authLimiter, async (req, res) => {
         'INSERT INTO users (username, password, role, store_id, store_name, oauth_provider, oauth_id, email) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
       )
       .run(
-        username,
+        normalizedUsername,
         hashed,
         'owner',
         storeId,
@@ -396,15 +421,17 @@ authRouter.post('/register', authLimiter, async (req, res) => {
       const newUser = db
         .prepare("SELECT * FROM users WHERE store_id = ? AND role = 'owner'")
         .get(storeId) as any;
-      issueJwt(req, res, newUser);
-      return res
-        .status(201)
-        .json({
-          message: 'Store registered',
-          store_id: storeId,
-          store_code: storeCode,
-          redirect: '/',
-        });
+      const accountSession = buildAccountSessionUser(newUser.id);
+      if (!accountSession) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+      issueJwt(req, res, accountSession);
+      return res.status(201).json({
+        message: 'Store registered',
+        store_id: storeId,
+        store_code: storeCode,
+        redirect: '/',
+      });
     }
     res
       .status(201)
@@ -415,20 +442,72 @@ authRouter.post('/register', authLimiter, async (req, res) => {
   }
 });
 
-authRouter.post('/logout', (req: any, res) => {
+authRouter.post('/logout', (req, res) => {
   const token = req.cookies?.token;
-  if (token) revokeToken(token);
+  if (token) {
+    revokeToken(token);
+    // Bump token_version so this token is rejected even after the in-memory
+    // revocation store is wiped on a server restart.
+    try {
+      const payload = jwt.verify(token, process.env.JWT_SECRET!, {
+        algorithms: ['HS256'],
+        issuer: 'opticapture',
+        audience: 'opticapture-app',
+      }) as { id?: number };
+      if (typeof payload.id === 'number') {
+        db.prepare('UPDATE users SET token_version = token_version + 1 WHERE id = ?').run(
+          payload.id
+        );
+      }
+    } catch {
+      // Token already expired or invalid — cookie cleared below regardless
+    }
+  }
   res.clearCookie('token');
   res.json({ message: 'Logged out' });
 });
 
-authRouter.get('/me', authenticateToken, (req: any, res) => {
-  const store = db.prepare('SELECT logo FROM stores WHERE id = ?').get(req.user.store_id) as any;
-  res.json({ ...req.user, store_logo: store?.logo || null });
+authRouter.get('/me', authenticateToken, (req: AuthRequest, res) => {
+  if (req.user.role === 'superadmin') {
+    return res.json({
+      id: req.user.id,
+      username: req.user.username,
+      role: 'superadmin',
+      store_id: req.user.store_id ?? null,
+      store_name: req.user.store_name ?? 'HQ',
+      store_logo: req.user.store_logo ?? null,
+      must_reset_password: Boolean(req.user.must_reset_password),
+      needs_store_selection: false,
+    });
+  }
+
+  if (req.user.needs_store_selection || req.user.store_id == null) {
+    return res.json({
+      id: req.user.id,
+      username: req.user.username,
+      role: null,
+      store_id: null,
+      store_name: null,
+      store_logo: null,
+      must_reset_password: Boolean(req.user.must_reset_password),
+      needs_store_selection: true,
+    });
+  }
+
+  return res.json({
+    id: req.user.id,
+    username: req.user.username,
+    role: req.user.role,
+    store_id: req.user.store_id,
+    store_name: req.user.store_name,
+    store_logo: req.user.store_logo ?? null,
+    must_reset_password: Boolean(req.user.must_reset_password),
+    needs_store_selection: false,
+  });
 });
 
 // My stores — list all stores this user has access to
-authRouter.get('/my-stores', authenticateToken, (req: any, res) => {
+authRouter.get('/my-stores', authenticateToken, (req: AuthRequest, res) => {
   const stores = db
     .prepare(
       `
@@ -443,8 +522,8 @@ authRouter.get('/my-stores', authenticateToken, (req: any, res) => {
   res.json(stores);
 });
 
-// Switch store — re-issues JWT scoped to a different store
-authRouter.post('/switch-store', authenticateToken, (req: any, res) => {
+// Switch store — validates access so the client can update its active store context
+authRouter.post('/switch-store', authenticateToken, (req: AuthRequest, res) => {
   const storeId = Number.parseInt(req.body.store_id);
   if (Number.isNaN(storeId)) return res.status(400).json({ error: 'Invalid store ID' });
   const access = db
@@ -456,36 +535,52 @@ authRouter.post('/switch-store', authenticateToken, (req: any, res) => {
   if (!store || store.status === 'suspended')
     return res.status(403).json({ error: 'Store is suspended' });
 
-  const sessionUser = buildScopedSessionUser(req.user.id, store.id, access.role);
-  if (!sessionUser) {
-    return res.status(404).json({ error: 'User or store not found' });
-  }
-
-  issueJwt(req, res, sessionUser);
-  res.json({ success: true, store_name: store.name, store_logo: store.logo || null });
+  res.json({
+    success: true,
+    store_id: store.id,
+    store_name: store.name,
+    store_logo: store.logo || null,
+    role: access.role,
+  });
 });
 
-// Store Settings routes — tightly coupled to JWT re-issuance so they live here
+// Store Settings routes live here alongside the account/session endpoints
 
 // Store Settings — get
-authRouter.get('/store/settings', authenticateToken, (req: any, res) => {
+// Deliberately not gated behind requireOwner: takers open this screen too, and the
+// forced temp-password reset flow routes every role here. Instead the store_code —
+// which is half of the store-code login credential — is withheld from non-owners.
+// The client only renders the store-code card when the field is present.
+authRouter.get('/store/settings', authenticateToken, (req: AuthRequest, res) => {
+  if (req.user.store_id == null) {
+    return res.status(409).json({ error: 'Store selection required', needs_store_selection: true });
+  }
+
   const store = db
     .prepare(
-      'SELECT id, name, street, zipcode, state, phone, email, status, logo, store_code FROM stores WHERE id = ?'
+      'SELECT id, name, street, city, zipcode, state, phone, email, status, logo, store_code FROM stores WHERE id = ?'
     )
     .get(req.user.store_id) as any;
   if (!store) return res.status(404).json({ error: 'Store not found' });
-  res.json(store);
+
+  const canSeeStoreCode = req.user.role === 'owner' || req.user.role === 'superadmin';
+  res.json(canSeeStoreCode ? store : { ...store, store_code: null });
 });
 
 // Store Settings — update store info
-authRouter.put('/store/settings', authenticateToken, requireOwner, (req: any, res) => {
-  const { name, street, zipcode, state, phone, email, logo } = req.body;
+authRouter.put('/store/settings', authenticateToken, requireOwner, (req: AuthRequest, res) => {
+  if (req.user.store_id == null) {
+    return res.status(409).json({ error: 'Store selection required', needs_store_selection: true });
+  }
+
+  const { name, street, city, zipcode, state, phone, email, logo } = req.body;
   if (!name?.trim()) return res.status(400).json({ error: 'Store name is required' });
   if (name.length > 100)
     return res.status(400).json({ error: 'Store name must be 100 characters or fewer' });
   if (street && street.length > 200)
     return res.status(400).json({ error: 'Street address must be 200 characters or fewer' });
+  if (city && city.length > 100)
+    return res.status(400).json({ error: 'City/Town must be 100 characters or fewer' });
   if (email && email.length > 200)
     return res.status(400).json({ error: 'Email must be 200 characters or fewer' });
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
@@ -497,10 +592,11 @@ authRouter.put('/store/settings', authenticateToken, requireOwner, (req: any, re
   try {
     const savedLogo = logo ? saveBase64Image(logo) : null;
     db.prepare(
-      'UPDATE stores SET name = ?, street = ?, zipcode = ?, state = ?, phone = ?, email = ?, logo = ? WHERE id = ?'
+      'UPDATE stores SET name = ?, street = ?, city = ?, zipcode = ?, state = ?, phone = ?, email = ?, logo = ? WHERE id = ?'
     ).run(
       name.trim(),
       street || null,
+      city || null,
       zipcode || null,
       state || null,
       phone || null,
@@ -508,18 +604,16 @@ authRouter.put('/store/settings', authenticateToken, requireOwner, (req: any, re
       savedLogo,
       req.user.store_id
     );
-    db.prepare('UPDATE users SET store_name = ? WHERE store_id = ?').run(name.trim(), req.user.store_id);
+    db.prepare('UPDATE users SET store_name = ? WHERE store_id = ?').run(
+      name.trim(),
+      req.user.store_id
+    );
 
     const updatedStore = db
       .prepare(
-        'SELECT id, name, street, zipcode, state, phone, email, status, logo, store_code FROM stores WHERE id = ?'
+        'SELECT id, name, street, city, zipcode, state, phone, email, status, logo, store_code FROM stores WHERE id = ?'
       )
       .get(req.user.store_id);
-
-    const sessionUser = buildScopedSessionUser(req.user.id, req.user.store_id, req.user.role);
-    if (sessionUser) {
-      issueJwt(req, res, sessionUser);
-    }
 
     res.json(updatedStore);
   } catch (error) {
@@ -533,16 +627,14 @@ authRouter.put('/store/settings', authenticateToken, requireOwner, (req: any, re
 });
 
 // Store Settings — change password
-authRouter.put('/store/password', authenticateToken, async (req: any, res) => {
+authRouter.put('/store/password', authenticateToken, async (req: AuthRequest, res) => {
   const { current_password, new_password } = req.body;
   if (!current_password || !new_password)
     return res.status(400).json({ error: 'Both fields are required' });
   if (new_password.length < 8 || !/[A-Z]/.test(new_password) || !/\d/.test(new_password))
-    return res
-      .status(400)
-      .json({
-        error: 'Password must be at least 8 characters with 1 uppercase letter and 1 number',
-      });
+    return res.status(400).json({
+      error: 'Password must be at least 8 characters with 1 uppercase letter and 1 number',
+    });
 
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id) as any;
   if (!user || !(await bcrypt.compare(current_password, user.password)))
@@ -551,11 +643,11 @@ authRouter.put('/store/password', authenticateToken, async (req: any, res) => {
   const newVersion = (user.token_version ?? 1) + 1;
   db.prepare(
     'UPDATE users SET password = ?, failed_login_attempts = 0, locked_until = NULL, must_reset_password = 0, token_version = ? WHERE id = ?'
-  ).run(await bcrypt.hash(new_password, 10), newVersion, req.user.id);
+  ).run(await bcrypt.hash(new_password, 12), newVersion, req.user.id);
   // Re-issue JWT so the current session stays valid and the reset-required flag drops immediately.
-  const sessionUser = buildScopedSessionUser(req.user.id, req.user.store_id, req.user.role);
+  const sessionUser = buildAccountSessionUser(req.user.id);
   if (!sessionUser) {
-    return res.status(404).json({ error: 'User or store not found' });
+    return res.status(404).json({ error: 'User not found' });
   }
 
   issueJwt(req, res, sessionUser);

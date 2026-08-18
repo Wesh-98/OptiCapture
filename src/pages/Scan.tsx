@@ -26,7 +26,13 @@ export default function Scan() {
   const { serverInfo, ipLoading } = useServerInfo();
 
   const session = useScanSession(addToast);
-  const scanner = useHardwareScanner(session.sessionId, session.otp, session.uiStatus, addToast);
+  const scanner = useHardwareScanner(
+    session.sessionId,
+    session.otp,
+    session.sessionStatus,
+    session.uiStatus,
+    addToast
+  );
 
   const draft = useDraftManagement({
     sessionId: session.sessionId,
@@ -34,7 +40,7 @@ export default function Scan() {
     setSessionStatus: session.setSessionStatus,
     setSessionLabel: session.setSessionLabel,
     setDraftAlert: session.setDraftAlert,
-    setItems: (items) => session.setItems(() => items),
+    setItems: items => session.setItems(() => items),
     setSelectedIds: session.setSelectedIds,
     manuallyDeselectedRef: session.manuallyDeselectedRef,
     sessionStartTimeRef: session.sessionStartTimeRef,
@@ -50,12 +56,11 @@ export default function Scan() {
     session.sessionId,
     session.selectedIds,
     session.isBusyRef,
-    session.lastPollAtRef,
-    session.setItems,
-    session.setSelectedIds,
+    session.lastPollCursorRef,
+    session.fetchSessionItems,
     session.setUiStatus,
     session.setStatusMessage,
-    addToast,
+    addToast
   );
 
   const mobileUrl = useMemo(() => {
@@ -89,10 +94,16 @@ export default function Scan() {
         </div>
         <button
           onClick={session.handleResetSession}
-          disabled={session.sessionLoading || session.isRefreshing || session.uiStatus === 'committing'}
+          disabled={
+            session.sessionLoading || session.isRefreshing || session.uiStatus === 'committing'
+          }
           className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
         >
-          {session.isRefreshing ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
+          {session.isRefreshing ? (
+            <Loader2 size={16} className="animate-spin" />
+          ) : (
+            <RefreshCw size={16} />
+          )}
           Reset Session
         </button>
       </div>
@@ -137,15 +148,29 @@ export default function Scan() {
           onResumeScan={draft.handleResumeScan}
           onSaveDraft={draft.handleSaveDraft}
           onDismissAlert={() => session.setDraftAlert({ message: '', visible: false })}
+          clearItemsConfirmPending={draft.clearItemsConfirmPending}
+          deleteDraftConfirmPending={draft.deleteDraftConfirmPending}
           onClearAllItems={draft.handleClearAllItems}
+          onConfirmClearAllItems={draft.handleConfirmClearAllItems}
           onDeleteDraft={draft.handleDeleteDraft}
+          onConfirmDeleteDraft={draft.handleConfirmDeleteDraft}
+          onCancelConfirm={() => {
+            draft.setClearItemsConfirmPending(false);
+            draft.setDeleteDraftConfirmPending(false);
+          }}
           onEditItem={edit.openEdit}
           onDeleteItem={edit.deleteItem}
           onSelectAll={() => session.setSelectedIds(new Set(session.items.map(i => i.id)))}
           onDeselectAll={() => session.setSelectedIds(new Set())}
-          onSelectNewOnly={() => session.setSelectedIds(new Set(
-            session.items.filter(i => i.lookup_status === 'new_candidate' && !i.exists_in_inventory).map(i => i.id)
-          ))}
+          onSelectNewOnly={() =>
+            session.setSelectedIds(
+              new Set(
+                session.items
+                  .filter(i => i.lookup_status === 'new_candidate' && !i.exists_in_inventory)
+                  .map(i => i.id)
+              )
+            )
+          }
         />
       </div>
 
@@ -184,9 +209,10 @@ export default function Scan() {
           commit.setItemCategories(prev => {
             const next = new Map(prev);
             const commitItems = session.items.filter(i => session.selectedIds.has(i.id));
-            const targets = commit.modalSelectedIds.size > 0
-              ? [...commit.modalSelectedIds]
-              : commitItems.map(i => i.id);
+            const targets =
+              commit.modalSelectedIds.size > 0
+                ? [...commit.modalSelectedIds]
+                : commitItems.map(i => i.id);
             targets.forEach(id => next.set(id, commit.bulkCategoryId!));
             return next;
           });

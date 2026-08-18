@@ -1,4 +1,3 @@
-import type React from 'react';
 import { Search, Plus, ArrowLeft, Box, Layers } from 'lucide-react';
 import type { Category } from './types';
 
@@ -10,27 +9,45 @@ interface Props {
   search: string;
   onSearchChange: (v: string) => void;
   onBack: () => void;
+  onViewAllItems: () => void;
   onAddCategory: () => void;
   onAddItem: () => void;
 }
 
 export function DashboardToolbar({
-  viewMode, selectedCategory, isOwner, canEditItems, search, onSearchChange,
-  onBack, onAddCategory, onAddItem,
+  viewMode,
+  selectedCategory,
+  isOwner,
+  canEditItems,
+  search,
+  onSearchChange,
+  onBack,
+  onViewAllItems,
+  onAddCategory,
+  onAddItem,
 }: Readonly<Props>) {
   return (
     <div className="p-3 border-b border-slate-200 flex flex-wrap items-center gap-3 justify-between bg-slate-50/50">
       <div className="flex items-center gap-3">
         {viewMode === 'items' && (
-          <button onClick={onBack} className="p-2 hover:bg-slate-200 rounded-lg text-slate-600 transition-colors">
+          <button
+            onClick={onBack}
+            className="p-2 hover:bg-slate-200 rounded-lg text-slate-600 transition-colors"
+          >
             <ArrowLeft size={20} />
           </button>
         )}
         <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
           {viewMode === 'categories' ? (
-            <><Layers size={20} className="text-slate-400" />Categories</>
+            <>
+              <Layers size={20} className="text-slate-400" />
+              Categories
+            </>
           ) : (
-            <><Box size={20} className="text-slate-400" />{selectedCategory?.name} Items</>
+            <>
+              <Box size={20} className="text-slate-400" />
+              {selectedCategory ? `${selectedCategory.name} Items` : 'All Items'}
+            </>
           )}
         </h2>
       </div>
@@ -38,6 +55,14 @@ export function DashboardToolbar({
       <div className="flex items-center gap-2 flex-wrap">
         {viewMode === 'categories' && isOwner && (
           <>
+            <button
+              onClick={onViewAllItems}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg text-xs font-medium text-navy-900 transition-colors whitespace-nowrap"
+            >
+              <Box size={13} />
+              <span className="hidden sm:inline">View All Items</span>
+              <span className="sm:hidden">Items</span>
+            </button>
             <button
               onClick={onAddCategory}
               className="flex items-center gap-1.5 px-2.5 py-1.5 bg-navy-900 hover:bg-navy-800 rounded-lg text-xs font-medium text-white transition-colors whitespace-nowrap"

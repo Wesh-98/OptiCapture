@@ -32,8 +32,8 @@ export function StoreSettingsScreen() {
 
       {mustResetPassword && (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-800">
-          Your account was created or reset with a temporary password. Update it here to unlock
-          the rest of the app.
+          Your account was created or reset with a temporary password. Update it here to unlock the
+          rest of the app.
         </div>
       )}
 

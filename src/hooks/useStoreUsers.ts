@@ -14,7 +14,9 @@ export function useStoreUsers() {
   const [addingUser, setAddingUser] = useState(false);
   const [addError, setAddError] = useState('');
 
-  const [resetResult, setResetResult] = useState<{ username: string; tempPassword: string } | null>(null);
+  const [resetResult, setResetResult] = useState<{ username: string; tempPassword: string } | null>(
+    null
+  );
   const [resettingUserId, setResettingUserId] = useState<number | null>(null);
 
   const [confirmDeleteUserId, setConfirmDeleteUserId] = useState<number | null>(null);
@@ -99,7 +101,12 @@ export function useStoreUsers() {
       await loadUsersForStore(usersStore.id);
       setNewUsername('');
       setNewEmail('');
-      if (data && typeof data === 'object' && 'tempPassword' in data && typeof data.tempPassword === 'string') {
+      if (
+        data &&
+        typeof data === 'object' &&
+        'tempPassword' in data &&
+        typeof data.tempPassword === 'string'
+      ) {
         setResetResult({ username: data.username, tempPassword: data.tempPassword });
       }
     } catch {
@@ -146,11 +153,30 @@ export function useStoreUsers() {
   };
 
   return {
-    usersStore, storeUsers, usersLoading, usersError, setUsersError,
-    userActionMode, handleUserActionModeChange,
-    newUsername, setNewUsername, newEmail, setNewEmail, newRole, setNewRole, addingUser, addError,
-    resetResult, setResetResult, resettingUserId,
-    confirmDeleteUserId, setConfirmDeleteUserId,
-    openUsers, closeUsers, addUser, removeUser, handleResetPassword,
+    usersStore,
+    storeUsers,
+    usersLoading,
+    usersError,
+    setUsersError,
+    userActionMode,
+    handleUserActionModeChange,
+    newUsername,
+    setNewUsername,
+    newEmail,
+    setNewEmail,
+    newRole,
+    setNewRole,
+    addingUser,
+    addError,
+    resetResult,
+    setResetResult,
+    resettingUserId,
+    confirmDeleteUserId,
+    setConfirmDeleteUserId,
+    openUsers,
+    closeUsers,
+    addUser,
+    removeUser,
+    handleResetPassword,
   };
 }

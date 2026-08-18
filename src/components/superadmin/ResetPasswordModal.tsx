@@ -1,4 +1,3 @@
-import React from 'react';
 import { KeyRound, Copy } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -9,7 +8,12 @@ interface Props {
   onClose: () => void;
 }
 
-export function ResetPasswordModal({ username, tempPassword, prefersReducedMotion, onClose }: Props) {
+export function ResetPasswordModal({
+  username,
+  tempPassword,
+  prefersReducedMotion,
+  onClose,
+}: Props) {
   return (
     <AnimatePresence>
       <motion.div
@@ -30,16 +34,21 @@ export function ResetPasswordModal({ username, tempPassword, prefersReducedMotio
             </div>
             <div>
               <h3 className="font-bold text-navy-900">Temporary Password</h3>
-              <p className="text-xs text-slate-500">For user: <span className="font-semibold">{username}</span></p>
+              <p className="text-xs text-slate-500">
+                For user: <span className="font-semibold">{username}</span>
+              </p>
             </div>
           </div>
 
           <p className="text-sm text-slate-600 mb-3">
-            Share this password with the user. They will be prompted to change it right after signing in.
+            Share this password with the user. They will be prompted to change it right after
+            signing in.
           </p>
 
           <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 mb-4">
-            <code className="flex-1 font-mono text-lg font-bold text-navy-900 tracking-widest">{tempPassword}</code>
+            <code className="flex-1 font-mono text-lg font-bold text-navy-900 tracking-widest">
+              {tempPassword}
+            </code>
             <button
               onClick={() => navigator.clipboard.writeText(tempPassword)}
               className="p-1.5 text-slate-400 hover:text-navy-900 hover:bg-slate-200 rounded-lg transition-colors"

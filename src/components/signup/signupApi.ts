@@ -57,6 +57,7 @@ export async function registerStore(
   const body: Record<string, string> = {
     store_name: formData.storeName.trim(),
     street: formData.street.trim(),
+    city: formData.city.trim(),
     zipcode: formData.zipcode,
     state: formData.state,
     phone: formData.phone,

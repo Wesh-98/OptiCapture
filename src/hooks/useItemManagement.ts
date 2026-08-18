@@ -7,8 +7,10 @@ export function useItemManagement(
   viewMode: 'categories' | 'items',
   selectedCategoryId: number | null,
   onStatsChange: () => void,
+  addToast: (type: 'success' | 'error' | 'warning', message: string) => void
 ) {
   const [items, setItems] = useState<InventoryItem[]>([]);
+  const [totalItems, setTotalItems] = useState(0);
   const [formData, setFormData] = useState<ItemForm>({ ...emptyForm });
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
@@ -19,15 +21,28 @@ export function useItemManagement(
   const [exportFormat, setExportFormat] = useState<'xlsx' | 'csv' | 'json' | 'pdf'>('xlsx');
   const [exporting, setExporting] = useState(false);
 
-  const fetchItems = async (categoryId: number) => {
-    const res = await fetch(`/api/inventory?category_id=${categoryId}`, { credentials: 'include' });
-    if (res.ok) setItems(await res.json());
+  const fetchItems = async (categoryId: number | null, page = 1, limit = 50) => {
+    const params = new URLSearchParams({
+      page: String(page),
+      limit: String(limit),
+    });
+
+    if (categoryId !== null) {
+      params.set('category_id', String(categoryId));
+    }
+
+    const res = await fetch(`/api/inventory?${params.toString()}`, { credentials: 'include' });
+    if (res.ok) {
+      const data = await res.json();
+      setItems(data.items ?? []);
+      setTotalItems(data.total ?? 0);
+    }
   };
 
   const handleAddItem = async (e: { preventDefault(): void }) => {
     e.preventDefault();
     if (!formData.image || !formData.item_name || !formData.category_id) {
-      alert('Please fill in all required fields (*)');
+      addToast('warning', 'Please fill in all required fields (*)');
       return;
     }
     try {
@@ -41,14 +56,14 @@ export function useItemManagement(
         setIsAddModalOpen(false);
         setFormData({ ...emptyForm });
         onStatsChange();
-        if (viewMode === 'items' && selectedCategoryId) fetchItems(selectedCategoryId);
+        if (viewMode === 'items' && selectedCategoryId) void fetchItems(selectedCategoryId);
       } else {
         const err = await res.json();
-        alert(err.error || 'Failed to add item');
+        addToast('error', err.error || 'Failed to add item');
       }
     } catch (error) {
       console.error(error);
-      alert('An error occurred');
+      addToast('error', 'An error occurred');
     }
   };
 
@@ -65,14 +80,14 @@ export function useItemManagement(
       if (res.ok) {
         setEditingItem(null);
         onStatsChange();
-        if (viewMode === 'items' && selectedCategoryId) fetchItems(selectedCategoryId);
+        if (viewMode === 'items' && selectedCategoryId) void fetchItems(selectedCategoryId);
       } else {
         const err = await res.json();
-        alert(err.error || 'Failed to update item');
+        addToast('error', err.error || 'Failed to update item');
       }
     } catch (error) {
       console.error(error);
-      alert('An error occurred');
+      addToast('error', 'An error occurred');
     }
   };
 
@@ -93,7 +108,10 @@ export function useItemManagement(
     });
   };
 
-  const handleImageUpload = async (e: { target: { files: FileList | null } }, target: 'add' | 'edit') => {
+  const handleImageUpload = async (
+    e: { target: { files: FileList | null } },
+    target: 'add' | 'edit'
+  ) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const result = await readFileAsDataUrl(file);
@@ -107,7 +125,8 @@ export function useItemManagement(
       await fetch(`/api/inventory/${itemId}`, { method: 'DELETE', credentials: 'include' });
       setItems(prev => prev.filter(i => i.id !== itemId));
       onStatsChange();
-    } catch {} finally {
+    } catch {
+    } finally {
       setDeletingItemId(null);
       setConfirmDeleteItemId(null);
     }
@@ -116,7 +135,9 @@ export function useItemManagement(
   const handleExport = async () => {
     setExporting(true);
     try {
-      const res = await fetch(`/api/inventory/export?format=${exportFormat}`, { credentials: 'include' });
+      const res = await fetch(`/api/inventory/export?format=${exportFormat}`, {
+        credentials: 'include',
+      });
       if (!res.ok) throw new Error('Export failed');
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
@@ -127,7 +148,7 @@ export function useItemManagement(
       URL.revokeObjectURL(url);
       setShowExportModal(false);
     } catch {
-      alert('Export failed. Please try again.');
+      addToast('error', 'Export failed. Please try again.');
     } finally {
       setExporting(false);
     }
@@ -135,14 +156,22 @@ export function useItemManagement(
 
   return {
     items,
-    formData, setFormData,
-    isAddModalOpen, setIsAddModalOpen,
-    editingItem, setEditingItem,
-    editFormData, setEditFormData,
-    confirmDeleteItemId, setConfirmDeleteItemId,
+    totalItems,
+    formData,
+    setFormData,
+    isAddModalOpen,
+    setIsAddModalOpen,
+    editingItem,
+    setEditingItem,
+    editFormData,
+    setEditFormData,
+    confirmDeleteItemId,
+    setConfirmDeleteItemId,
     deletingItemId,
-    showExportModal, setShowExportModal,
-    exportFormat, setExportFormat,
+    showExportModal,
+    setShowExportModal,
+    exportFormat,
+    setExportFormat,
     exporting,
     fetchItems,
     handleAddItem,

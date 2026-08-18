@@ -13,20 +13,32 @@ export function upcCacheSet(key: string, value: UpcCacheEntry) {
 }
 
 // Temporary store for pending OAuth registrations (10-min TTL, max 500 entries)
-export const pendingOAuth = new Map<string, { googleId: string; email: string; name: string; expiresAt: number }>();
+export const pendingOAuth = new Map<
+  string,
+  { googleId: string; email: string; name: string; expiresAt: number }
+>();
 const PENDING_OAUTH_MAX = 500;
-export function pendingOAuthSet(key: string, value: { googleId: string; email: string; name: string; expiresAt: number }) {
-  if (pendingOAuth.size >= PENDING_OAUTH_MAX) pendingOAuth.delete(pendingOAuth.keys().next().value!);
+export function pendingOAuthSet(
+  key: string,
+  value: { googleId: string; email: string; name: string; expiresAt: number }
+) {
+  if (pendingOAuth.size >= PENDING_OAUTH_MAX)
+    pendingOAuth.delete(pendingOAuth.keys().next().value!);
   pendingOAuth.set(key, value);
 }
 
-// M-5: Clean up expired pending OAuth entries every 5 minutes
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, entry] of pendingOAuth.entries()) {
-    if (entry.expiresAt < now) pendingOAuth.delete(key);
-  }
-}, 5 * 60 * 1000);
+// M-5: Clean up expired pending OAuth entries every 5 minutes.
+// .unref() so this housekeeping timer never holds the event loop open — without it
+// the process (and any test runner that imports this module) refuses to exit.
+setInterval(
+  () => {
+    const now = Date.now();
+    for (const [key, entry] of pendingOAuth.entries()) {
+      if (entry.expiresAt < now) pendingOAuth.delete(key);
+    }
+  },
+  5 * 60 * 1000
+).unref();
 
 // Dummy bcrypt hash used for constant-time comparison when login username is not found.
 // Prevents username enumeration via timing: without this, missing-user requests return in
@@ -44,13 +56,19 @@ export function revokeToken(token: string): void {
 export function isTokenRevoked(token: string): boolean {
   const expMs = revokedTokens.get(token);
   if (expMs === undefined) return false;
-  if (Date.now() > expMs) { revokedTokens.delete(token); return false; }
+  if (Date.now() > expMs) {
+    revokedTokens.delete(token);
+    return false;
+  }
   return true;
 }
 // Prune expired revocations every hour — keeps memory bounded without requiring Redis
-setInterval(() => {
-  const now = Date.now();
-  for (const [tok, expMs] of revokedTokens) {
-    if (now > expMs) revokedTokens.delete(tok);
-  }
-}, 60 * 60 * 1000).unref();
+setInterval(
+  () => {
+    const now = Date.now();
+    for (const [tok, expMs] of revokedTokens) {
+      if (now > expMs) revokedTokens.delete(tok);
+    }
+  },
+  60 * 60 * 1000
+).unref();

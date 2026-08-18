@@ -13,12 +13,16 @@ export default defineConfig(() => {
       },
     },
     server: {
-      hmr: process.env.DISABLE_HMR === 'true'
-        ? false
-        : { clientPort: 443, protocol: 'wss' },
-      // 'all' allows any tunnel subdomain (trycloudflare.com, ngrok, etc.)
-      // without needing to update TUNNEL_HOST each time the tunnel URL rotates
-      allowedHosts: true as const,
+      hmr: process.env.DISABLE_HMR === 'true' ? false : { clientPort: 443, protocol: 'wss' },
+      // When TUNNEL_HOST is set, trust only that hostname (plus localhost) — this is
+      // what the README and .env.example have always advertised. Left unset we fall
+      // back to accepting any host, which keeps rotating trycloudflare.com / ngrok
+      // URLs working without editing config on every restart. Setting TUNNEL_HOST is
+      // the safer option for a long-lived tunnel: `allowedHosts: true` lets any
+      // hostname that resolves to this machine reach the dev server.
+      allowedHosts: process.env.TUNNEL_HOST
+        ? [process.env.TUNNEL_HOST, 'localhost', '127.0.0.1']
+        : (true as const),
     },
     build: {
       rollupOptions: {

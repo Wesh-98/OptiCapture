@@ -1,120 +1,65 @@
+/**
+ * server.ts — Runtime bootstrap
+ *
+ * Responsible for:
+ *   - Loading env vars (dotenv)
+ *   - Asserting required secrets before the process binds a port
+ *   - Creating the Express app via createApp() (see src/server/app.ts)
+ *   - Attaching the /api/server-info route (needs access to the resolved
+ *     protocol and PORT, which aren't known until the server object is built)
+ *   - Creating the http/https Node server and attaching Vite's dev middleware
+ *   - Starting the listener
+ *
+ * All API routes and middleware live in src/server/app.ts so that tests can
+ * import createApp() without spinning up a port or a Vite dev server.
+ */
 import 'dotenv/config';
-import express from 'express';
 import { createServer as createViteServer } from 'vite';
-import cookieParser from 'cookie-parser';
-import helmet from 'helmet';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import http from 'node:http';
 import https from 'node:https';
 import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import express from 'express';
 
-import './src/server/db.js';                        // runs migrations + seeding on import
-import { apiLimiter } from './src/server/middleware.js';
-import { UPLOADS_DIR, getLocalIP, getTunnelUrl } from './src/server/helpers.js';
-import { authRouter }       from './src/server/routes/auth.js';
-import { adminRouter }      from './src/server/routes/admin.js';
-import { categoriesRouter } from './src/server/routes/categories.js';
-import { inventoryRouter }  from './src/server/routes/inventory.js';
-import { sessionsRouter }   from './src/server/routes/sessions.js';
-import { logsRouter }       from './src/server/routes/logs.js';
+// Side-effect import — runs all migrations and seeds the database before any
+// route handler is registered. Must come before createApp() so the database
+// schema is ready when routes try to query it.
+import './src/server/db.js';
+import { createApp } from './src/server/app.js';
+import { getLocalIP, getTunnelUrl } from './src/server/helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const PORT = 3000;
 
+// ── Guard — fail fast if secrets are missing ────────────────────────────────
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
-  console.error('FATAL: JWT_SECRET environment variable is not set. Generate one with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"');
+  console.error(
+    'FATAL: JWT_SECRET environment variable is not set. ' +
+      "Generate one with: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\""
+  );
   process.exit(1);
 }
 
-const app = express();
-// Trust the first proxy hop — the tunnel (ngrok/cloudflare) in dev, nginx/Cloudflare in prod.
-// Without this, express-rate-limit throws ERR_ERL_UNEXPECTED_X_FORWARDED_FOR when the tunnel
-// injects X-Forwarded-For, and rate limiting keys off the tunnel IP instead of the real client.
-app.set('trust proxy', 1);
-
-const isProd = process.env.NODE_ENV === 'production';
-app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      // unsafe-inline removed in production — Vite dev injects inline scripts/styles
-      scriptSrc: isProd ? ["'self'"] : ["'self'", "'unsafe-inline'"],
-      styleSrc: isProd ? ["'self'"] : ["'self'", "'unsafe-inline'"],
-      imgSrc: ["'self'", "data:", "https:", "blob:", "https://drive.google.com", "https://lh3.googleusercontent.com"],
-      // Dev: allow all HTTPS so Vite HMR source-map fetches through the tunnel aren't blocked.
-      // Prod: lock down to only the two external APIs we actually call.
-      connectSrc: isProd
-        ? ["'self'", "https://world.openfoodfacts.org", "https://api.upcitemdb.com", "wss:"]
-        : ["'self'", "https:", "wss:", "ws:"],
-      fontSrc: ["'self'", "data:"],
-      objectSrc: ["'none'"],
-      frameAncestors: ["'none'"],
-    },
-  },
-  hsts: { maxAge: 31536000, includeSubDomains: true },
-  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
-}));
-
-app.use(express.json({ limit: '50mb' }));
-app.use(cookieParser());
-app.use('/uploads', express.static(UPLOADS_DIR));
-app.use('/icons', express.static(path.join(process.cwd(), 'public', 'icons')));
-
-// Google Drive image proxy — fetches Drive thumbnails server-side so the browser
-// never needs to follow a cross-origin Drive redirect. Only Drive file IDs are accepted.
-app.get('/api/drive-image/:fileId', async (req, res) => {
-  const { fileId } = req.params;
-  if (!/^[a-zA-Z0-9_-]+$/.test(fileId)) return res.status(400).end();
-
-  const candidateUrls = [
-    `https://drive.google.com/thumbnail?id=${fileId}&sz=w800`,
-    `https://drive.google.com/uc?export=view&id=${fileId}`,
-  ];
-
-  try {
-    for (const url of candidateUrls) {
-      const upstream = await fetch(url, {
-        headers: {
-          Accept: 'image/*',
-          'User-Agent': 'OptiCapture/1.0',
-        },
-      });
-
-      if (!upstream.ok) {
-        continue;
-      }
-
-      const contentType = upstream.headers.get('content-type') || '';
-      if (!contentType.startsWith('image/')) {
-        continue;
-      }
-
-      const cacheControl = upstream.headers.get('cache-control') || 'public, max-age=3600';
-      const buffer = Buffer.from(await upstream.arrayBuffer());
-
-      res.setHeader('Content-Type', contentType);
-      res.setHeader('Cache-Control', cacheControl);
-      return res.send(buffer);
-    }
-
-    return res.status(404).end();
-  } catch (error) {
-    console.error('[drive-image]', error);
-    return res.status(502).end();
-  }
+// ── Process-level error guards ────────────────────────────────────────────────
+// Unhandled rejections crash Node 18+ silently — log before exit so the failure
+// is observable in logs rather than disappearing without a trace.
+process.on('unhandledRejection', reason => {
+  console.error('[unhandledRejection]', reason);
+});
+process.on('uncaughtException', err => {
+  console.error('[uncaughtException]', err);
+  process.exit(1);
 });
 
-app.use('/api', apiLimiter);
-app.use('/api/auth',  authRouter);
-app.use('/api/admin', adminRouter);
-app.use('/api',       categoriesRouter);   // /api/categories + /api/dashboard
-app.use('/api',       inventoryRouter);    // /api/inventory
-app.use('/api',       sessionsRouter);     // /api/session(s)
-app.use('/api',       logsRouter);         // /api/logs
+// ── Build the Express application ────────────────────────────────────────────
+const app = createApp();
 
-// Server info — stays in bootstrap: needs access to app.protocol and PORT
+// ── /api/server-info ─────────────────────────────────────────────────────────
+// Lives here (not in app.ts) because it reads `app.protocol` and `PORT`, which
+// are set after the Node server is created below. Reading them at request time
+// via (app as any).protocol means the handler always sees the final values.
 app.get('/api/server-info', (_req, res) => {
   const ip = getLocalIP();
   const protocol = (app as any).protocol || 'http';
@@ -129,26 +74,26 @@ app.get('/api/server-info', (_req, res) => {
   });
 });
 
-// HTTPS certificate helper - only reads the runtime dev-key.pem / dev-cert.pem pair.
+// ── HTTPS certificate helper ──────────────────────────────────────────────────
+// Reads the dev-key.pem / dev-cert.pem pair generated by generate-certs.js.
+// Returns null in any environment where the files are absent (CI, production
+// behind nginx, etc.) so the server gracefully falls back to HTTP.
 function getHttpsOptions() {
   const devKeyPath = path.join(__dirname, 'dev-key.pem');
   const devCertPath = path.join(__dirname, 'dev-cert.pem');
-
   if (fs.existsSync(devKeyPath) && fs.existsSync(devCertPath)) {
     console.log('✓ Using SSL certificates (dev-key.pem / dev-cert.pem)');
-    return {
-      key: fs.readFileSync(devKeyPath),
-      cert: fs.readFileSync(devCertPath)
-    };
+    return { key: fs.readFileSync(devKeyPath), cert: fs.readFileSync(devCertPath) };
   }
-
   return null;
 }
 
-// Create the HTTP(S) server up-front so Vite HMR can share the same server
-// instance. WebSocket upgrade events fire on the Node.js http.Server — they
-// never reach Express middleware — so Vite must listen on the same server to
-// receive upgrades forwarded by the Cloudflare tunnel (or any reverse proxy).
+// ── Create the HTTP(S) server ─────────────────────────────────────────────────
+// The Node http.Server is created up-front (before Vite attaches) so that
+// Vite's WebSocket upgrade handler can share the same server instance.
+// WebSocket upgrade events fire on the Node server directly — they never reach
+// Express middleware — so Vite must be attached to the same server to receive
+// upgrades forwarded by the Cloudflare tunnel.
 let protocol = 'http';
 const httpsOptions = getHttpsOptions();
 let nodeServer: http.Server | https.Server;
@@ -165,15 +110,16 @@ if (httpsOptions) {
   nodeServer = http.createServer(app);
 }
 
+// Make protocol available to /api/server-info at request time
 (app as any).protocol = protocol;
 
-// Vite Middleware + Server Start
+// ── Vite dev middleware or static production build ───────────────────────────
 if (process.env.NODE_ENV !== 'production') {
   const vite = await createViteServer({
     server: {
       middlewareMode: true,
-      // Pass the shared server so Vite's WebSocket upgrade handler is attached
-      // to the same http.Server instance that receives tunnel traffic.
+      // Attach Vite's HMR WebSocket handler to the same Node server so upgrade
+      // events from the Cloudflare tunnel reach Vite correctly.
       hmr: process.env.DISABLE_HMR === 'true' ? false : { server: nodeServer },
     },
     appType: 'spa',
@@ -186,6 +132,19 @@ if (process.env.NODE_ENV !== 'production') {
   });
 }
 
+// ── Graceful shutdown ─────────────────────────────────────────────────────────
+// Drain in-flight requests before exiting so SQLite WAL is not left dirty and
+// clients receive a complete response rather than a connection reset.
+const shutdown = () => {
+  nodeServer.close(() => {
+    console.log('Server closed gracefully');
+    process.exit(0);
+  });
+};
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
+
+// ── Start listening ───────────────────────────────────────────────────────────
 nodeServer.listen(PORT, '0.0.0.0', () => {
   if (protocol === 'https') {
     console.log(`🔒 HTTPS Server running on https://localhost:${PORT}`);

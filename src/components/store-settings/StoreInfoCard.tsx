@@ -1,5 +1,13 @@
 import type { ChangeEvent, FormEvent } from 'react';
-import { AlertTriangle, CheckCircle, EyeOff, Loader2, Store, Upload } from 'lucide-react';
+import {
+  AlertTriangle,
+  Building2,
+  CheckCircle,
+  EyeOff,
+  Loader2,
+  Store,
+  Upload,
+} from 'lucide-react';
 import { US_STATES } from '../../lib/constants';
 import { SUPPORTED_UPLOAD_IMAGE_ACCEPT } from '../../lib/imageUpload';
 import type { StoreInfo, StoreInfoField } from './types';
@@ -19,13 +27,12 @@ interface StoreInfoCardProps {
 }
 
 const textFields: ReadonlyArray<{
-  field: 'name' | 'street' | 'phone' | 'email';
+  field: 'name' | 'phone' | 'email';
   label: string;
   placeholder?: string;
   type: string;
 }> = [
   { field: 'name', label: 'Store Name', type: 'text' },
-  { field: 'street', label: 'Street Address', type: 'text', placeholder: '123 Main St' },
   { field: 'phone', label: 'Phone', type: 'tel' },
   { field: 'email', label: 'Email', type: 'email' },
 ];
@@ -135,6 +142,47 @@ export function StoreInfoCard({
             )}
           </div>
         ))}
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <label htmlFor="ss-street" className="block text-sm font-medium text-slate-700 mb-1">
+              Street Address
+            </label>
+            <input
+              id="ss-street"
+              type="text"
+              value={storeInfo.street}
+              readOnly={isTaker}
+              onChange={isTaker ? undefined : event => onFieldChange('street', event.target.value)}
+              placeholder="123 Main St"
+              className={inputClass(isTaker)}
+            />
+            {!isTaker && infoErrors.street && (
+              <p className="text-xs text-red-500 mt-1">{infoErrors.street}</p>
+            )}
+          </div>
+
+          <div>
+            <label htmlFor="ss-city" className="block text-sm font-medium text-slate-700 mb-1">
+              <span className="inline-flex items-center gap-1.5">
+                <Building2 size={14} className="text-slate-400" />
+                City/Town
+              </span>
+            </label>
+            <input
+              id="ss-city"
+              type="text"
+              value={storeInfo.city}
+              readOnly={isTaker}
+              onChange={isTaker ? undefined : event => onFieldChange('city', event.target.value)}
+              placeholder="City/Town"
+              className={inputClass(isTaker)}
+            />
+            {!isTaker && infoErrors.city && (
+              <p className="text-xs text-red-500 mt-1">{infoErrors.city}</p>
+            )}
+          </div>
+        </div>
 
         <div className="grid grid-cols-2 gap-3">
           <div>

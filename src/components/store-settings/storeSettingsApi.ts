@@ -24,6 +24,7 @@ function normalizeStoreSettingsPayload(data: unknown): StoreSettingsPayload {
       ...EMPTY_STORE_INFO,
       name: readString(data.name),
       street: readString(data.street),
+      city: readString(data.city),
       zipcode: readString(data.zipcode),
       state: readString(data.state),
       phone: readString(data.phone),

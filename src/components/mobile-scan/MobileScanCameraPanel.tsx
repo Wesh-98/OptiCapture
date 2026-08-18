@@ -25,7 +25,13 @@ export function MobileScanCameraPanel({
       className="shrink-0 mx-4 mt-2 rounded-2xl overflow-hidden relative bg-black"
       style={{ height: '42vh' }}
     >
-      <video id={scannerElementId} className="w-full h-full object-cover" autoPlay muted playsInline />
+      <video
+        id={scannerElementId}
+        className="w-full h-full object-cover"
+        autoPlay
+        muted
+        playsInline
+      />
 
       <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
         <div className="w-3/4 h-28 relative">

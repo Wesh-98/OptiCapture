@@ -30,7 +30,10 @@ export function useCategoryManagement(onStatsChange: () => void) {
   };
 
   const handleSaveCategory = async () => {
-    if (!catForm.name.trim()) { setCatError('Category name is required'); return; }
+    if (!catForm.name.trim()) {
+      setCatError('Category name is required');
+      return;
+    }
     setCatError('');
     setCatSaving(true);
     try {
@@ -43,7 +46,10 @@ export function useCategoryManagement(onStatsChange: () => void) {
         body: JSON.stringify({ name: catForm.name.trim(), icon: catForm.icon || 'Package' }),
       });
       const data = await res.json();
-      if (!res.ok) { setCatError(data.error || 'Failed to save category'); return; }
+      if (!res.ok) {
+        setCatError(data.error || 'Failed to save category');
+        return;
+      }
       setShowCatModal(false);
       setEditingCategory(null);
       setCatForm({ name: '', icon: '' });
@@ -64,7 +70,10 @@ export function useCategoryManagement(onStatsChange: () => void) {
     } catch {}
   };
 
-  const handleCategoryAction = async (categoryId: number, action: 'activate' | 'deactivate' | 'deleteItems') => {
+  const handleCategoryAction = async (
+    categoryId: number,
+    action: 'activate' | 'deactivate' | 'deleteItems'
+  ) => {
     try {
       if (action === 'activate' || action === 'deactivate') {
         await fetch(`/api/categories/${categoryId}/status`, {
@@ -86,14 +95,20 @@ export function useCategoryManagement(onStatsChange: () => void) {
 
   return {
     categories,
-    showCatModal, setShowCatModal,
-    editingCategory, setEditingCategory,
-    catForm, setCatForm,
-    catError, setCatError,
+    showCatModal,
+    setShowCatModal,
+    editingCategory,
+    setEditingCategory,
+    catForm,
+    setCatForm,
+    catError,
+    setCatError,
     catSaving,
-    deletingCategoryId, setDeletingCategoryId,
+    deletingCategoryId,
+    setDeletingCategoryId,
     fetchCategories,
-    openAddCat, openEditCat,
+    openAddCat,
+    openEditCat,
     handleSaveCategory,
     handleDeleteCategory,
     handleCategoryAction,

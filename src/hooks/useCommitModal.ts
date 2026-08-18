@@ -1,18 +1,17 @@
 import { useState } from 'react';
 import type { MutableRefObject } from 'react';
-import type { Category, SessionItem, UiStatus } from '../components/scan/types';
+import type { Category, UiStatus } from '../components/scan/types';
 
 //Opens commit modal, fetches categories, handels per-item category assignments and commit.
 export function useCommitModal(
   sessionId: string | null,
   selectedIds: Set<number>,
   isBusyRef: MutableRefObject<boolean>,
-  lastPollAtRef: MutableRefObject<number | null>,
-  setItems: (updater: (prev: SessionItem[]) => SessionItem[]) => void,
-  setSelectedIds: (ids: Set<number>) => void,
+  lastPollCursorRef: MutableRefObject<{ updatedAt: string; id: number } | null>,
+  refreshSession: (fullRefresh?: boolean) => Promise<void>,
   setUiStatus: (s: UiStatus) => void,
   setStatusMessage: (m: string) => void,
-  addToast: (type: 'success' | 'error' | 'warning', message: string) => void,
+  addToast: (type: 'success' | 'error' | 'warning', message: string) => void
 ) {
   const [showCommitModal, setShowCommitModal] = useState(false);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -53,9 +52,11 @@ export function useCommitModal(
 
   const confirmCommit = async () => {
     if (!sessionId || isBusyRef.current) return;
-    const assignments = [...selectedIds]
-      .filter(id => itemCategories.has(id))
-      .map(id => ({ id, category_id: itemCategories.get(id)! }));
+    if (itemCategories.size !== selectedIds.size) {
+      addToast('warning', 'Assign a category to every selected item before committing.');
+      return;
+    }
+    const assignments = [...selectedIds].map(id => ({ id, category_id: itemCategories.get(id)! }));
     if (assignments.length === 0) return;
     setShowCommitModal(false);
     isBusyRef.current = true;
@@ -79,18 +80,24 @@ export function useCommitModal(
         toastMsg = `${result.inserted ?? 0} item(s) committed to inventory`;
       }
       addToast(result.inserted > 0 ? 'success' : 'warning', toastMsg);
-      const committedIds = new Set(assignments.map(a => a.id));
-      setItems(prev => prev.filter(item => !committedIds.has(item.id)));
-      setSelectedIds(new Set());
       setItemCategories(new Map());
-      lastPollAtRef.current = null;
-      isBusyRef.current = false;
+      setModalSelectedIds(new Set());
+      setBulkCategoryId(null);
+      lastPollCursorRef.current = null;
+      await refreshSession(true);
       setUiStatus('ready');
-      setStatusMessage('Session ready. Scan the QR code with your phone.');
+      setStatusMessage(
+        result.status === 'completed'
+          ? 'Session committed to inventory. View only.'
+          : result.status === 'draft'
+            ? 'Draft mode. Resume scanning when you are ready.'
+            : 'Session ready. Scan the QR code with your phone.'
+      );
     } catch {
       setUiStatus('error');
       setStatusMessage('Failed to commit session.');
       addToast('error', 'Failed to commit items to inventory.');
+    } finally {
       isBusyRef.current = false;
     }
   };

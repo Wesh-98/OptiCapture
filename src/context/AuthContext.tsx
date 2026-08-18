@@ -1,14 +1,29 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from 'react';
 import { useNavigate } from 'react-router-dom';
+import {
+  clearActiveStoreId,
+  clearStoreScopedSessionState,
+  getActiveStoreId,
+  setActiveStoreId as persistActiveStoreId,
+} from '../lib/apiFetch';
 
 interface User {
   id: number;
   username: string;
-  role: 'owner' | 'taker' | 'superadmin';
-  store_id: number;
-  store_name: string;
+  role: 'owner' | 'taker' | 'superadmin' | null;
+  store_id: number | null;
+  store_name: string | null;
   store_logo?: string | null;
   must_reset_password: boolean;
+  needs_store_selection: boolean;
 }
 
 interface StoreAccess {
@@ -22,11 +37,13 @@ interface StoreAccess {
 interface AuthContextType {
   user: User | null;
   login: (user: User) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
+  leaveCurrentStore: () => Promise<void>;
   isLoading: boolean;
   myStores: StoreAccess[];
   switchStore: (storeId: number) => Promise<void>;
   refreshUser: () => Promise<User | null>;
+  activeStoreId: number | null;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -35,6 +52,7 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [myStores, setMyStores] = useState<StoreAccess[]>([]);
+  const [activeStoreId, setActiveStoreIdState] = useState<number | null>(() => getActiveStoreId());
   const navigate = useNavigate();
 
   const loadMyStores = useCallback(async () => {
@@ -45,21 +63,41 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
     }
 
     const stores = (await storesRes.json().catch(() => [])) as StoreAccess[];
-    setMyStores(Array.isArray(stores) ? stores : []);
-    return Array.isArray(stores) ? stores : [];
+    const normalized = Array.isArray(stores) ? stores : [];
+    setMyStores(normalized);
+    return normalized;
   }, []);
 
   const refreshUser = useCallback(async () => {
-    const res = await fetch('/api/auth/me', { credentials: 'include' });
+    let res = await fetch('/api/auth/me', { credentials: 'include' });
+
+    // If the remembered tab-scoped store is no longer valid, drop it and retry
+    // the account-level /me endpoint so multi-store users can recover cleanly.
+    if ((res.status === 403 || res.status === 409) && getActiveStoreId() != null) {
+      clearActiveStoreId();
+      clearStoreScopedSessionState();
+      setActiveStoreIdState(null);
+      res = await fetch('/api/auth/me', { credentials: 'include' });
+    }
+
     if (!res.ok) {
       setUser(null);
       setMyStores([]);
+      setActiveStoreIdState(getActiveStoreId());
       return null;
     }
 
     const userData = (await res.json()) as User;
     setUser(userData);
     await loadMyStores();
+
+    if (userData.store_id != null) {
+      setActiveStoreIdState(userData.store_id);
+    } else if (userData.needs_store_selection) {
+      clearActiveStoreId();
+      setActiveStoreIdState(null);
+    }
+
     return userData;
   }, [loadMyStores]);
 
@@ -77,56 +115,104 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
     void checkAuth();
   }, [refreshUser]);
 
-  const login = useCallback(async (userData: User) => {
-    setUser(userData);
-    const refreshedUser = await refreshUser().catch(() => null);
-    const nextUser = refreshedUser ?? userData;
+  const login = useCallback(
+    async (userData: User) => {
+      setUser(userData);
 
-    // Newly created and reset accounts should land in Settings before the rest of the app opens up.
-    if (nextUser.must_reset_password) {
-      navigate('/settings');
-      return;
-    }
+      if (userData.role !== 'superadmin' && userData.store_id != null) {
+        persistActiveStoreId(userData.store_id);
+        setActiveStoreIdState(userData.store_id);
+      }
 
-    navigate(nextUser.role === 'superadmin' ? '/admin' : '/');
-  }, [navigate, refreshUser]);
+      const refreshedUser = await refreshUser().catch(() => null);
+      const nextUser = refreshedUser ?? userData;
 
-  const switchStore = useCallback(async (storeId: number) => {
-    const res = await fetch('/api/auth/switch-store', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ store_id: storeId }),
-    });
-    if (!res.ok) throw new Error('Failed to switch store');
-    await res.json();
-    // Clear scan session so a new one is created for the switched store
-    sessionStorage.removeItem('scan_session_id');
-    sessionStorage.removeItem('scan_otp');
-    sessionStorage.removeItem('scan_store_id');
+      if (nextUser.role === 'superadmin') {
+        navigate('/admin');
+        return;
+      }
+
+      if (nextUser.needs_store_selection) {
+        navigate('/choose-store');
+        return;
+      }
+
+      if (nextUser.must_reset_password) {
+        navigate('/settings');
+        return;
+      }
+
+      navigate('/');
+    },
+    [navigate, refreshUser]
+  );
+
+  const switchStore = useCallback(
+    async (storeId: number) => {
+      const res = await fetch('/api/auth/switch-store', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ store_id: storeId }),
+      });
+      if (!res.ok) throw new Error('Failed to switch store');
+
+      persistActiveStoreId(storeId);
+      setActiveStoreIdState(storeId);
+      // Scan session state is store-scoped, so clear it before the next view
+      // hydrates under the newly selected store.
+      clearStoreScopedSessionState();
+      await refreshUser().catch(() => null);
+    },
+    [refreshUser]
+  );
+
+  const leaveCurrentStore = useCallback(async () => {
+    // "Leave current store" intentionally keeps the account session alive and
+    // only clears the tab's active store selection.
+    clearActiveStoreId();
+    clearStoreScopedSessionState();
+    setActiveStoreIdState(null);
     await refreshUser().catch(() => null);
-  }, [refreshUser]);
+    navigate('/choose-store');
+  }, [navigate, refreshUser]);
 
   const logout = useCallback(async () => {
     await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
-    sessionStorage.removeItem('scan_session_id');
-    sessionStorage.removeItem('scan_otp');
-    sessionStorage.removeItem('scan_store_id');
+    clearActiveStoreId();
+    clearStoreScopedSessionState();
     setUser(null);
     setMyStores([]);
+    setActiveStoreIdState(null);
     navigate('/login');
   }, [navigate]);
 
   const value = useMemo(
-    () => ({ user, login, logout, isLoading, myStores, switchStore, refreshUser }),
-    [user, login, logout, isLoading, myStores, switchStore, refreshUser]
+    () => ({
+      user,
+      login,
+      logout,
+      leaveCurrentStore,
+      isLoading,
+      myStores,
+      switchStore,
+      refreshUser,
+      activeStoreId,
+    }),
+    [
+      user,
+      login,
+      logout,
+      leaveCurrentStore,
+      isLoading,
+      myStores,
+      switchStore,
+      refreshUser,
+      activeStoreId,
+    ]
   );
 
-  return (
-    <AuthContext.Provider value={value}>
-      {children}
-    </AuthContext.Provider>
-  );
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 // eslint-disable-next-line react-refresh/only-export-components

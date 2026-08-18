@@ -63,10 +63,9 @@ let scannerDependenciesPromise: Promise<{
 async function loadScannerDependencies() {
   if (!scannerDependenciesPromise) {
     scannerDependenciesPromise = import('./zxingStoreScanner').then(scanner => ({
-      BrowserStoreBarcodeReader:
-        scanner.BrowserStoreBarcodeReader as unknown as new (
-          hints?: Map<unknown, unknown>
-        ) => ScannerReader,
+      BrowserStoreBarcodeReader: scanner.BrowserStoreBarcodeReader as unknown as new (
+        hints?: Map<unknown, unknown>
+      ) => ScannerReader,
       BarcodeFormat: scanner.BarcodeFormat as Record<string, unknown>,
       DecodeHintType: scanner.DecodeHintType as Record<string, unknown>,
     }));
@@ -161,9 +160,11 @@ export async function startNativeScanner(
   options: StartScannerOptions
 ): Promise<ScannerControls | null> {
   const { scannerElementId, isProcessing, onDetected, onUndetected } = options;
-  const BarcodeDetectorCtor = (globalThis as typeof globalThis & {
-    BarcodeDetector?: NativeBarcodeDetectorConstructor;
-  }).BarcodeDetector;
+  const BarcodeDetectorCtor = (
+    globalThis as typeof globalThis & {
+      BarcodeDetector?: NativeBarcodeDetectorConstructor;
+    }
+  ).BarcodeDetector;
 
   if (!BarcodeDetectorCtor) {
     return null;
@@ -171,7 +172,9 @@ export async function startNativeScanner(
 
   let formats = [...NATIVE_BARCODE_FORMATS];
   if (typeof BarcodeDetectorCtor.getSupportedFormats === 'function') {
-    const supportedFormats = await BarcodeDetectorCtor.getSupportedFormats().catch(() => []);
+    const supportedFormats = await BarcodeDetectorCtor.getSupportedFormats().catch(
+      (): string[] => []
+    );
     const matchedFormats = NATIVE_BARCODE_FORMATS.filter(format =>
       supportedFormats.includes(format)
     );

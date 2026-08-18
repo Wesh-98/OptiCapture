@@ -1,6 +1,7 @@
 export interface StoreInfo {
   name: string;
   street: string;
+  city: string;
   zipcode: string;
   state: string;
   phone: string;
@@ -20,6 +21,7 @@ export type PasswordField = keyof PasswordForm;
 export const EMPTY_STORE_INFO: StoreInfo = {
   name: '',
   street: '',
+  city: '',
   zipcode: '',
   state: '',
   phone: '',
@@ -57,6 +59,10 @@ export function validateStoreInfo(storeInfo: StoreInfo): Record<string, string> 
 
   if (storeInfo.phone && !validatePhone(storeInfo.phone)) {
     errors.phone = 'Phone must be 10 digits';
+  }
+
+  if (storeInfo.city && storeInfo.city.length > 100) {
+    errors.city = 'City/Town must be 100 characters or fewer';
   }
 
   if (storeInfo.zipcode && !validateZipcode(storeInfo.zipcode)) {

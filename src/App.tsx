@@ -10,6 +10,7 @@ import Layout from './components/Layout';
 const Login = lazy(() => import('./pages/Login'));
 const Signup = lazy(() => import('./pages/Signup'));
 const SuperAdmin = lazy(() => import('./pages/SuperAdmin'));
+const StorePicker = lazy(() => import('./pages/StorePicker'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const MobileScan = lazy(() => import('./pages/MobileScan'));
 const StoreSettings = lazy(() => import('./pages/StoreSettings'));
@@ -29,15 +30,19 @@ function FullPageLoader() {
 
 function ContentLoader() {
   return (
-    <div className="flex items-center justify-center h-64 text-slate-400 text-sm">
-      Loading...
-    </div>
+    <div className="flex items-center justify-center h-64 text-slate-400 text-sm">Loading...</div>
   );
 }
 
-interface ErrorBoundaryState { hasError: boolean; error: Error | null; }
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
 
-class ErrorBoundary extends React.Component<Readonly<{ children: React.ReactNode }>, ErrorBoundaryState> {
+class ErrorBoundary extends React.Component<
+  Readonly<{ children: React.ReactNode }>,
+  ErrorBoundaryState
+> {
   constructor(props: Readonly<{ children: React.ReactNode }>) {
     super(props);
     this.state = { hasError: false, error: null };
@@ -54,7 +59,9 @@ class ErrorBoundary extends React.Component<Readonly<{ children: React.ReactNode
               <span className="text-red-600 text-2xl">!</span>
             </div>
             <h2 className="text-xl font-bold text-slate-900 mb-2">Something went wrong</h2>
-            <p className="text-slate-500 text-sm mb-6">An unexpected error occurred. Please reload the page — your data is safe.</p>
+            <p className="text-slate-500 text-sm mb-6">
+              An unexpected error occurred. Please reload the page — your data is safe.
+            </p>
             <button
               onClick={() => globalThis.location.reload()}
               className="px-5 py-2.5 bg-navy-900 text-white rounded-xl text-sm font-semibold hover:bg-navy-800 transition-colors"
@@ -81,6 +88,9 @@ function ProtectedRoute({ children }: Readonly<{ children: React.ReactNode }>) {
   if (isLoading) return <FullPageLoader />;
   if (!user) return <Navigate to="/login" />;
   if (user.role === 'superadmin') return <Navigate to="/admin" replace />;
+  if (user.needs_store_selection && location.pathname !== '/choose-store') {
+    return <Navigate to="/choose-store" replace />;
+  }
   if (user.must_reset_password && location.pathname !== '/settings') {
     return <Navigate to="/settings" replace />;
   }
@@ -90,6 +100,19 @@ function ProtectedRoute({ children }: Readonly<{ children: React.ReactNode }>) {
       <Suspense fallback={<ContentLoader />}>{children}</Suspense>
     </Layout>
   );
+}
+
+function StoreSelectionRoute({ children }: Readonly<{ children: React.ReactNode }>) {
+  const { user, isLoading } = useAuth();
+
+  if (isLoading) return <FullPageLoader />;
+  if (!user) return <Navigate to="/login" />;
+  if (user.role === 'superadmin') return <Navigate to="/admin" replace />;
+  if (!user.needs_store_selection) {
+    return <Navigate to={user.must_reset_password ? '/settings' : '/'} replace />;
+  }
+
+  return <Suspense fallback={<FullPageLoader />}>{children}</Suspense>;
 }
 
 function AdminRoute({ children }: Readonly<{ children: React.ReactNode }>) {
@@ -125,11 +148,22 @@ export default function App() {
                 </Suspense>
               }
             />
-            <Route path="/admin" element={
-              <AdminRoute>
-                <SuperAdmin />
-              </AdminRoute>
-            } />
+            <Route
+              path="/choose-store"
+              element={
+                <StoreSelectionRoute>
+                  <StorePicker />
+                </StoreSelectionRoute>
+              }
+            />
+            <Route
+              path="/admin"
+              element={
+                <AdminRoute>
+                  <SuperAdmin />
+                </AdminRoute>
+              }
+            />
             <Route
               path="/mobile-scan/:sessionId"
               element={
@@ -138,31 +172,46 @@ export default function App() {
                 </Suspense>
               }
             />
-            <Route path="/" element={
-              <ProtectedRoute>
-                <Dashboard />
-              </ProtectedRoute>
-            } />
-            <Route path="/scan" element={
-              <ProtectedRoute>
-                <Scan />
-              </ProtectedRoute>
-            } />
-            <Route path="/import" element={
-              <ProtectedRoute>
-                <Import />
-              </ProtectedRoute>
-            } />
-            <Route path="/logs" element={
-              <ProtectedRoute>
-                <Logs />
-              </ProtectedRoute>
-            } />
-            <Route path="/settings" element={
-              <ProtectedRoute>
-                <StoreSettings />
-              </ProtectedRoute>
-            } />
+            <Route
+              path="/"
+              element={
+                <ProtectedRoute>
+                  <Dashboard />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/scan"
+              element={
+                <ProtectedRoute>
+                  <Scan />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/import"
+              element={
+                <ProtectedRoute>
+                  <Import />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/logs"
+              element={
+                <ProtectedRoute>
+                  <Logs />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/settings"
+              element={
+                <ProtectedRoute>
+                  <StoreSettings />
+                </ProtectedRoute>
+              }
+            />
           </Routes>
         </AuthProvider>
       </Router>

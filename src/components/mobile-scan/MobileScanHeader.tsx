@@ -4,11 +4,7 @@ interface MobileScanHeaderProps {
   sessionId?: string;
 }
 
-export function MobileScanHeader({
-  isConnected,
-  scanCount,
-  sessionId,
-}: MobileScanHeaderProps) {
+export function MobileScanHeader({ isConnected, scanCount, sessionId }: MobileScanHeaderProps) {
   return (
     <div className="shrink-0 flex items-center px-4 py-3">
       <div className="flex items-center gap-2">

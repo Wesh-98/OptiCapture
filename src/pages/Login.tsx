@@ -21,16 +21,28 @@ export default function Login() {
   };
   const oauthError = ERROR_MESSAGES[searchParams.get('error') ?? ''] ?? null;
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError('');
+    const normalizedUsername = username.trim().toLowerCase();
+    const normalizedStoreCode = storeCode.trim().toUpperCase();
+
+    if (!normalizedStoreCode && normalizedUsername !== 'superadmin') {
+      setError('Store Code Required');
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password, store_code: storeCode.trim().toUpperCase() || undefined }),
+        body: JSON.stringify({
+          username: username.trim(),
+          password,
+          store_code: normalizedStoreCode || undefined,
+        }),
       });
       if (res.ok) {
         const user = await res.json();
@@ -57,9 +69,21 @@ export default function Login() {
 
         <div className="space-y-6">
           {[
-            { icon: Layers, title: 'Multi-store ready', desc: 'Manage multiple locations from one platform' },
-            { icon: Smartphone, title: 'Barcode scanning', desc: 'Scan via phone camera or USB/Bluetooth scanner' },
-            { icon: BarChart3, title: 'Real-time sync', desc: 'Live inventory counts across your team' },
+            {
+              icon: Layers,
+              title: 'Multi-store ready',
+              desc: 'Manage multiple locations from one platform',
+            },
+            {
+              icon: Smartphone,
+              title: 'Barcode scanning',
+              desc: 'Scan via phone camera or USB/Bluetooth scanner',
+            },
+            {
+              icon: BarChart3,
+              title: 'Real-time sync',
+              desc: 'Live inventory counts across your team',
+            },
           ].map(({ icon: Icon, title, desc }) => (
             <div key={title} className="flex items-start gap-4">
               <div className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 bg-navy-700">
@@ -73,7 +97,9 @@ export default function Login() {
           ))}
         </div>
 
-        <p className="text-slate-600 text-sm">© {new Date().getFullYear()} OptiCapture. All rights reserved.</p>
+        <p className="text-slate-600 text-sm">
+          © {new Date().getFullYear()} OptiCapture. All rights reserved.
+        </p>
       </div>
 
       {/* Right form panel — navy on mobile, light on desktop */}
@@ -108,12 +134,20 @@ export default function Login() {
 
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label htmlFor="login-store-code" className="block text-sm font-medium text-slate-700 mb-1.5">
+                <label
+                  htmlFor="login-store-code"
+                  className="block text-sm font-medium text-slate-700 mb-1.5"
+                >
                   Store Code
-                  <span className="ml-1.5 text-slate-400 font-normal text-xs">(leave blank for superadmin)</span>
+                  <span className="ml-1.5 text-slate-400 font-normal text-xs">
+                    (leave blank for superadmin)
+                  </span>
                 </label>
                 <div className="relative">
-                  <Hash className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} />
+                  <Hash
+                    className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+                    size={17}
+                  />
                   <input
                     id="login-store-code"
                     type="text"
@@ -128,9 +162,17 @@ export default function Login() {
               </div>
 
               <div>
-                <label htmlFor="login-username" className="block text-sm font-medium text-slate-700 mb-1.5">Username</label>
+                <label
+                  htmlFor="login-username"
+                  className="block text-sm font-medium text-slate-700 mb-1.5"
+                >
+                  Username
+                </label>
                 <div className="relative">
-                  <User className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} />
+                  <User
+                    className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+                    size={17}
+                  />
                   <input
                     id="login-username"
                     type="text"
@@ -144,9 +186,17 @@ export default function Login() {
               </div>
 
               <div>
-                <label htmlFor="login-password" className="block text-sm font-medium text-slate-700 mb-1.5">Password</label>
+                <label
+                  htmlFor="login-password"
+                  className="block text-sm font-medium text-slate-700 mb-1.5"
+                >
+                  Password
+                </label>
                 <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} />
+                  <Lock
+                    className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+                    size={17}
+                  />
                   <input
                     id="login-password"
                     type="password"
@@ -178,7 +228,7 @@ export default function Login() {
             {/* Google button */}
             <button
               type="button"
-              onClick={() => globalThis.location.href = '/api/auth/google?intent=login'}
+              onClick={() => (globalThis.location.href = '/api/auth/google?intent=login')}
               className="w-full flex items-center justify-center gap-3 py-2.5 border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors text-sm font-medium text-slate-700"
             >
               <img
@@ -191,7 +241,10 @@ export default function Login() {
 
             <p className="text-center text-sm text-slate-500 mt-5">
               New store?{' '}
-              <Link to="/signup" className="font-semibold hover:underline text-navy-700 hover:text-navy-900">
+              <Link
+                to="/signup"
+                className="font-semibold hover:underline text-navy-700 hover:text-navy-900"
+              >
                 Create an account
               </Link>
             </p>
