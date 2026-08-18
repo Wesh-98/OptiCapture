@@ -140,6 +140,22 @@ describe('POST /api/auth/login — success', () => {
     expect(loginRes.body.username).toBe('mixedcaseowner');
   });
 
+  it('allows legacy mixed-case usernames to log in after normalization', async () => {
+    db.prepare('UPDATE users SET username = ? WHERE username = ?').run('LegacyAdmin', 'admin');
+
+    try {
+      const res = await request.post('/api/auth/login').send({
+        username: 'LegacyAdmin',
+        password: 'admin123',
+        store_code: adminStoreCode,
+      });
+      expect(res.status).toBe(200);
+      expect(res.body.username).toBe('LegacyAdmin');
+    } finally {
+      db.prepare('UPDATE users SET username = ? WHERE username = ?').run('admin', 'LegacyAdmin');
+    }
+  });
+
   it('resets failed_login_attempts to 0 on success after previous failures', async () => {
     // One failed attempt
     await request

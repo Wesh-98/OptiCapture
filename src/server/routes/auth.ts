@@ -120,7 +120,7 @@ authRouter.post('/login', authLimiter, async (req, res) => {
         SELECT u.*, us.role AS access_role
         FROM user_stores us
         JOIN users u ON u.id = us.user_id
-        WHERE u.username = ? AND us.store_id = ?
+        WHERE lower(u.username) = ? AND us.store_id = ?
         ORDER BY CASE WHEN u.store_id = us.store_id THEN 0 ELSE 1 END, u.id ASC
       `
       )
@@ -161,7 +161,7 @@ authRouter.post('/login', authLimiter, async (req, res) => {
   } else {
     // No store code — superadmin only
     user = db
-      .prepare("SELECT * FROM users WHERE username = ? AND role = 'superadmin'")
+      .prepare("SELECT * FROM users WHERE lower(username) = ? AND role = 'superadmin'")
       .get(normalizedUsername);
     passwordMatch = await bcrypt.compare(password, user?.password ?? DUMMY_HASH);
     if (user) {
