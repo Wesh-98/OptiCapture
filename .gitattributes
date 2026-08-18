@@ -1,0 +1,26 @@
+# Normalise line endings.
+#
+# The Git for Windows installer sets core.autocrlf=true system-wide, which would
+# check every text file out as CRLF while CI (ubuntu-latest) and Prettier both
+# work in LF. Without this file the whole working tree shows as modified after a
+# fresh clone on Windows. `text=auto eol=lf` stores and checks out LF everywhere.
+* text=auto eol=lf
+
+# Binary assets — never touch these.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.pdf binary
+*.docx binary
+*.xlsx binary
+*.db binary
+*.db-shm binary
+*.db-wal binary
+*.one binary
+*.onetoc2 binary
+
+# Generated — collapse in diffs and mark as generated on GitHub.
+package-lock.json linguist-generated=true -diff
