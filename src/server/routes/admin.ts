@@ -2,7 +2,12 @@ import express from 'express';
 import bcrypt from 'bcryptjs';
 import { db } from '../db.js';
 import { authenticateToken } from '../middleware.js';
-import { generateTempPassword, saveBase64Image, UnsupportedImageTypeError } from '../helpers.js';
+import {
+  generateTempPassword,
+  normalizeUsername,
+  saveBase64Image,
+  UnsupportedImageTypeError,
+} from '../helpers.js';
 import type { AuthRequest } from '../types.js';
 
 export const adminRouter = express.Router();
@@ -103,7 +108,7 @@ adminRouter.post(
       return res.status(403).json({ error: 'The HQ store is managed internally' });
     }
 
-    const normalizedUsername = typeof username === 'string' ? username.trim().toLowerCase() : '';
+    const normalizedUsername = normalizeUsername(username);
     const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
     const normalizedMode = mode === 'create' ? 'create' : 'existing';
     if (!normalizedUsername || !isStoreRole(role)) {

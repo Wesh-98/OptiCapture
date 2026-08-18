@@ -28,6 +28,10 @@ export class UnsupportedImageTypeError extends Error {
   }
 }
 
+export function normalizeUsername(value: unknown): string {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
 // Verify the buffer's actual binary magic bytes match the declared MIME type.
 // The MIME string in the data URI is attacker-controlled; magic bytes are not.
 function verifyImageMagicBytes(buffer: Buffer, mimeType: string): boolean {

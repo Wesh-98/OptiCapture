@@ -5,14 +5,15 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { db } from '../db.js';
 import { authenticateToken, authLimiter, googleClient, requireOwner } from '../middleware.js';
 import { revokeToken, pendingOAuth, pendingOAuthSet, DUMMY_HASH } from '../cache.js';
-import { saveBase64Image, generateStoreCode, UnsupportedImageTypeError } from '../helpers.js';
+import {
+  saveBase64Image,
+  generateStoreCode,
+  normalizeUsername,
+  UnsupportedImageTypeError,
+} from '../helpers.js';
 import type { AuthRequest } from '../types.js';
 
 export const authRouter = express.Router();
-
-function normalizeUsername(value: unknown): string {
-  return typeof value === 'string' ? value.trim().toLowerCase() : '';
-}
 
 function incrementFailedLoginAttempts(users: any[]) {
   const uniqueUsers = new Map<number, any>();
