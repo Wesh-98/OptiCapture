@@ -147,12 +147,23 @@ inventoryRouter.get(
       ? (req.query.format as string)
       : 'xlsx';
 
+    const exportTimestamp = new Date().toISOString();
+    db.prepare(
+      `
+      UPDATE inventory
+      SET last_exported_at = ?, sync_status = 'exported'
+      WHERE store_id = ?
+    `
+    ).run(exportTimestamp, req.user.store_id);
+
     const rows = db
       .prepare(
         `
-    SELECT i.item_name, i.description, i.quantity, i.unit, i.sale_price,
-           i.tax_percent, i.upc, i.number, i.tag_names, i.status,
-           c.name AS category, i.created_at
+    SELECT i.external_system, i.external_store_id, i.external_category_id,
+           i.external_item_id, i.external_sku, i.item_name, i.description,
+           i.quantity, i.unit, i.sale_price, i.tax_percent, i.upc, i.number,
+           i.tag_names, i.status, i.sync_status, i.last_imported_at,
+           i.last_exported_at, c.name AS category, i.created_at
     FROM inventory i
     LEFT JOIN categories c ON i.category_id = c.id
     WHERE i.store_id = ?
@@ -189,6 +200,11 @@ inventoryRouter.get(
         return `"${escaped.replaceAll('"', '""')}"`;
       };
       const CSV_COLS = [
+        'external_system',
+        'external_store_id',
+        'external_category_id',
+        'external_item_id',
+        'external_sku',
         'item_name',
         'description',
         'quantity',
@@ -199,6 +215,9 @@ inventoryRouter.get(
         'number',
         'tag_names',
         'status',
+        'sync_status',
+        'last_imported_at',
+        'last_exported_at',
         'created_at',
       ];
       const lines: string[] = [CSV_COLS.map(csvCell).join(',')];
@@ -216,7 +235,7 @@ inventoryRouter.get(
       res.setHeader('Content-Disposition', `attachment; filename="${filename}.json"`);
       return res.send(
         JSON.stringify(
-          { exported_at: new Date().toISOString(), total: rows.length, items: rows },
+          { exported_at: exportTimestamp, total: rows.length, items: rows },
           null,
           2
         )
@@ -258,6 +277,11 @@ inventoryRouter.get(
 
     // xlsx — one sheet per category, sheet name = category name
     const XLSX_COLS = [
+      'external_system',
+      'external_store_id',
+      'external_category_id',
+      'external_item_id',
+      'external_sku',
       'item_name',
       'description',
       'quantity',
@@ -268,6 +292,9 @@ inventoryRouter.get(
       'number',
       'tag_names',
       'status',
+      'sync_status',
+      'last_imported_at',
+      'last_exported_at',
       'created_at',
     ];
     const wb = new ExcelJS.Workbook();
@@ -823,12 +850,28 @@ inventoryRouter.post(
       return info.lastInsertRowid as number;
     };
 
+    const checkExternalItem = db.prepare(
+      `
+      SELECT id FROM inventory
+      WHERE external_item_id = ?
+        AND store_id = ?
+        AND (? = '' OR external_system = ? OR external_system IS NULL)
+    `
+    );
     const checkUpc = db.prepare('SELECT id FROM inventory WHERE upc = ? AND store_id = ?');
     const checkNum = db.prepare('SELECT id FROM inventory WHERE number = ? AND store_id = ?');
+    const checkExternalSku = db.prepare(
+      'SELECT id FROM inventory WHERE external_sku = ? AND store_id = ?'
+    );
 
     const insertStmt = db.prepare(`
-    INSERT INTO inventory (item_name, description, quantity, unit, sale_price, tax_percent, upc, number, tag_names, category_id, status, image, store_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO inventory (
+      item_name, description, quantity, unit, sale_price, tax_percent, upc, number,
+      tag_names, category_id, status, image, external_system, external_store_id,
+      external_category_id, external_item_id, external_sku, last_imported_at,
+      sync_status, store_id
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
     const updateStmt = db.prepare(`
@@ -842,6 +885,13 @@ inventoryRouter.post(
         category_id = COALESCE(?, category_id),
         status      = COALESCE(NULLIF(?, ''), status),
         image       = COALESCE(NULLIF(?, ''), image),
+        external_system      = COALESCE(NULLIF(?, ''), external_system),
+        external_store_id    = COALESCE(NULLIF(?, ''), external_store_id),
+        external_category_id = COALESCE(NULLIF(?, ''), external_category_id),
+        external_item_id     = COALESCE(NULLIF(?, ''), external_item_id),
+        external_sku         = COALESCE(NULLIF(?, ''), external_sku),
+        last_imported_at     = ?,
+        sync_status          = 'imported',
         updated_at  = CURRENT_TIMESTAMP
     WHERE id = ? AND store_id = ?
   `);
@@ -859,8 +909,13 @@ inventoryRouter.post(
 
           const upc = readImportedString(item.upc);
           const number = readImportedString(item.number);
+          const externalSystem = readImportedString(item.external_system);
+          const externalStoreId = readImportedString(item.external_store_id);
+          const externalCategoryId = readImportedString(item.external_category_id);
+          const externalItemId = readImportedString(item.external_item_id);
+          const externalSku = readImportedString(item.external_sku);
           const itemName = readImportedString(item.item_name);
-          if (!upc && !number) {
+          if (!externalItemId && !upc && !number && !externalSku) {
             results.skipped++;
             const rawName =
               itemName ||
@@ -887,10 +942,20 @@ inventoryRouter.post(
             const tags = readImportedString(item.tag_names);
             const rawImage = readImportedString(item.image);
             const image = rawImage ? normalizeImageUrl(rawImage) : null;
+            const importedAt = new Date().toISOString();
 
             const existing: any =
+              (externalItemId
+                ? checkExternalItem.get(
+                    externalItemId,
+                    user.store_id,
+                    externalSystem,
+                    externalSystem
+                  )
+                : null) ??
               (upc ? checkUpc.get(upc, user.store_id) : null) ??
-              (number ? checkNum.get(number, user.store_id) : null);
+              (number ? checkNum.get(number, user.store_id) : null) ??
+              (externalSku ? checkExternalSku.get(externalSku, user.store_id) : null);
 
             if (existing) {
               updateStmt.run(
@@ -903,6 +968,12 @@ inventoryRouter.post(
                 catId,
                 status,
                 image,
+                externalSystem,
+                externalStoreId,
+                externalCategoryId,
+                externalItemId,
+                externalSku,
+                importedAt,
                 existing.id,
                 user.store_id
               );
@@ -921,6 +992,13 @@ inventoryRouter.post(
                 catId,
                 status,
                 image,
+                externalSystem || null,
+                externalStoreId || null,
+                externalCategoryId || null,
+                externalItemId || null,
+                externalSku || null,
+                importedAt,
+                'imported',
                 user.store_id
               );
               results.added++;

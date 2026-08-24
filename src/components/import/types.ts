@@ -13,7 +13,12 @@ export type DestinationField =
   | 'tax_percent'
   | 'tag_names'
   | 'description'
-  | 'image';
+  | 'image'
+  | 'external_system'
+  | 'external_store_id'
+  | 'external_category_id'
+  | 'external_item_id'
+  | 'external_sku';
 export type AutoDetectField = Exclude<DestinationField, '__ignore__'>;
 export type ColumnMapping = Record<string, DestinationField>;
 
@@ -64,6 +69,11 @@ export const DEST_FIELDS: ReadonlyArray<{ value: DestinationField; label: string
   { value: 'tag_names', label: 'Tags' },
   { value: 'description', label: 'Description' },
   { value: 'image', label: 'Image URL (https:// or Google Drive link)' },
+  { value: 'external_system', label: 'External System' },
+  { value: 'external_store_id', label: 'External Store ID' },
+  { value: 'external_category_id', label: 'External Category ID' },
+  { value: 'external_item_id', label: 'External Item ID' },
+  { value: 'external_sku', label: 'External SKU' },
 ];
 
 export const IMPORT_STEPS = ['upload', 'map', 'done'] as const;

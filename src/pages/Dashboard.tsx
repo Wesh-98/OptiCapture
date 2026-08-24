@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useReducedMotion } from 'motion/react';
 import { Search, X } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
@@ -26,6 +26,7 @@ import type { Category } from '../components/dashboard/types';
 export default function Dashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const isOwner = user?.role === 'owner' || user?.role === 'superadmin';
   const canEditItems = isOwner || user?.role === 'taker';
   const prefersReducedMotion = useReducedMotion();
@@ -48,6 +49,13 @@ export default function Dashboard() {
   const cats = useCategoryManagement(fetchStats);
 
   const items = useItemManagement(viewMode, selectedCategory?.id ?? null, fetchStats, addToast);
+  const { setShowExportModal } = items;
+
+  useEffect(() => {
+    if (isOwner && searchParams.get('export') === '1') {
+      setShowExportModal(true);
+    }
+  }, [isOwner, searchParams, setShowExportModal]);
 
   // Initial fetch
   useEffect(() => {
@@ -103,13 +111,25 @@ export default function Dashboard() {
     items.setIsAddModalOpen(true);
   };
 
+  const handleCloseExportModal = () => {
+    items.setShowExportModal(false);
+    if (searchParams.has('export')) {
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.delete('export');
+      setSearchParams(nextParams, { replace: true });
+    }
+  };
+
+  const handleExport = async () => {
+    const didExport = await items.handleExport();
+    if (didExport) {
+      handleCloseExportModal();
+    }
+  };
+
   return (
     <div className="space-y-6">
-      <StatsHeader
-        stats={stats}
-        isOwner={isOwner}
-        onExportClick={() => items.setShowExportModal(true)}
-      />
+      <StatsHeader stats={stats} />
 
       <SessionsSection
         sessions={activeSessions}
@@ -248,8 +268,8 @@ export default function Dashboard() {
         exportFormat={items.exportFormat}
         exporting={items.exporting}
         onFormatChange={items.setExportFormat}
-        onExport={items.handleExport}
-        onClose={() => items.setShowExportModal(false)}
+        onExport={handleExport}
+        onClose={handleCloseExportModal}
       />
 
       <ToastContainer toasts={toasts} prefersReducedMotion={prefersReducedMotion} />

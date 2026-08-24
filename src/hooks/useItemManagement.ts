@@ -147,8 +147,10 @@ export function useItemManagement(
       a.click();
       URL.revokeObjectURL(url);
       setShowExportModal(false);
+      return true;
     } catch {
       addToast('error', 'Export failed. Please try again.');
+      return false;
     } finally {
       setExporting(false);
     }
