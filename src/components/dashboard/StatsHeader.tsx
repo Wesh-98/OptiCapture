@@ -1,13 +1,10 @@
-import { Download } from 'lucide-react';
 import type { DashboardStats } from './types';
 
 interface Props {
   stats: DashboardStats;
-  isOwner: boolean;
-  onExportClick: () => void;
 }
 
-export function StatsHeader({ stats, isOwner, onExportClick }: Readonly<Props>) {
+export function StatsHeader({ stats }: Readonly<Props>) {
   return (
     <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 w-full md:w-auto flex-1">
@@ -28,14 +25,6 @@ export function StatsHeader({ stats, isOwner, onExportClick }: Readonly<Props>) 
           <p className="text-2xl font-bold text-red-700 mt-1">{stats.outOfStock}</p>
         </div>
       </div>
-      {isOwner && (
-        <button
-          onClick={onExportClick}
-          className="flex items-center gap-2 px-5 py-2.5 bg-slate-700 text-white rounded-xl text-sm font-medium hover:bg-slate-600 transition-colors shadow-md whitespace-nowrap"
-        >
-          <Download size={16} /> Export
-        </button>
-      )}
     </div>
   );
 }

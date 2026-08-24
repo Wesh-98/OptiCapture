@@ -21,6 +21,18 @@ const SYNONYMS: Record<AutoDetectField, readonly string[]> = {
   tag_names: ['tags', 'tag names', 'labels'],
   description: ['notes', 'memo', 'detail', 'long description', 'product description'],
   image: ['image', 'image url', 'photo', 'picture', 'img'],
+  external_system: ['external system', 'source system', 'platform', 'system'],
+  external_store_id: ['external store id', 'store id', 'location id', 'external location id'],
+  external_category_id: ['external category id', 'department id', 'category id'],
+  external_item_id: [
+    'external item id',
+    'external product id',
+    'platform item id',
+    'platform product id',
+    'inventory item id',
+    'product id',
+  ],
+  external_sku: ['external sku', 'platform sku', 'source sku'],
 };
 
 function autoDetect(headers: readonly string[]): ColumnMapping {

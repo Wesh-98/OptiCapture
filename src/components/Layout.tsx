@@ -5,6 +5,7 @@ import {
   LayoutDashboard,
   ScanLine,
   Upload,
+  Download,
   History,
   LogOut,
   Menu,
@@ -46,6 +47,13 @@ export default function Layout({ children }: Readonly<{ children: React.ReactNod
     { href: '/', label: 'Dashboard', icon: LayoutDashboard },
     { href: '/scan', label: 'Scan', icon: ScanLine },
     { href: '/import', label: 'Import', icon: Upload, ownerOnly: true },
+    {
+      href: '/?export=1',
+      label: 'Export',
+      icon: Download,
+      ownerOnly: true,
+      activeSearch: 'export=1',
+    },
     { href: '/logs', label: 'Activity Logs', icon: History },
     { href: '/settings', label: 'Store Settings', icon: Settings },
   ];
@@ -56,6 +64,21 @@ export default function Layout({ children }: Readonly<{ children: React.ReactNod
 
     return !item.ownerOnly || user.role !== 'taker';
   });
+  const searchParams = new URLSearchParams(location.search);
+  const isExportRouteActive = searchParams.get('export') === '1';
+  const hasExportNavItem = navItems.some(item => item.activeSearch === 'export=1');
+  const isNavItemActive = (item: (typeof allNavItems)[number]) => {
+    const targetPath = item.href.split('?')[0];
+    if (location.pathname !== targetPath) {
+      return false;
+    }
+
+    if (item.activeSearch) {
+      return isExportRouteActive;
+    }
+
+    return !isExportRouteActive || !hasExportNavItem;
+  };
 
   const handleSwitchStore = async (storeId: number) => {
     setStoreSwitcherOpen(false);
@@ -113,7 +136,7 @@ export default function Layout({ children }: Readonly<{ children: React.ReactNod
         <nav className="flex-1 p-2 space-y-2 mt-4">
           {navItems.map(item => {
             const Icon = item.icon;
-            const isActive = location.pathname === item.href;
+            const isActive = isNavItemActive(item);
             return (
               <Link
                 key={item.href}
@@ -355,7 +378,7 @@ export default function Layout({ children }: Readonly<{ children: React.ReactNod
                     onClick={() => setIsMobileMenuOpen(false)}
                     className={cn(
                       'flex items-center gap-3 px-4 py-3 rounded-lg',
-                      location.pathname === item.href
+                      isNavItemActive(item)
                         ? 'bg-navy-800 text-white'
                         : 'hover:bg-navy-800/50'
                     )}

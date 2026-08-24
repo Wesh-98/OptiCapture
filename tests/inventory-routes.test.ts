@@ -128,6 +128,7 @@ describe('inventory listing and export', () => {
 
     expect(res.status).toBe(200);
     expect(res.headers['content-type']).toMatch(/text\/csv/);
+    expect(res.text).toContain('"external_system","external_store_id","external_category_id"');
     expect(res.text).toContain('"item_name","description","quantity"');
     expect(res.text).toContain('"CSV Export Item"');
     expect(res.text).toContain('"### ');
@@ -188,7 +189,7 @@ describe('inventory listing and export', () => {
 
     expect(workbook.worksheets).toHaveLength(1);
     expect(workbook.worksheets[0].name).toBe('Very Long Category  Name 123456');
-    expect(workbook.worksheets[0].getRow(2).getCell(1).value).toBe('XLSX Export Item');
+    expect(workbook.worksheets[0].getRow(2).getCell(6).value).toBe('XLSX Export Item');
   });
 });
 
@@ -422,6 +423,103 @@ describe('inventory batch upload parsing', () => {
 });
 
 describe('inventory batch confirm', () => {
+  it('preserves external item mappings through import updates and export', async () => {
+    const importPayload = {
+      sheetsData: [
+        {
+          sheetName: 'Beverages',
+          mapping: {
+            'External System': 'external_system',
+            'External Store ID': 'external_store_id',
+            'External Category ID': 'external_category_id',
+            'External Item ID': 'external_item_id',
+            'External SKU': 'external_sku',
+            Name: 'item_name',
+            Qty: 'quantity',
+          },
+          rows: [
+            {
+              'External System': 'legacy-pos',
+              'External Store ID': 'store-42',
+              'External Category ID': 'cat-7',
+              'External Item ID': 'item-abc',
+              'External SKU': 'sku-abc',
+              Name: 'Legacy Product',
+              Qty: '5',
+            },
+          ],
+        },
+      ],
+    };
+
+    const firstImport = await request
+      .post('/api/inventory/batch-confirm')
+      .set('Cookie', adminCookie)
+      .send(importPayload);
+
+    const secondImport = await request
+      .post('/api/inventory/batch-confirm')
+      .set('Cookie', adminCookie)
+      .send({
+        sheetsData: [
+          {
+            ...importPayload.sheetsData[0],
+            rows: [
+              {
+                ...importPayload.sheetsData[0].rows[0],
+                Name: 'Legacy Product Updated',
+                Qty: '9',
+              },
+            ],
+          },
+        ],
+      });
+
+    expect(firstImport.status).toBe(200);
+    expect(firstImport.body).toMatchObject({ added: 1, updated: 0, skipped: 0 });
+    expect(secondImport.status).toBe(200);
+    expect(secondImport.body).toMatchObject({ added: 0, updated: 1, skipped: 0 });
+
+    const storedItem = db
+      .prepare(
+        `
+        SELECT item_name, quantity, external_system, external_store_id,
+               external_category_id, external_item_id, external_sku,
+               last_imported_at, sync_status
+        FROM inventory
+        WHERE external_item_id = ?
+      `
+      )
+      .get('item-abc') as any;
+    expect(storedItem).toMatchObject({
+      item_name: 'Legacy Product Updated',
+      quantity: 9,
+      external_system: 'legacy-pos',
+      external_store_id: 'store-42',
+      external_category_id: 'cat-7',
+      external_item_id: 'item-abc',
+      external_sku: 'sku-abc',
+      sync_status: 'imported',
+    });
+    expect(storedItem.last_imported_at).toBeTruthy();
+
+    const exportRes = await request
+      .get('/api/inventory/export')
+      .set('Cookie', adminCookie)
+      .query({ format: 'json' });
+
+    expect(exportRes.status).toBe(200);
+    expect(exportRes.body.items[0]).toMatchObject({
+      external_system: 'legacy-pos',
+      external_store_id: 'store-42',
+      external_category_id: 'cat-7',
+      external_item_id: 'item-abc',
+      external_sku: 'sku-abc',
+      sync_status: 'exported',
+    });
+    expect(exportRes.body.items[0].last_exported_at).toBeTruthy();
+  });
+
   it('imports, updates, skips blank rows, and normalizes Google image URLs', async () => {
     const existingCategoryId = (db
       .prepare('SELECT id FROM categories WHERE store_id = 1 ORDER BY id LIMIT 1')

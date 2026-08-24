@@ -449,6 +449,24 @@ runMigration(15, () => {
   }
 });
 
+runMigration(16, () => {
+  const cols = new Set(
+    (db.prepare('PRAGMA table_info(inventory)').all() as any[]).map((c: any) => c.name)
+  );
+  const addTextColumn = (name: string) => {
+    if (!cols.has(name)) db.prepare(`ALTER TABLE inventory ADD COLUMN ${name} TEXT`).run();
+  };
+
+  addTextColumn('external_system');
+  addTextColumn('external_store_id');
+  addTextColumn('external_category_id');
+  addTextColumn('external_item_id');
+  addTextColumn('external_sku');
+  addTextColumn('last_imported_at');
+  addTextColumn('last_exported_at');
+  addTextColumn('sync_status');
+});
+
 db.prepare(
   `
   CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oauth
@@ -550,6 +568,13 @@ db.prepare(
 ).run();
 db.prepare(
   'CREATE INDEX IF NOT EXISTS idx_inventory_store_updated ON inventory(store_id, updated_at DESC)'
+).run();
+db.prepare(
+  `
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_inventory_external_item_store
+  ON inventory(external_system, external_item_id, store_id)
+  WHERE external_item_id IS NOT NULL AND external_item_id != ''
+`
 ).run();
 db.prepare('CREATE INDEX IF NOT EXISTS idx_users_store_id ON users(store_id)').run();
 db.prepare('CREATE INDEX IF NOT EXISTS idx_categories_store ON categories(store_id)').run();

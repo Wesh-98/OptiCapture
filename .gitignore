@@ -19,7 +19,10 @@ uploads/
 
 # Local planning / docs not for the repo
 goal/
-.claude/
+.claude/*
+!.claude/agents/
+.claude/agents/*
+!.claude/agents/opticapture-*.md
 
 # Scratch notes, scraped reference material and exported report binaries.
 # None of these are referenced by any code, config or doc in the project.

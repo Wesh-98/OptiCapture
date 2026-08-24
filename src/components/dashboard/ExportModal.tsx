@@ -7,7 +7,7 @@ interface Props {
   exportFormat: ExportFormat;
   exporting: boolean;
   onFormatChange: (f: ExportFormat) => void;
-  onExport: () => void;
+  onExport: () => void | Promise<void>;
   onClose: () => void;
 }
 
@@ -30,17 +30,19 @@ export function ExportModal({
   return (
     <div
       role="presentation"
-      aria-hidden="true"
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
       onClick={onClose}
     >
       <div
         role="dialog"
         aria-modal="true"
+        aria-labelledby="export-modal-title"
         className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm mx-4"
         onClick={e => e.stopPropagation()}
       >
-        <h3 className="text-lg font-bold text-navy-900 mb-1">Export Inventory</h3>
+        <h3 id="export-modal-title" className="text-lg font-bold text-navy-900 mb-1">
+          Export Inventory
+        </h3>
         <p className="text-sm text-slate-500 mb-4">Choose a format to download your inventory.</p>
         <div className="grid grid-cols-2 gap-2 mb-5">
           {FORMATS.map(f => (

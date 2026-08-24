@@ -284,3 +284,77 @@ test('opens the all-items inventory table from the category dashboard', async ({
   await expect(page.getByText('Cola Bottle')).toBeVisible();
   await expect(page.getByText('111000222333')).toBeVisible();
 });
+
+test('opens export from owner navigation and clears the route after download', async ({ page }) => {
+  await page.route('**/api/auth/me', async route => {
+    await route.fulfill({
+      json: {
+        id: 1,
+        username: 'admin',
+        role: 'owner',
+        store_id: 1,
+        store_name: 'OptiMart Central Downtown',
+        store_logo: null,
+        must_reset_password: false,
+        needs_store_selection: false,
+      },
+    });
+  });
+
+  await page.route('**/api/auth/my-stores', async route => {
+    await route.fulfill({
+      json: [
+        {
+          id: 1,
+          name: 'OptiMart Central Downtown',
+          logo: null,
+          status: 'active',
+          role: 'owner',
+        },
+      ],
+    });
+  });
+
+  await page.route('**/api/dashboard/stats', async route => {
+    await route.fulfill({
+      json: {
+        totalCategories: 1,
+        totalItems: 1,
+        inStock: 1,
+        outOfStock: 0,
+      },
+    });
+  });
+
+  await page.route('**/api/sessions/active', async route => {
+    await route.fulfill({ json: [] });
+  });
+
+  await page.route('**/api/categories', async route => {
+    await route.fulfill({ json: [] });
+  });
+
+  await page.route('**/api/inventory/export?*', async route => {
+    await route.fulfill({
+      headers: {
+        'content-disposition': 'attachment; filename="inventory.csv"',
+        'content-type': 'text/csv',
+      },
+      body: '"item_name","quantity"\n"Cola",12\n',
+    });
+  });
+
+  await page.goto('/');
+  await page.getByRole('link', { name: 'Export' }).click();
+
+  await expect(page).toHaveURL(/\/\?export=1$/);
+  await expect(page.getByRole('dialog', { name: 'Export Inventory' })).toBeVisible();
+
+  await page.getByRole('button', { name: 'CSV .csv — universal' }).click();
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download' }).click();
+  await downloadPromise;
+
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByRole('dialog', { name: 'Export Inventory' })).toBeHidden();
+});
