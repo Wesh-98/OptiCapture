@@ -5,12 +5,24 @@ import type { AuthRequest } from '../types.js';
 
 export const categoriesRouter = express.Router();
 
+const RESERVED_CATEGORY_NAMES = ['inventory'];
+const reservedCategoryPlaceholders = RESERVED_CATEGORY_NAMES.map(() => '?').join(', ');
+const visibleCategoryCondition = `LOWER(TRIM(c.name)) NOT IN (${reservedCategoryPlaceholders})`;
+
+function isReservedCategoryName(name: string): boolean {
+  return RESERVED_CATEGORY_NAMES.includes(name.trim().toLowerCase());
+}
+
 // Dashboard Stats
 categoriesRouter.get('/dashboard/stats', authenticateToken, (req: AuthRequest, res) => {
   const storeId = req.user.store_id;
   const totalCategories = db
-    .prepare('SELECT COUNT(*) as count FROM categories WHERE store_id = ?')
-    .get(storeId) as any;
+    .prepare(
+      `SELECT COUNT(*) as count
+       FROM categories c
+       WHERE c.store_id = ? AND ${visibleCategoryCondition}`
+    )
+    .get(storeId, ...RESERVED_CATEGORY_NAMES) as any;
   const totalItems = db
     .prepare('SELECT COUNT(*) as count FROM inventory WHERE store_id = ?')
     .get(storeId) as any;
@@ -38,11 +50,11 @@ categoriesRouter.get('/categories', authenticateToken, (req: AuthRequest, res) =
     (SELECT COUNT(*) FROM inventory i WHERE i.category_id = c.id AND i.store_id = ?) as item_count,
     (SELECT SUM(quantity) FROM inventory i WHERE i.category_id = c.id AND i.store_id = ?) as total_stock
     FROM categories c
-    WHERE c.store_id = ?
+    WHERE c.store_id = ? AND ${visibleCategoryCondition}
     ORDER BY c.name ASC
   `
     )
-    .all(storeId, storeId, storeId);
+    .all(storeId, storeId, storeId, ...RESERVED_CATEGORY_NAMES);
   res.json(categories);
 });
 
@@ -94,6 +106,9 @@ categoriesRouter.delete(
 categoriesRouter.post('/categories', authenticateToken, requireOwner, (req: AuthRequest, res) => {
   const { name, icon } = req.body;
   if (!name?.trim()) return res.status(400).json({ error: 'Category name is required' });
+  if (isReservedCategoryName(name)) {
+    return res.status(400).json({ error: 'Inventory is not a category name' });
+  }
   const storeId = req.user.store_id;
   try {
     const info = db
@@ -117,6 +132,9 @@ categoriesRouter.put(
     const { id } = req.params;
     const storeId = req.user.store_id;
     if (!name?.trim()) return res.status(400).json({ error: 'Category name is required' });
+    if (isReservedCategoryName(name)) {
+      return res.status(400).json({ error: 'Inventory is not a category name' });
+    }
     try {
       db.prepare('UPDATE categories SET name = ?, icon = ? WHERE id = ? AND store_id = ?').run(
         name.trim(),

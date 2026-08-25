@@ -38,8 +38,13 @@ beforeEach(() => {
 
 describe('categories routes', () => {
   it('reports category stock counts and dashboard totals for the current store', async () => {
+    db.prepare(
+      "INSERT OR IGNORE INTO categories (name, icon, store_id) VALUES ('Inventory', 'Package', 1)"
+    ).run();
     const baselineCategoryCount = (db
-      .prepare('SELECT COUNT(*) AS count FROM categories WHERE store_id = 1')
+      .prepare(
+        "SELECT COUNT(*) AS count FROM categories WHERE store_id = 1 AND LOWER(TRIM(name)) != 'inventory'"
+      )
       .get() as { count: number } | undefined)!.count;
     const seededCategory = (db
       .prepare('SELECT id FROM categories WHERE store_id = 1 ORDER BY id LIMIT 1')
@@ -62,6 +67,7 @@ describe('categories routes', () => {
     const statsRes = await request.get('/api/dashboard/stats').set('Cookie', adminCookie);
 
     expect(categoriesRes.status).toBe(200);
+    expect(categoriesRes.body.some((entry: any) => entry.name === 'Inventory')).toBe(false);
     const category = categoriesRes.body.find((entry: any) => entry.id === seededCategory);
     expect(category).toMatchObject({ item_count: 2, total_stock: 5 });
 
@@ -100,6 +106,29 @@ describe('categories routes', () => {
       .set('Cookie', adminCookie)
       .send({ name: categoryName, icon: 'Package' });
     expect(duplicateRes.status).toBe(409);
+  });
+
+  it('rejects Inventory as a category name', async () => {
+    const createRes = await request
+      .post('/api/categories')
+      .set('Cookie', adminCookie)
+      .send({ name: ' Inventory ', icon: 'Package' });
+    expect(createRes.status).toBe(400);
+    expect(createRes.body.error).toMatch(/not a category/i);
+
+    const categoryName = nextName('Test Category');
+    const validRes = await request
+      .post('/api/categories')
+      .set('Cookie', adminCookie)
+      .send({ name: categoryName, icon: 'Package' });
+    const categoryId = validRes.body.id as number;
+
+    const updateRes = await request
+      .put(`/api/categories/${categoryId}`)
+      .set('Cookie', adminCookie)
+      .send({ name: 'Inventory', icon: 'Package' });
+    expect(updateRes.status).toBe(400);
+    expect(updateRes.body.error).toMatch(/not a category/i);
   });
 
   it('rejects invalid status values on PUT /categories/:id/status', async () => {

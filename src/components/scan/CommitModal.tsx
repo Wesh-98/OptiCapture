@@ -1,6 +1,7 @@
 import { motion, AnimatePresence } from 'motion/react';
 import { Loader2, AlertTriangle, Image as ImageIcon, X } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { getCommitEligibleItems } from '../../hooks/useCommitModal';
 import type { SessionItem, Category } from './types';
 
 interface Props {
@@ -39,9 +40,15 @@ export function CommitModal({
   onApplyBulk,
 }: Readonly<Props>) {
   const commitItems = items.filter(i => selectedIds.has(i.id));
-  const unassigned = commitItems.filter(i => !itemCategories.has(i.id));
-  const modalAllSelected =
-    commitItems.length > 0 && commitItems.every(i => modalSelectedIds.has(i.id));
+  const existingItems = commitItems.filter(i => i.exists_in_inventory === 1);
+  const unknownItems = commitItems.filter(
+    i => i.lookup_status !== 'new_candidate' && i.exists_in_inventory !== 1
+  );
+  const newItems = getCommitEligibleItems(items, selectedIds);
+  const unassigned = newItems.filter(i => !itemCategories.has(i.id));
+  const modalEligibleSelectedCount = newItems.filter(i => modalSelectedIds.has(i.id)).length;
+  const modalAllSelected = newItems.length > 0 && newItems.every(i => modalSelectedIds.has(i.id));
+  const skippedBeforeCommitCount = existingItems.length + unknownItems.length;
 
   return (
     <AnimatePresence>
@@ -66,8 +73,7 @@ export function CommitModal({
                 <div>
                   <h3 className="text-lg font-bold text-navy-900">Commit to Inventory</h3>
                   <p className="text-sm text-slate-500 mt-0.5">
-                    {commitItems.length} item{commitItems.length !== 1 ? 's' : ''} selected — assign
-                    a category to each
+                    {newItems.length} new item{newItems.length !== 1 ? 's' : ''} ready to commit
                   </p>
                 </div>
                 <button
@@ -86,8 +92,11 @@ export function CommitModal({
                   className="flex-1 px-3 py-1.5 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-navy-700"
                 >
                   <option value="">
-                    — Apply category to{' '}
-                    {modalSelectedIds.size > 0 ? `${modalSelectedIds.size} checked` : 'all'} —
+                    - Apply category to{' '}
+                    {modalEligibleSelectedCount > 0
+                      ? `${modalEligibleSelectedCount} checked`
+                      : 'all'}{' '}
+                    -
                   </option>
                   {categories.map(cat => (
                     <option key={cat.id} value={cat.id}>
@@ -113,6 +122,30 @@ export function CommitModal({
                 </div>
               ) : (
                 <>
+                  {skippedBeforeCommitCount > 0 && (
+                    <div className="mx-4 mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                      <div className="flex gap-2">
+                        <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-700" />
+                        <div>
+                          <p className="font-semibold">Some selected items will not be committed</p>
+                          <p className="mt-0.5">
+                            {existingItems.length > 0 &&
+                              `${existingItems.length} item${
+                                existingItems.length !== 1 ? 's' : ''
+                              } already exist${
+                                existingItems.length === 1 ? 's' : ''
+                              } in inventory and will be skipped.`}
+                            {existingItems.length > 0 && unknownItems.length > 0 ? ' ' : ''}
+                            {unknownItems.length > 0 &&
+                              `${unknownItems.length} unknown item${
+                                unknownItems.length !== 1 ? 's' : ''
+                              } will be skipped until edited or identified.`}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Select-all row */}
                   <div className="px-4 py-2 border-b border-slate-100 flex items-center gap-3 text-xs text-slate-500 bg-slate-50">
                     <input
@@ -120,7 +153,7 @@ export function CommitModal({
                       checked={modalAllSelected}
                       onChange={() =>
                         onSetModalSelectedIds(
-                          modalAllSelected ? new Set() : new Set(commitItems.map(i => i.id))
+                          modalAllSelected ? new Set() : new Set(newItems.map(i => i.id))
                         )
                       }
                       className="rounded"
@@ -132,6 +165,9 @@ export function CommitModal({
                     const catId = itemCategories.get(item.id);
                     const checked = modalSelectedIds.has(item.id);
                     const displayUnit = item.unit?.trim() ?? '';
+                    const isExisting = item.exists_in_inventory === 1;
+                    const isUnknown = item.lookup_status !== 'new_candidate' && !isExisting;
+                    const isSkipped = isExisting || isUnknown;
                     return (
                       <div
                         key={item.id}
@@ -143,12 +179,13 @@ export function CommitModal({
                         <input
                           type="checkbox"
                           checked={checked}
+                          disabled={isSkipped}
                           onChange={() => {
                             const next = new Set(modalSelectedIds);
                             checked ? next.delete(item.id) : next.add(item.id);
                             onSetModalSelectedIds(next);
                           }}
-                          className="rounded shrink-0"
+                          className="rounded shrink-0 disabled:cursor-not-allowed disabled:opacity-40"
                         />
                         {item.image ? (
                           <img
@@ -179,30 +216,43 @@ export function CommitModal({
                             UPC {item.upc}
                           </p>
                           <p className="text-xs text-slate-400">
-                            ×{item.quantity}
+                            x{item.quantity}
                             {item.unit ? ` ${item.unit}` : ''}
                           </p>
-                        </div>
-                        <select
-                          value={catId ?? ''}
-                          onChange={e => {
-                            const val = Number(e.target.value) || undefined;
-                            onSetItemCategory(item.id, val);
-                          }}
-                          className={cn(
-                            'text-xs px-2 py-1.5 rounded-lg border focus:outline-none focus:ring-1 focus:ring-navy-700 bg-white shrink-0 max-w-[140px]',
-                            catId
-                              ? 'border-slate-300 text-slate-700'
-                              : 'border-amber-300 text-amber-600'
+                          {isSkipped && (
+                            <p className="mt-1 text-xs font-medium text-amber-600">
+                              {isExisting
+                                ? 'Already in inventory - skipped on commit'
+                                : 'Unknown item - edit before committing'}
+                            </p>
                           )}
-                        >
-                          <option value="">— Pick —</option>
-                          {categories.map(cat => (
-                            <option key={cat.id} value={cat.id}>
-                              {cat.name}
-                            </option>
-                          ))}
-                        </select>
+                        </div>
+                        {isSkipped ? (
+                          <span className="shrink-0 rounded-lg border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs font-medium text-amber-700">
+                            Skipped
+                          </span>
+                        ) : (
+                          <select
+                            value={catId ?? ''}
+                            onChange={e => {
+                              const val = Number(e.target.value) || undefined;
+                              onSetItemCategory(item.id, val);
+                            }}
+                            className={cn(
+                              'text-xs px-2 py-1.5 rounded-lg border focus:outline-none focus:ring-1 focus:ring-navy-700 bg-white shrink-0 max-w-[140px]',
+                              catId
+                                ? 'border-slate-300 text-slate-700'
+                                : 'border-amber-300 text-amber-600'
+                            )}
+                          >
+                            <option value="">- Pick -</option>
+                            {categories.map(cat => (
+                              <option key={cat.id} value={cat.id}>
+                                {cat.name}
+                              </option>
+                            ))}
+                          </select>
+                        )}
                       </div>
                     );
                   })}
@@ -219,7 +269,7 @@ export function CommitModal({
                 </span>
               )}
               {unassigned.length === 0 && (
-                <span className="flex-1 text-xs text-emerald-600">All items have a category ✓</span>
+                <span className="flex-1 text-xs text-emerald-600">All items have a category</span>
               )}
               <button
                 onClick={onClose}
@@ -229,10 +279,10 @@ export function CommitModal({
               </button>
               <button
                 onClick={onConfirmCommit}
-                disabled={commitItems.length === 0 || unassigned.length > 0 || categoriesLoading}
+                disabled={newItems.length === 0 || unassigned.length > 0 || categoriesLoading}
                 className="px-4 py-2 rounded-lg bg-navy-900 text-white text-sm font-medium hover:bg-navy-800 transition-colors disabled:opacity-50"
               >
-                Commit {commitItems.length > 0 ? `(${commitItems.length})` : ''}
+                Commit {newItems.length > 0 ? `(${newItems.length})` : ''}
               </button>
             </div>
           </motion.div>

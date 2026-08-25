@@ -73,6 +73,12 @@ function normalizeInventoryStatus(value: unknown, fallback = 'Active'): 'Active'
   return status;
 }
 
+function isGenericImportSheetName(name: string): boolean {
+  return /^(inventory|sheet\s*\d*|worksheet\s*\d*|items?|products?|catalog|data)$/i.test(
+    name.trim()
+  );
+}
+
 // The inventory.category_id foreign key only proves the category exists — not that
 // it belongs to the caller's store. Without this check a client can attach its items
 // to another tenant's category, whose name then leaks back through the
@@ -181,6 +187,33 @@ inventoryRouter.get(
 
     const filename = `inventory-${Date.now()}`;
 
+    const EXPORT_COLUMNS = [
+      { key: 'external_system', label: 'external_system' },
+      { key: 'external_store_id', label: 'external_store_id' },
+      { key: 'external_category_id', label: 'external_category_id' },
+      { key: 'external_item_id', label: 'external_item_id' },
+      { key: 'external_sku', label: 'external_sku' },
+      { key: 'item_name', label: 'item_name' },
+      { key: 'description', label: 'description' },
+      { key: 'quantity', label: 'quantity' },
+      { key: 'unit', label: 'unit' },
+      { key: 'sale_price', label: 'sale_price' },
+      { key: 'tax_percent', label: 'tax_percent' },
+      { key: 'upc', label: 'upc' },
+      { key: 'number', label: 'sku' },
+      { key: 'tag_names', label: 'tag_names' },
+      { key: 'status', label: 'status' },
+      { key: 'sync_status', label: 'sync_status' },
+      { key: 'last_imported_at', label: 'last_imported_at' },
+      { key: 'last_exported_at', label: 'last_exported_at' },
+      { key: 'created_at', label: 'created_at' },
+    ] as const;
+
+    const serializeExportRow = (row: any) => {
+      const { number, ...rest } = row;
+      return { ...rest, sku: number };
+    };
+
     // Group rows by category — shared across xlsx and pdf
     const grouped: Record<string, any[]> = {};
     for (const r of rows) {
@@ -199,31 +232,11 @@ inventoryRouter.get(
         const escaped = /^[=+\-@\t\r]/.test(raw) ? `'${raw}` : raw;
         return `"${escaped.replaceAll('"', '""')}"`;
       };
-      const CSV_COLS = [
-        'external_system',
-        'external_store_id',
-        'external_category_id',
-        'external_item_id',
-        'external_sku',
-        'item_name',
-        'description',
-        'quantity',
-        'unit',
-        'sale_price',
-        'tax_percent',
-        'upc',
-        'number',
-        'tag_names',
-        'status',
-        'sync_status',
-        'last_imported_at',
-        'last_exported_at',
-        'created_at',
-      ];
-      const lines: string[] = [CSV_COLS.map(csvCell).join(',')];
+      const lines: string[] = [EXPORT_COLUMNS.map(column => csvCell(column.label)).join(',')];
       for (const [cat, items] of Object.entries(grouped)) {
         lines.push(`"### ${cat}"`);
-        for (const r of items) lines.push(CSV_COLS.map(c => csvCell(r[c])).join(','));
+        for (const r of items)
+          lines.push(EXPORT_COLUMNS.map(column => csvCell(r[column.key])).join(','));
       }
       res.setHeader('Content-Type', 'text/csv');
       res.setHeader('Content-Disposition', `attachment; filename="${filename}.csv"`);
@@ -235,7 +248,7 @@ inventoryRouter.get(
       res.setHeader('Content-Disposition', `attachment; filename="${filename}.json"`);
       return res.send(
         JSON.stringify(
-          { exported_at: exportTimestamp, total: rows.length, items: rows },
+          { exported_at: exportTimestamp, total: rows.length, items: rows.map(serializeExportRow) },
           null,
           2
         )
@@ -276,34 +289,13 @@ inventoryRouter.get(
     }
 
     // xlsx — one sheet per category, sheet name = category name
-    const XLSX_COLS = [
-      'external_system',
-      'external_store_id',
-      'external_category_id',
-      'external_item_id',
-      'external_sku',
-      'item_name',
-      'description',
-      'quantity',
-      'unit',
-      'sale_price',
-      'tax_percent',
-      'upc',
-      'number',
-      'tag_names',
-      'status',
-      'sync_status',
-      'last_imported_at',
-      'last_exported_at',
-      'created_at',
-    ];
     const wb = new ExcelJS.Workbook();
     for (const [cat, items] of Object.entries(grouped)) {
       // Excel sheet names: max 31 chars, strip invalid characters [ ] : * ? / \
       const sheetName = cat.replace(/[[\]:*?/\\]/g, '').slice(0, 31) || 'Sheet';
       const ws = wb.addWorksheet(sheetName);
-      ws.addRow(XLSX_COLS);
-      for (const r of items) ws.addRow(XLSX_COLS.map(c => r[c] ?? ''));
+      ws.addRow(EXPORT_COLUMNS.map(column => column.label));
+      for (const r of items) ws.addRow(EXPORT_COLUMNS.map(column => r[column.key] ?? ''));
     }
     const buf = await wb.xlsx.writeBuffer();
     res.setHeader(
@@ -836,18 +828,26 @@ inventoryRouter.post(
       flowers: 'Flower2',
     };
 
+    const categoryIdCache = new Map<string, number | null>();
     const getCategoryId = (name: string): number | null => {
       const trimmed = String(name || '').trim();
       if (!trimmed) return null;
+      const cacheKey = trimmed.toLowerCase();
+      if (categoryIdCache.has(cacheKey)) return categoryIdCache.get(cacheKey) ?? null;
       const existing = db
         .prepare('SELECT id FROM categories WHERE name = ? AND store_id = ?')
         .get(trimmed, user.store_id) as any;
-      if (existing) return existing.id;
+      if (existing) {
+        categoryIdCache.set(cacheKey, existing.id);
+        return existing.id;
+      }
       const icon = categoryIconMap[trimmed.toLowerCase()] ?? 'Package';
       const info = db
         .prepare('INSERT INTO categories (name, icon, store_id) VALUES (?, ?, ?)')
         .run(trimmed, icon, user.store_id);
-      return info.lastInsertRowid as number;
+      const id = info.lastInsertRowid as number;
+      categoryIdCache.set(cacheKey, id);
+      return id;
     };
 
     const checkExternalItem = db.prepare(
@@ -896,10 +896,13 @@ inventoryRouter.post(
     WHERE id = ? AND store_id = ?
   `);
 
+    const isMultiSheetImport = sheetsData.length > 1;
+
     const transaction = db.transaction(() => {
       for (const sheet of sheetsData) {
-        // Sheet name is the category for all rows on this sheet
-        const catId = getCategoryId(sheet.sheetName);
+        const sheetCatId = !isGenericImportSheetName(sheet.sheetName)
+          ? getCategoryId(sheet.sheetName)
+          : null;
 
         for (const [rowIdx, row] of sheet.rows.entries()) {
           const item: Record<string, any> = {};
@@ -940,6 +943,9 @@ inventoryRouter.post(
             const desc = readImportedString(item.description);
             const unit = readImportedString(item.unit);
             const tags = readImportedString(item.tag_names);
+            const rowCategory = readImportedString(item.category);
+            const catId =
+              isMultiSheetImport || !rowCategory ? sheetCatId : getCategoryId(rowCategory);
             const rawImage = readImportedString(item.image);
             const image = rawImage ? normalizeImageUrl(rawImage) : null;
             const importedAt = new Date().toISOString();

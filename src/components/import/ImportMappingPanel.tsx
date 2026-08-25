@@ -1,3 +1,4 @@
+import { useMemo, useState } from 'react';
 import {
   AlertTriangle,
   Check,
@@ -6,10 +7,13 @@ import {
   Loader2,
   Lock,
   RefreshCw,
+  Tags,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { DEST_FIELDS } from './types';
-import type { DestinationField, SheetData } from './types';
+import type { DestinationField, RowData, SheetData } from './types';
+
+const CATEGORY_VALUE_LIMIT = 12;
 
 interface Props {
   fileName: string | null;
@@ -42,6 +46,38 @@ function ErrorBanner({ message, className }: Readonly<{ message: string; classNa
   );
 }
 
+function readCellAsLabel(row: RowData, header: string): string | null {
+  const value = row[header];
+  if (value === null || value === undefined) return null;
+
+  const label = String(value).trim();
+  return label.length > 0 ? label : null;
+}
+
+function getCategoryValues(sheet: SheetData, categoryHeaders: readonly string[]): string[] {
+  if (categoryHeaders.length === 0) return [];
+
+  const values = new Map<string, string>();
+
+  for (const row of sheet.rows) {
+    for (const header of categoryHeaders) {
+      const label = readCellAsLabel(row, header);
+      if (!label) continue;
+
+      const key = label.toLocaleLowerCase();
+      if (!values.has(key)) values.set(key, label);
+    }
+  }
+
+  return [...values.values()].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+}
+
+function isGenericImportSheetName(name: string): boolean {
+  return /^(inventory|sheet\s*\d*|worksheet\s*\d*|items?|products?|catalog|data)$/i.test(
+    name.trim()
+  );
+}
+
 export function ImportMappingPanel({
   fileName,
   sheets,
@@ -58,6 +94,29 @@ export function ImportMappingPanel({
   onMappingChange,
   onConfirm,
 }: Readonly<Props>) {
+  const [categoryReview, setCategoryReview] = useState({ key: '', reviewed: false });
+  const categoryMappingHeaders = useMemo(
+    () => activeSheet.headers.filter(header => activeSheet.mapping[header] === 'category'),
+    [activeSheet]
+  );
+  const categoryValues = useMemo(
+    () => getCategoryValues(activeSheet, categoryMappingHeaders),
+    [activeSheet, categoryMappingHeaders]
+  );
+  const visibleCategoryValues = categoryValues.slice(0, CATEGORY_VALUE_LIMIT);
+  const hiddenCategoryValueCount = Math.max(0, categoryValues.length - visibleCategoryValues.length);
+  const activeSheetUsesCategory = !isGenericImportSheetName(activeSheet.name);
+  const categorySheetSummaries = sheets.map(sheet => ({
+    name: sheet.name,
+    rowCount: sheet.rowCount,
+    categoryName: isGenericImportSheetName(sheet.name) ? null : sheet.name,
+  }));
+  const categorySheetCount = categorySheetSummaries.filter(sheet => sheet.categoryName).length;
+  const categoryReviewKey = isMultiSheet
+    ? sheets.map(sheet => `${sheet.name}:${sheet.rowCount}`).join('|')
+    : categoryMappingHeaders.join('|') || 'uncategorized';
+  const categoryReviewed = categoryReview.key === categoryReviewKey && categoryReview.reviewed;
+
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
       <style>{`
@@ -120,7 +179,9 @@ export function ImportMappingPanel({
                 Map columns for sheet: <span className="text-emerald-700">{activeSheet.name}</span>
               </h3>
               <p className="mt-0.5 text-xs text-slate-500">
-                Items will be assigned to category "{activeSheet.name}"
+                {activeSheetUsesCategory
+                  ? `Items will be assigned to category "${activeSheet.name}"`
+                  : 'This generic sheet name will not create a category'}
               </p>
             </div>
             <button
@@ -161,7 +222,9 @@ export function ImportMappingPanel({
                       {isLockedCategory ? (
                         <div className="flex items-center gap-2 px-3 py-1.5 text-sm italic text-slate-400">
                           <Lock size={13} />
-                          Sheet name used as category
+                          {activeSheetUsesCategory
+                            ? 'Sheet name used as category'
+                            : 'Generic sheet name ignored'}
                         </div>
                       ) : (
                         <select
@@ -195,9 +258,9 @@ export function ImportMappingPanel({
         </div>
       </div>
 
-      {activeSheet.preview.length > 0 && (
-        <div className="px-5 pb-2">
-          <h3 className="mb-2 text-sm font-semibold text-navy-900">Preview (first 5 rows)</h3>
+      <div className="px-5 pb-2">
+        <h3 className="mb-2 text-sm font-semibold text-navy-900">Preview (first 5 rows)</h3>
+        {activeSheet.preview.length > 0 ? (
           <div className="overflow-x-auto rounded-lg border border-slate-200">
             <table className="w-full text-xs">
               <thead className="border-b border-slate-200 bg-slate-50">
@@ -233,8 +296,97 @@ export function ImportMappingPanel({
               </tbody>
             </table>
           </div>
+        ) : (
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+            No row preview is available for this sheet.
+          </div>
+        )}
+      </div>
+
+      <div className="mx-5 mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+        <div className="flex gap-3">
+          <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-700" />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-amber-950">Review category assignment</p>
+            {isMultiSheet ? (
+              <>
+                <p className="mt-1 text-sm text-amber-900">
+                  Worksheet tabs with real category names will be imported as categories. Generic
+                  tab names like Inventory are left uncategorized.
+                </p>
+                <p className="mt-3 flex items-center gap-1.5 text-xs font-semibold tracking-wider text-amber-900 uppercase">
+                  <Tags size={13} /> Category names
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {categorySheetSummaries.map(sheet => (
+                    <span
+                      key={sheet.name}
+                      className="rounded-md border border-amber-300 bg-white px-2 py-1 text-xs font-medium text-amber-950"
+                    >
+                      {sheet.categoryName
+                        ? `${sheet.categoryName} (${sheet.rowCount})`
+                        : `${sheet.name}: uncategorized (${sheet.rowCount})`}
+                    </span>
+                  ))}
+                </div>
+                {categorySheetCount === 0 && (
+                  <p className="mt-2 rounded-md border border-amber-200 bg-white px-3 py-2 text-sm text-amber-900">
+                    No category names were found in the worksheet tabs.
+                  </p>
+                )}
+              </>
+            ) : (
+              <>
+                <p className="mt-1 text-sm text-amber-900">
+                  {categoryMappingHeaders.length > 0
+                    ? `Rows will use the mapped category column: ${categoryMappingHeaders.join(', ')}.`
+                    : 'No Category column is mapped, so imported rows will not be assigned to a category.'}
+                </p>
+                {categoryMappingHeaders.length > 0 && (
+                  <div className="mt-3">
+                    <p className="flex items-center gap-1.5 text-xs font-semibold tracking-wider text-amber-900 uppercase">
+                      <Tags size={13} /> Category names found
+                    </p>
+                    {categoryValues.length > 0 ? (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {visibleCategoryValues.map(category => (
+                          <span
+                            key={category}
+                            className="max-w-full rounded-md border border-amber-300 bg-white px-2 py-1 text-xs font-medium break-words text-amber-950"
+                          >
+                            {category}
+                          </span>
+                        ))}
+                        {hiddenCategoryValueCount > 0 && (
+                          <span className="rounded-md border border-amber-300 bg-amber-100 px-2 py-1 text-xs font-medium text-amber-950">
+                            +{hiddenCategoryValueCount} more
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="mt-2 rounded-md border border-amber-200 bg-white px-3 py-2 text-sm text-amber-900">
+                        No category names were found in the mapped column.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+            <label className="mt-4 flex items-start gap-2 text-sm font-medium text-amber-950">
+              <input
+                type="checkbox"
+                checked={categoryReviewed}
+                onChange={event =>
+                  setCategoryReview({ key: categoryReviewKey, reviewed: event.target.checked })
+                }
+                disabled={isImporting}
+                className="mt-0.5 h-4 w-4 rounded border-amber-400 text-navy-900 focus:ring-navy-700"
+              />
+              <span>I reviewed the category assignment for this import.</span>
+            </label>
+          </div>
         </div>
-      )}
+      </div>
 
       {isImporting && (
         <div className="mx-5 mb-4 rounded-xl border border-navy-200 bg-navy-50 p-4">
@@ -267,7 +419,7 @@ export function ImportMappingPanel({
         </div>
         <button
           onClick={onConfirm}
-          disabled={mappedCount === 0 || isImporting}
+          disabled={mappedCount === 0 || !categoryReviewed || isImporting}
           className="flex items-center gap-2 rounded-xl bg-navy-900 px-6 py-2.5 font-medium text-white transition-colors hover:bg-navy-800 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {isImporting ? (

@@ -279,7 +279,7 @@ export function FeedPanel({
             onClick={onDismissAlert}
             className="text-amber-600 hover:text-amber-800 shrink-0 text-lg leading-none"
           >
-            Ã—
+            x
           </button>
         </div>
       )}
@@ -290,14 +290,14 @@ export function FeedPanel({
           className="flex items-center gap-3 px-4 py-3 rounded-xl text-sm mx-4"
           style={{ background: '#eef2f8', border: '1px solid #b6c8e0', color: '#1e3a5f' }}
         >
-          <span className="text-lg">âœ…</span>
+          <span className="text-lg">Done</span>
           <span className="flex-1">
             {sessionLabel ? (
               <>
-                <strong>{sessionLabel}</strong> â€” committed to inventory. View only.
+                <strong>{sessionLabel}</strong> - committed to inventory. View only.
               </>
             ) : (
-              'This session has been committed to inventory â€” view only.'
+              'This session has been committed to inventory - view only.'
             )}
           </span>
         </div>

@@ -8,7 +8,7 @@ import { useScanSession } from '../hooks/useScanSession';
 import { useHardwareScanner } from '../hooks/useHardwareScanner';
 import { useDraftManagement } from '../hooks/useDraftManagement';
 import { useEditItem } from '../hooks/useEditItem';
-import { useCommitModal } from '../hooks/useCommitModal';
+import { getBulkCategoryTargetIds, useCommitModal } from '../hooks/useCommitModal';
 import { ScannerPanel } from '../components/scan/ScannerPanel';
 import { FeedPanel } from '../components/scan/FeedPanel';
 import { EditItemModal } from '../components/scan/EditItemModal';
@@ -55,6 +55,7 @@ export default function Scan() {
   const commit = useCommitModal(
     session.sessionId,
     session.selectedIds,
+    session.items,
     session.isBusyRef,
     session.lastPollCursorRef,
     session.fetchSessionItems,
@@ -88,7 +89,7 @@ export default function Scan() {
           <h2 className="text-2xl font-bold text-navy-900">Live Scan Center</h2>
           <p className="text-slate-500">
             {scanner.scanInputMode === 'hardware'
-              ? 'Hardware scanner mode — pull the trigger on any barcode'
+              ? 'Hardware scanner mode - pull the trigger on any barcode'
               : 'Connect a mobile device to start remote scanning'}
           </p>
         </div>
@@ -208,11 +209,11 @@ export default function Scan() {
           if (!commit.bulkCategoryId) return;
           commit.setItemCategories(prev => {
             const next = new Map(prev);
-            const commitItems = session.items.filter(i => session.selectedIds.has(i.id));
-            const targets =
-              commit.modalSelectedIds.size > 0
-                ? [...commit.modalSelectedIds]
-                : commitItems.map(i => i.id);
+            const targets = getBulkCategoryTargetIds(
+              session.items,
+              session.selectedIds,
+              commit.modalSelectedIds
+            );
             targets.forEach(id => next.set(id, commit.bulkCategoryId!));
             return next;
           });

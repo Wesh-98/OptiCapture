@@ -1,11 +1,48 @@
 import { useState } from 'react';
 import type { MutableRefObject } from 'react';
-import type { Category, UiStatus } from '../components/scan/types';
+import type { Category, SessionItem, UiStatus } from '../components/scan/types';
 
-//Opens commit modal, fetches categories, handels per-item category assignments and commit.
+export function isCommitEligibleItem(item: SessionItem): boolean {
+  return item.lookup_status === 'new_candidate' && item.exists_in_inventory !== 1;
+}
+
+export function getCommitEligibleItems(
+  items: SessionItem[],
+  selectedIds: Set<number>
+): SessionItem[] {
+  return items.filter(item => selectedIds.has(item.id) && isCommitEligibleItem(item));
+}
+
+export function buildCommitAssignments(
+  items: SessionItem[],
+  selectedIds: Set<number>,
+  itemCategories: Map<number, number>
+): Array<{ id: number; category_id: number }> {
+  return getCommitEligibleItems(items, selectedIds)
+    .filter(item => itemCategories.has(item.id))
+    .map(item => ({
+      id: item.id,
+      category_id: itemCategories.get(item.id)!,
+    }));
+}
+
+export function getBulkCategoryTargetIds(
+  items: SessionItem[],
+  selectedIds: Set<number>,
+  modalSelectedIds: Set<number>
+): number[] {
+  const eligibleItems = getCommitEligibleItems(items, selectedIds);
+  const targetIds =
+    modalSelectedIds.size > 0 ? modalSelectedIds : new Set(eligibleItems.map(item => item.id));
+
+  return eligibleItems.filter(item => targetIds.has(item.id)).map(item => item.id);
+}
+
+// Opens commit modal, fetches categories, handles per-item category assignments and commit.
 export function useCommitModal(
   sessionId: string | null,
   selectedIds: Set<number>,
+  items: SessionItem[],
   isBusyRef: MutableRefObject<boolean>,
   lastPollCursorRef: MutableRefObject<{ updatedAt: string; id: number } | null>,
   refreshSession: (fullRefresh?: boolean) => Promise<void>,
@@ -39,6 +76,11 @@ export function useCommitModal(
 
   const openCommitModal = async () => {
     if (!sessionId || selectedIds.size === 0 || isBusyRef.current) return;
+    if (getCommitEligibleItems(items, selectedIds).length === 0) {
+      addToast('warning', 'Select at least one new item before committing.');
+      return;
+    }
+
     const activeCategories = await fetchCategories();
     if (activeCategories.length === 0) {
       addToast('error', 'No active categories found. Create a category before committing.');
@@ -52,11 +94,12 @@ export function useCommitModal(
 
   const confirmCommit = async () => {
     if (!sessionId || isBusyRef.current) return;
-    if (itemCategories.size !== selectedIds.size) {
-      addToast('warning', 'Assign a category to every selected item before committing.');
+    const commitEligibleItems = getCommitEligibleItems(items, selectedIds);
+    if (commitEligibleItems.some(item => !itemCategories.has(item.id))) {
+      addToast('warning', 'Assign a category to every new item before committing.');
       return;
     }
-    const assignments = [...selectedIds].map(id => ({ id, category_id: itemCategories.get(id)! }));
+    const assignments = buildCommitAssignments(items, selectedIds, itemCategories);
     if (assignments.length === 0) return;
     setShowCommitModal(false);
     isBusyRef.current = true;
@@ -75,7 +118,7 @@ export function useCommitModal(
       let toastMsg: string;
       if (skipped > 0) {
         const dupSuffix = result.skippedExisting !== 1 ? 's' : '';
-        toastMsg = `${result.inserted ?? 0} committed — ${result.skippedExisting ?? 0} duplicate${dupSuffix}, ${result.skippedUnknown ?? 0} unknown skipped`;
+        toastMsg = `${result.inserted ?? 0} committed - ${result.skippedExisting ?? 0} duplicate${dupSuffix}, ${result.skippedUnknown ?? 0} unknown skipped`;
       } else {
         toastMsg = `${result.inserted ?? 0} item(s) committed to inventory`;
       }
