@@ -50,6 +50,12 @@ import {
   shouldListenForHardwareScanner,
 } from '../src/hooks/useHardwareScanner.js';
 import {
+  buildCommitAssignments,
+  getBulkCategoryTargetIds,
+  getCommitEligibleItems,
+  isCommitEligibleItem,
+} from '../src/hooks/useCommitModal.js';
+import {
   buildCameraErrorMessage,
   clearScannerVideo,
   getDeviceId,
@@ -448,6 +454,42 @@ describe('scan session helpers', () => {
       selectedIds: new Set([3, 4]),
       manuallyDeselected: new Set([7]),
     });
+  });
+});
+
+describe('commit modal helpers', () => {
+  it('commits only selected new candidate items that are not already in inventory', () => {
+    const items = [
+      makeSessionItem({ id: 10, lookup_status: 'new_candidate', exists_in_inventory: 0 }),
+      makeSessionItem({ id: 11, lookup_status: 'existing', exists_in_inventory: 1 }),
+      makeSessionItem({ id: 12, lookup_status: 'unknown', exists_in_inventory: 0 }),
+      makeSessionItem({ id: 13, lookup_status: 'new_candidate', exists_in_inventory: 0 }),
+    ];
+    const selectedIds = new Set([10, 11, 12]);
+
+    expect(isCommitEligibleItem(items[0])).toBe(true);
+    expect(isCommitEligibleItem(items[1])).toBe(false);
+    expect(isCommitEligibleItem(items[2])).toBe(false);
+    expect(getCommitEligibleItems(items, selectedIds).map(item => item.id)).toEqual([10]);
+  });
+
+  it('builds assignments and bulk targets from eligible commit items only', () => {
+    const items = [
+      makeSessionItem({ id: 10, lookup_status: 'new_candidate', exists_in_inventory: 0 }),
+      makeSessionItem({ id: 11, lookup_status: 'existing', exists_in_inventory: 1 }),
+      makeSessionItem({ id: 12, lookup_status: 'new_candidate', exists_in_inventory: 0 }),
+    ];
+    const selectedIds = new Set([10, 11, 12]);
+    const itemCategories = new Map([
+      [10, 4],
+      [11, 5],
+    ]);
+
+    expect(buildCommitAssignments(items, selectedIds, itemCategories)).toEqual([
+      { id: 10, category_id: 4 },
+    ]);
+    expect(getBulkCategoryTargetIds(items, selectedIds, new Set())).toEqual([10, 12]);
+    expect(getBulkCategoryTargetIds(items, selectedIds, new Set([11, 12]))).toEqual([12]);
   });
 });
 

@@ -26,7 +26,9 @@ beforeAll(async () => {
 beforeEach(() => {
   db.prepare('DELETE FROM inventory').run();
   db.prepare('DELETE FROM logs').run();
-  db.prepare("DELETE FROM categories WHERE store_id = 1 AND name IN ('Beverages')").run();
+  db.prepare(
+    "DELETE FROM categories WHERE store_id = 1 AND name IN ('Beverages', 'Inventory', 'Imported Department', 'Sheet Department')"
+  ).run();
 });
 
 describe('inventory listing and export', () => {
@@ -93,10 +95,10 @@ describe('inventory listing and export', () => {
 
     db.prepare(
       `
-      INSERT INTO inventory (item_name, quantity, category_id, status, upc, store_id)
-      VALUES (?, ?, ?, 'Active', ?, 1)
+      INSERT INTO inventory (item_name, quantity, category_id, status, upc, number, store_id)
+      VALUES (?, ?, ?, 'Active', ?, ?, 1)
     `
-    ).run('Exported Item', 7, categoryId, 'inv-export-1');
+    ).run('Exported Item', 7, categoryId, 'inv-export-1', 'store-sku-1');
 
     const res = await request
       .get('/api/inventory/export')
@@ -107,6 +109,8 @@ describe('inventory listing and export', () => {
     expect(res.headers['content-type']).toMatch(/application\/json/);
     expect(res.body.total).toBe(1);
     expect(res.body.items[0].item_name).toBe('Exported Item');
+    expect(res.body.items[0].sku).toBe('store-sku-1');
+    expect(res.body.items[0]).not.toHaveProperty('number');
   });
 
   it('exports inventory as CSV with category grouping markers', async () => {
@@ -129,7 +133,8 @@ describe('inventory listing and export', () => {
     expect(res.status).toBe(200);
     expect(res.headers['content-type']).toMatch(/text\/csv/);
     expect(res.text).toContain('"external_system","external_store_id","external_category_id"');
-    expect(res.text).toContain('"item_name","description","quantity"');
+    expect(res.text).toContain('"upc","sku","tag_names"');
+    expect(res.text).not.toContain('"number"');
     expect(res.text).toContain('"CSV Export Item"');
     expect(res.text).toContain('"### ');
   });
@@ -189,6 +194,7 @@ describe('inventory listing and export', () => {
 
     expect(workbook.worksheets).toHaveLength(1);
     expect(workbook.worksheets[0].name).toBe('Very Long Category  Name 123456');
+    expect(workbook.worksheets[0].getRow(1).getCell(13).value).toBe('sku');
     expect(workbook.worksheets[0].getRow(2).getCell(6).value).toBe('XLSX Export Item');
   });
 });
@@ -423,6 +429,155 @@ describe('inventory batch upload parsing', () => {
 });
 
 describe('inventory batch confirm', () => {
+  it('uses mapped row categories for single-sheet imports', async () => {
+    const res = await request
+      .post('/api/inventory/batch-confirm')
+      .set('Cookie', adminCookie)
+      .send({
+        sheetsData: [
+          {
+            sheetName: 'Inventory',
+            mapping: {
+              Name: 'item_name',
+              UPC: 'upc',
+              Category: 'category',
+            },
+            rows: [
+              {
+                Name: 'Department Routed Item',
+                UPC: 'row-category-upc-1',
+                Category: 'Imported Department',
+              },
+            ],
+          },
+        ],
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ added: 1, updated: 0, skipped: 0 });
+
+    const importedItem = db
+      .prepare(
+        `
+        SELECT c.name AS category_name
+        FROM inventory i
+        LEFT JOIN categories c ON i.category_id = c.id
+        WHERE i.upc = ?
+      `
+      )
+      .get('row-category-upc-1') as any;
+    expect(importedItem.category_name).toBe('Imported Department');
+    expect(
+      (
+        db
+          .prepare(
+            "SELECT COUNT(*) AS count FROM categories WHERE store_id = 1 AND name = 'Inventory'"
+          )
+          .get() as any
+      ).count
+    ).toBe(0);
+  });
+
+  it('uses sheet names as categories for multi-sheet imports', async () => {
+    const res = await request
+      .post('/api/inventory/batch-confirm')
+      .set('Cookie', adminCookie)
+      .send({
+        sheetsData: [
+          {
+            sheetName: 'Inventory',
+            mapping: {
+              Name: 'item_name',
+              UPC: 'upc',
+              Category: 'category',
+            },
+            rows: [
+              {
+                Name: 'Inventory Sheet Item',
+                UPC: 'multi-sheet-upc-1',
+                Category: 'Imported Department',
+              },
+            ],
+          },
+          {
+            sheetName: 'Sheet Department',
+            mapping: {
+              Name: 'item_name',
+              UPC: 'upc',
+            },
+            rows: [{ Name: 'Second Sheet Item', UPC: 'multi-sheet-upc-2' }],
+          },
+        ],
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ added: 2, updated: 0, skipped: 0 });
+
+    const importedItems = db
+      .prepare(
+        `
+        SELECT i.upc, c.name AS category_name
+        FROM inventory i
+        LEFT JOIN categories c ON i.category_id = c.id
+        WHERE i.upc IN (?, ?)
+        ORDER BY i.upc
+      `
+      )
+      .all('multi-sheet-upc-1', 'multi-sheet-upc-2') as Array<{
+      upc: string;
+      category_name: string;
+    }>;
+
+    expect(importedItems).toEqual([
+      { upc: 'multi-sheet-upc-1', category_name: null },
+      { upc: 'multi-sheet-upc-2', category_name: 'Sheet Department' },
+    ]);
+    expect(
+      (
+        db
+          .prepare(
+            "SELECT COUNT(*) AS count FROM categories WHERE store_id = 1 AND name = 'Inventory'"
+          )
+          .get() as any
+      ).count
+    ).toBe(0);
+  });
+
+  it('does not create generic worksheet-name categories when no row category is mapped', async () => {
+    const res = await request
+      .post('/api/inventory/batch-confirm')
+      .set('Cookie', adminCookie)
+      .send({
+        sheetsData: [
+          {
+            sheetName: 'Inventory',
+            mapping: {
+              Name: 'item_name',
+              UPC: 'upc',
+            },
+            rows: [{ Name: 'Generic Sheet Item', UPC: 'generic-sheet-upc-1' }],
+          },
+        ],
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ added: 1, updated: 0, skipped: 0 });
+
+    const importedItem = db
+      .prepare('SELECT category_id FROM inventory WHERE upc = ?')
+      .get('generic-sheet-upc-1') as any;
+    expect(importedItem.category_id).toBeNull();
+    expect(
+      (
+        db
+          .prepare(
+            "SELECT COUNT(*) AS count FROM categories WHERE store_id = 1 AND name = 'Inventory'"
+          )
+          .get() as any
+      ).count
+    ).toBe(0);
+  });
+
   it('preserves external item mappings through import updates and export', async () => {
     const importPayload = {
       sheetsData: [
@@ -629,8 +784,11 @@ describe('inventory batch confirm', () => {
     expect(res.body).toMatchObject({ added: 0, updated: 0 });
     expect(res.body.errors[0]).toMatch(/Active or Inactive/i);
     expect(
-      (db.prepare('SELECT COUNT(*) AS count FROM inventory WHERE upc = ?').get('bad-status-1') as any)
-        .count
+      (
+        db
+          .prepare('SELECT COUNT(*) AS count FROM inventory WHERE upc = ?')
+          .get('bad-status-1') as any
+      ).count
     ).toBe(0);
   });
 });

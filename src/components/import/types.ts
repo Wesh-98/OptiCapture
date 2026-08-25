@@ -63,7 +63,7 @@ export const DEST_FIELDS: ReadonlyArray<{ value: DestinationField; label: string
   { value: 'number', label: 'SKU / Item Number' },
   { value: 'sale_price', label: 'Sale Price ($)' },
   { value: 'unit', label: 'Unit of Measure (e.g. 3oz, 1ct, 1L)' },
-  { value: 'category', label: 'Category (locked in multi-sheet mode)' },
+  { value: 'category', label: 'Category' },
   { value: 'status', label: 'Status' },
   { value: 'tax_percent', label: 'Tax (%)' },
   { value: 'tag_names', label: 'Tags' },

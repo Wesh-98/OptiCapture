@@ -38,18 +38,33 @@ const SYNONYMS: Record<AutoDetectField, readonly string[]> = {
 function autoDetect(headers: readonly string[]): ColumnMapping {
   const mapping: ColumnMapping = {};
   const usedDest = new Set<AutoDetectField>();
+  const synonymEntries = (Object.entries(SYNONYMS) as Array<[AutoDetectField, readonly string[]]>)
+    .flatMap(([dest, synonyms]) => synonyms.map(synonym => ({ dest, synonym })))
+    .sort((a, b) => b.synonym.length - a.synonym.length);
 
   for (const header of headers) {
     const lower = header.toLowerCase().trim();
     let matched: DestinationField = '__ignore__';
 
-    for (const [dest, synonyms] of Object.entries(SYNONYMS) as Array<
-      [AutoDetectField, readonly string[]]
-    >) {
-      if (!usedDest.has(dest) && synonyms.some(s => lower === s || lower.includes(s))) {
-        matched = dest;
-        usedDest.add(dest);
-        break;
+    const exactMatch = synonymEntries.find(
+      ({ dest, synonym }) => !usedDest.has(dest) && lower === synonym
+    );
+    const fuzzyMatch =
+      exactMatch ??
+      synonymEntries.find(({ dest, synonym }) => !usedDest.has(dest) && lower.includes(synonym));
+
+    if (fuzzyMatch) {
+      matched = fuzzyMatch.dest;
+      usedDest.add(fuzzyMatch.dest);
+    } else {
+      for (const [dest, synonyms] of Object.entries(SYNONYMS) as Array<
+        [AutoDetectField, readonly string[]]
+      >) {
+        if (!usedDest.has(dest) && synonyms.some(s => lower === s || lower.includes(s))) {
+          matched = dest;
+          usedDest.add(dest);
+          break;
+        }
       }
     }
 

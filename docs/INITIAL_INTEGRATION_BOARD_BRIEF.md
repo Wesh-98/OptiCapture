@@ -1,6 +1,6 @@
 # OptiCapture Initial Integration Board Brief
 
-Last updated: 2026-08-20
+Last updated: 2026-08-25
 
 ## Executive Summary
 
@@ -73,16 +73,24 @@ This means OptiCapture's current "owner" language should be translated carefully
 
 ## Hosting Approach
 
-The recommended first hosting setup is a separate OptiCapture service under a dedicated scan domain:
+The recommended first production setup is a stable HTTPS OptiCapture app domain with mobile scanning under the same origin:
 
 ```text
-scan.company-domain.com
+https://app.opticapture.com/mobile-scan/:sessionId?otp=...
 ```
 
-This can later become:
+This keeps the first rollout simpler because the desktop app, mobile scanner, API, OAuth callback, and QR code all use one trusted domain.
+
+This can later expand to a dedicated scan subdomain:
 
 ```text
-company-domain.com/scan
+https://scan.opticapture.com
+```
+
+or become fully routed under the existing platform:
+
+```text
+https://company-domain.com/scan
 ```
 
 The separate-service approach provides several advantages:
@@ -92,8 +100,12 @@ The separate-service approach provides several advantages:
 - separate logs and monitoring
 - lower risk to the existing platform
 - independent deployment of scanning improvements
+- stable HTTPS camera access for mobile scanning
+- simpler OAuth and session handling during the first integration
 
 Even if users access it from inside the current platform, the technical boundary remains clean.
+
+The same domain can support multiple simultaneous scan sessions. Each session is isolated by its session ID and OTP, while several phones can also contribute to one shared session by scanning the same QR code.
 
 ## Data Approach
 

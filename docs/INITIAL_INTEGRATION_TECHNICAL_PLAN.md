@@ -1,6 +1,6 @@
 # OptiCapture Initial Integration Technical Plan
 
-Last updated: 2026-08-20
+Last updated: 2026-08-25
 
 ## Purpose
 
@@ -33,34 +33,77 @@ The existing platform remains the source of truth.
 OptiCapture produces trusted scan/count results that can be reviewed and applied.
 ```
 
-## Hosting Shape
+## Hosting And Domain Shape
 
 ### Phase 1 Hosting
 
-Use a dedicated OptiCapture service:
+Use a stable HTTPS domain for the integrated OptiCapture service. The preferred initial production shape is to put mobile scanning under the same main app origin:
 
 ```text
-scan.example.com
+https://app.opticapture.com/mobile-scan/:sessionId?otp=<otp>
 ```
 
-or, when managed by the existing platform's domain:
+This mirrors the current local development model:
 
 ```text
-scan.current-platform-domain.com
+https://localhost:3000/mobile-scan/:sessionId?otp=<otp>
 ```
 
-This gives the user an integrated entry point while keeping deployment, rollback, logs, and data storage independent.
+Using the main app domain keeps the first integration simpler:
+
+- the desktop app, mobile scan page, and API share one origin
+- OAuth callback URLs stay straightforward
+- HTTPS camera requirements are satisfied
+- scan QR codes use a stable URL instead of a random tunnel URL
+- no cross-subdomain CORS or cookie policy is needed for the first rollout
+- deployment, rollback, logs, and data storage can still remain independent behind the same public origin
+
+Recommended initial public URLs:
+
+```text
+App:          https://app.opticapture.com
+Mobile scan:  https://app.opticapture.com/mobile-scan/:sessionId?otp=<otp>
+API:          https://app.opticapture.com/api/...
+OAuth:        https://app.opticapture.com/api/auth/<provider>/callback
+```
+
+The mobile scan URL should be generated from explicit deployment configuration in production, not from a temporary tunnel hostname.
 
 ### Future Hosting Option
 
-After the initial flow is stable, route OptiCapture under the existing platform:
+After the initial flow is stable, the scan experience can be split onto a dedicated scan subdomain if the business wants a cleaner QR or launch URL:
 
 ```text
-current-platform-domain.com/scan
-current-platform-domain.com/inventory-scan
+https://scan.opticapture.com/mobile-scan/:sessionId?otp=<otp>
 ```
 
-This can be done through a reverse proxy, load balancer rule, or application gateway. The separate-service boundary can remain even when the URL looks fully embedded.
+or routed under the existing inventory platform:
+
+```text
+https://current-platform-domain.com/scan
+https://current-platform-domain.com/inventory-scan
+```
+
+These can be done through a reverse proxy, load balancer rule, application gateway, or a named Cloudflare Tunnel. The separate-service boundary can remain even when the URL looks fully embedded.
+
+### Multi-Scan Domain Behavior
+
+The domain does not need to be unique per scanner. Concurrent scanning is isolated by scan session and OTP:
+
+```text
+https://app.opticapture.com/mobile-scan/session-a?otp=...
+https://app.opticapture.com/mobile-scan/session-b?otp=...
+```
+
+Multiple users can run separate sessions under the same domain. Multiple phones can also contribute to the same session when they open the same QR link. In that shared-session case, OptiCapture records scans against the same `session_id`, increments duplicate UPC quantities, and can track the contributing mobile client through `device_id`.
+
+For the initial pilot, the expected concurrency target should be explicit. A practical first target is:
+
+```text
+3-5 simultaneous mobile scanners per store/session
+```
+
+Before broader rollout, tune mobile scan rate limits and load-test shared-store WiFi scenarios, because several phones on the same store network may appear as one public IP.
 
 ## Data Flow
 
