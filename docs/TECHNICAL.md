@@ -1,806 +1,505 @@
-# OptiCapture — Technical Reference
+# OptiCapture Technical Reference
 
-> For engineering collaborators. Covers architecture, data model, API contracts,
-> session lifecycle, security posture, and known trade-offs.
+Last updated: 2026-08-26
 
----
-
-## Table of Contents
-
-1. [Project Overview](#1-project-overview)
-2. [Repository Layout](#2-repository-layout)
-3. [Tech Stack](#3-tech-stack)
-4. [Local Setup](#4-local-setup)
-5. [Architecture](#5-architecture)
-6. [Database Schema](#6-database-schema)
-7. [Authentication & Authorization](#7-authentication--authorization)
-8. [Scan Session Lifecycle](#8-scan-session-lifecycle)
-9. [UPC Resolution Pipeline](#9-upc-resolution-pipeline)
-10. [API Reference](#10-api-reference)
-11. [Frontend Architecture](#11-frontend-architecture)
-12. [Batch Import Pipeline](#12-batch-import-pipeline)
-13. [Security Posture](#13-security-posture)
-14. [Performance Characteristics](#14-performance-characteristics)
-15. [Key Files to Review](#15-key-files-to-review)
-16. [Technical Debt & Roadmap](#16-technical-debt--roadmap)
-
----
+For engineering collaborators. Covers the current application structure, data model, API surface, scan lifecycle, security posture, and known trade-offs.
 
 ## 1. Project Overview
 
-OptiCapture is a **retail inventory management system** built for small to mid-size stores. Its core differentiator is a **mobile-assisted barcode scanning workflow**: an operator opens a desktop session, a QR code appears, store staff scan products with their phones — and items populate in real time on the desktop without any app install.
+OptiCapture is a retail inventory management system for small to mid-size stores. Its core workflow is mobile-assisted barcode scanning: an authenticated desktop user starts a scan session, staff join from a phone QR link, and scan results appear in the desktop review feed without requiring a mobile app install.
 
-**Key capabilities:**
-- Multi-store, multi-role user model (owner / taker / superadmin)
-- **Store-scoped login** — each store has a unique 6-char code; usernames are per-store, not global
-- OTP-gated mobile scan sessions (no mobile login required)
-- Real-time polling with async UPC product lookup
-- Named draft sessions — pause, rename, resume, hand off between staff
-- Batch inventory import via XLSX / CSV / JSON with column mapping
-- Export to XLSX (per-category sheets), CSV (grouped), JSON, PDF
-- Google OAuth with email auto-link guard
-- Superadmin panel for full multi-tenant management
+Key capabilities:
 
----
+- Multi-store, multi-role user model: owner, taker, superadmin.
+- Store-code credential login plus optional Google OAuth.
+- Per-tab active-store selection for multi-store users.
+- OTP-gated mobile scan sessions.
+- Phone camera scanning with native `BarcodeDetector` first and ZXing fallback.
+- Hardware scanner support through keyboard-wedge input.
+- Draft scan sessions with labels, resume, clear, delete, and commit workflows.
+- Batch inventory import via XLSX, CSV, or JSON.
+- Inventory export to XLSX, CSV, JSON, and PDF.
+- External mapping fields for future integration and reconciliation.
+- Store-scoped audit logs.
+- Superadmin panel for store, status, user access, and password reset management.
 
-## 2. Repository Layout
+## 2. Runtime Structure
 
-```
-OptiCapture/
-├── server.ts                  # Entire Express backend (~2,000 LOC)
-├── src/
-│   ├── main.tsx               # React entry point
-│   ├── App.tsx                # Router + route guards
-│   ├── context/
-│   │   └── AuthContext.tsx    # Global auth state + store switching
-│   ├── pages/
-│   │   ├── Dashboard.tsx      # Inventory hub (categories, items, export)
-│   │   ├── Scan.tsx           # Session management + real-time polling
-│   │   ├── Import.tsx         # 3-step batch import wizard
-│   │   ├── Logs.tsx           # Activity audit log
-│   │   ├── StoreSettings.tsx  # Store profile + password change
-│   │   ├── SuperAdmin.tsx     # Multi-tenant admin panel
-│   │   ├── Login.tsx          # Credential + OAuth login
-│   │   ├── Signup.tsx         # Store + owner registration
-│   │   └── MobileScan.tsx     # Phone-side QR scan UI
-│   ├── components/
-│   │   └── Layout.tsx         # Sidebar + top header shell
-│   └── lib/
-│       ├── utils.ts           # cn() Tailwind merge helper
-│       └── constants.ts       # US states list
-├── Public/
-│   └── icons/                 # 24 PNG category icons
-├── docs/
-│   ├── TECHNICAL.md           # This file
-│   └── ARCHITECTURE.md        # High-level diagram prose
-├── .github/workflows/ci.yml   # Type-check + build CI
-├── vite.config.ts
-├── tsconfig.json
-├── package.json
-└── .npmrc                     # legacy-peer-deps=true (ESLint peer dep fix)
+```text
+server.ts
+  - loads dotenv
+  - validates JWT_SECRET
+  - imports src/server/db.ts for migrations/seeds
+  - creates the Express app with createApp()
+  - mounts /api/server-info
+  - creates HTTP or HTTPS server
+  - attaches Vite middleware in development
+  - serves dist/ in production
+  - starts listening on port 3000
+
+src/server/app.ts
+  - exports createApp()
+  - configures trust proxy, Helmet, JSON parsing, cookies
+  - serves /uploads and /icons
+  - exposes /api/drive-image/:fileId
+  - mounts API routers
+  - registers the JSON error handler
 ```
 
----
+Tests import `createApp()` directly, so API coverage can run without a live port, HTTPS certificate, or Vite dev server.
 
 ## 3. Tech Stack
 
 | Layer | Library | Version | Notes |
-|-------|---------|---------|-------|
-| Runtime | Node.js | ≥ 20 | ESM-compatible via tsx |
-| Backend | Express | 4.21 | Monolithic single-file server |
-| Database | better-sqlite3 | 12.4 | Synchronous driver; WAL mode |
-| Auth | jsonwebtoken | 9.0 | HS256, 8-hour TTL, httpOnly cookie |
-| Password | bcryptjs | 3.0 | 10 rounds |
+|---|---|---|---|
+| Runtime | Node.js | 18+ | ESM project, executed with `tsx` in dev |
+| Backend | Express | 4.21 | App factory plus route modules |
+| Database | better-sqlite3 | 12.4 | Synchronous SQLite driver, WAL mode |
+| Auth | jsonwebtoken | 9.0 | HS256, httpOnly cookie |
+| Passwords | bcryptjs | 3.0 | Hashing for credential accounts |
 | Security | helmet | 8.1 | CSP, HSTS, frame guards |
-| Rate Limiting | express-rate-limit | 8.3 | Three-tier (auth / API / scan) |
-| OAuth | google-auth-library | 10.6 | ID token verification |
-| File Upload | multer | 2.1 | In-memory buffer |
-| Excel | xlsx | 0.18 | Parse + generate XLSX |
-| PDF | pdfkit | 0.18 | Grouped inventory export |
-| Frontend | React + TypeScript | 19 + 5.8 | react-jsx transform |
-| Router | react-router-dom | 7.13 | Client-side SPA routing |
-| Build | Vite | 6.2 | HMR, lazy route splitting |
-| Styling | Tailwind CSS | 4.1 | JIT via @tailwindcss/vite |
-| Animation | Motion | 12.23 | Framer Motion fork |
-| Icons | lucide-react | 0.546 | 50+ icons |
-
----
+| Rate limiting | express-rate-limit | 8.3 | Auth, API, and scan tiers |
+| OAuth | google-auth-library | 10.6 | Google OAuth ID token verification |
+| File upload | multer | 2.1 | In-memory import buffer |
+| Excel | exceljs | 4.4 | XLSX parse/export |
+| CSV | papaparse | 5.5 | CSV parse/export |
+| PDF | pdfkit | 0.18 | PDF inventory export |
+| Frontend | React + TypeScript | 19 + 5.8 | SPA with route-level lazy loading |
+| Router | react-router-dom | 7.13 | Browser routes and redirects |
+| Build | Vite | 6.2 | Dev middleware and production build |
+| Styling | Tailwind CSS | 4.1 | Via `@tailwindcss/vite` |
+| Animation | Motion | 12.23 | `motion/react` |
+| Icons | lucide-react | 0.546 | UI icon set |
+| Tests | Vitest + Supertest + Playwright | current lockfile | Unit, integration, and e2e coverage |
 
 ## 4. Local Setup
 
 ```bash
-# 1. Install dependencies
 npm install
-
-# 2. Required env vars — create a .env file
-JWT_SECRET=<at-least-32-char-secret>
-GOOGLE_CLIENT_ID=<optional, for OAuth>
-GOOGLE_CLIENT_SECRET=<optional, for OAuth>
-UPCITEMDB_API_KEY=<optional, fallback UPC lookup>
-
-# 3. Start full-stack dev (Vite:5173 + Express:3000 + HTTPS certs)
+cp .env.example .env
 npm run dev
+```
 
-# 4. Start with CloudFlare tunnel (mobile scanning from external network)
-npm run dev:scan
+Important local environment values:
 
-# 5. Type-check
+```text
+JWT_SECRET=<required>
+GOOGLE_CLIENT_ID=<optional>
+GOOGLE_CLIENT_SECRET=<optional>
+GOOGLE_REDIRECT_URI=<optional>
+UPCITEMDB_API_KEY=<optional>
+NODE_ENV=<development|production|test>
+ALLOW_DEMO_SEED=<true for local demo seed only>
+TUNNEL_HOST=<optional local tunnel host>
+DISABLE_HMR=<optional>
+```
+
+Useful commands:
+
+```bash
 npm run lint
-
-# 6. Production build
+npm run lint:eslint
+npm run test
+npm run test:coverage
+npm run test:e2e
 npm run build
+npm run test:full
 ```
 
-**Dev proxy:** Vite forwards `/api/*` to `http://localhost:3000` — no CORS issues in dev.
+`npm run dev:scan` runs the dev server and tunnel helper together for phone scanning outside localhost.
 
-**HTTPS in dev:** `generate-certs.js` prepares the runtime HTTPS files `dev-key.pem` / `dev-cert.pem`, preferring trusted `mkcert` certificates and falling back to self-signed OpenSSL certificates. Those two `dev-*` files are the only certificate files used by the app at runtime. Required for camera access on mobile browsers.
+## 5. Frontend Architecture
 
----
+`src/main.tsx` installs `installApiFetchInterceptor()` before mounting React. The interceptor adds `X-Store-Id` to same-origin `/api/` calls when the current tab has selected an active store.
 
-## 5. Architecture
+`src/App.tsx` owns:
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      Browser (Desktop)                       │
-│  React SPA (Vite:5173 dev / dist/ prod)                     │
-│  AuthContext → JWT in httpOnly cookie                        │
-└────────────────────────┬────────────────────────────────────┘
-                         │ /api/* (proxied in dev)
-┌────────────────────────▼────────────────────────────────────┐
-│                   Express Server (:3000)                     │
-│                                                             │
-│  Middleware stack:                                          │
-│    helmet → cookieParser → cors → rateLimit →              │
-│    authenticateToken → requireOwner (route-level)          │
-│                                                             │
-│  Routes:  /api/auth/*   /api/inventory/*                   │
-│           /api/session/* /api/admin/*                      │
-│           /api/dashboard/* /api/logs/*                     │
-│           /api/categories/* /api/store/*                   │
-└────────────────────────┬────────────────────────────────────┘
-                         │ better-sqlite3 (synchronous)
-┌────────────────────────▼────────────────────────────────────┐
-│                   SQLite (WAL mode)                         │
-│   opticapture.db — single file, ~100KB per 100 items        │
-└─────────────────────────────────────────────────────────────┘
+- lazy route imports
+- route-level suspense fallbacks
+- top-level error boundary
+- authenticated route gating
+- superadmin route gating
+- multi-store selection route gating
+- forced password-reset redirects
 
-                ┌────────────────────┐
-                │   Mobile Browser   │  ← scans QR code
-                │  MobileScan.tsx    │
-                │  POST /api/session │  ← OTP-only, no login
-                │       /:id/scan    │
-                └────────────────────┘
-```
+Current routes:
 
-**Multi-tenancy model:** Every DB query is filtered by `store_id` drawn from the validated JWT. Superadmin uses `store_id = 0` as a sentinel and bypasses store-scope filters.
+| Path | Page | Notes |
+|---|---|---|
+| `/login` | `Login.tsx` | Credential and OAuth entry |
+| `/signup` | `Signup.tsx` | Store/owner registration and OAuth pending signup |
+| `/choose-store` | `StorePicker.tsx` | Per-tab active-store selection |
+| `/admin` | `SuperAdmin.tsx` | Superadmin only |
+| `/mobile-scan/:sessionId` | `MobileScan.tsx` | OTP-based phone scanner |
+| `/` | `Dashboard.tsx` | Main inventory dashboard |
+| `/scan` | `Scan.tsx` | Desktop scan session workspace |
+| `/import` | `Import.tsx` | Batch import wizard |
+| `/logs` | `Logs.tsx` | Owner audit log view |
+| `/settings` | `StoreSettings.tsx` | Store profile and password change |
 
----
+Feature folders:
+
+- `components/dashboard/`
+- `components/import/`
+- `components/logs/`
+- `components/mobile-scan/`
+- `components/scan/`
+- `components/signup/`
+- `components/store-settings/`
+- `components/superadmin/`
+
+Stateful hooks:
+
+- dashboard: `useDashboardStats`, `useActiveSessions`, `useGlobalSearch`, `useCategoryManagement`, `useItemManagement`
+- scan: `useScanSession`, `useHardwareScanner`, `useDraftManagement`, `useCommitModal`, `useEditItem`, `useServerInfo`, `useToast`
+- mobile scan: `useMobileScan`
+- admin/settings/import/logs/signup: `useAdminStores`, `useStoreUsers`, `useStoreSettings`, `useImportWorkflow`, `useLogsPage`, `useSignupFlow`
 
 ## 6. Database Schema
 
-### Tables
+The database module uses `DATABASE_PATH` when provided and otherwise writes to `opticapture.db` at the repo root. Tests use `:memory:`.
 
-#### `stores`
-```sql
-id INTEGER PRIMARY KEY AUTOINCREMENT
-name TEXT NOT NULL
-plan_tier TEXT DEFAULT 'starter'      -- starter | professional | internal
-status TEXT DEFAULT 'active'          -- active | suspended
-store_code TEXT UNIQUE                -- 6-char CSPRNG code used at login (Migration 9)
-street, zipcode, state, address
-logo TEXT                             -- base64 or URL
-phone, email
-created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-```
+Connection settings:
 
-#### `users`
-```sql
-id INTEGER PRIMARY KEY AUTOINCREMENT
-username TEXT NOT NULL                -- NOT globally unique; scoped to store (Migration 10)
-password TEXT                         -- bcrypt hash; NULL for pure-OAuth accounts
-role TEXT NOT NULL                    -- owner | taker | superadmin
-store_id INTEGER                      -- primary store; 0 for superadmin
-store_name TEXT                       -- denormalized for JWT
-email TEXT
-oauth_provider TEXT                   -- 'google' or NULL
-oauth_id TEXT                         -- UNIQUE (provider, id) pair
-failed_login_attempts INTEGER DEFAULT 0
-locked_until DATETIME
-UNIQUE(username, store_id)            -- two stores can share the same username
-```
+- `journal_mode = WAL`
+- `busy_timeout = 5000`
+- `foreign_keys = ON`
 
-#### `user_stores`
-```sql
-user_id INTEGER REFERENCES users(id)
-store_id INTEGER REFERENCES stores(id)
-role TEXT NOT NULL                    -- owner | taker
-PRIMARY KEY (user_id, store_id)
-```
-> Junction table enabling multi-store access. A user can be owner of store A and taker at store B.
+Core tables:
 
-#### `categories`
-```sql
-id INTEGER PRIMARY KEY AUTOINCREMENT
-name TEXT NOT NULL
-icon TEXT                             -- Lucide icon name or /Public/icons/ path
-status TEXT DEFAULT 'Active'          -- Active | Inactive
-store_id INTEGER REFERENCES stores(id)
-UNIQUE(name, store_id)
-```
+| Table | Purpose |
+|---|---|
+| `stores` | Tenant/store profile, status, and store code |
+| `users` | Account credentials, OAuth fields, lockout/reset state, default store |
+| `user_stores` | Many-to-many user access and per-store role |
+| `categories` | Store-scoped item categories |
+| `inventory` | Store-scoped inventory records |
+| `scan_sessions` | Desktop/mobile count sessions |
+| `session_items` | Staged scan records and lookup metadata |
+| `logs` | Store-scoped audit records |
+| `schema_migrations` | Applied migration versions |
 
-#### `inventory`
-```sql
-id INTEGER PRIMARY KEY AUTOINCREMENT
-item_name TEXT NOT NULL              -- max 500 chars
-description TEXT                     -- max 2000 chars
-quantity INTEGER DEFAULT 0
-unit TEXT DEFAULT 'each'
-category_id INTEGER REFERENCES categories(id)
-status TEXT DEFAULT 'In Stock'
-sale_price REAL
-tax_percent REAL DEFAULT 0
-image TEXT                           -- /uploads/{uuid}.{ext}
-upc TEXT
-number TEXT                          -- SKU / internal number
-tag_names TEXT                       -- comma-separated
-store_id INTEGER REFERENCES stores(id)
-updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-UNIQUE(upc, store_id)
-UNIQUE(number, store_id) WHERE number IS NOT NULL
-```
+Important current columns:
 
-#### `scan_sessions`
-```sql
-session_id TEXT PRIMARY KEY          -- UUID v4
-otp TEXT NOT NULL                    -- 8-char alphanumeric (CSPRNG)
-user_id INTEGER REFERENCES users(id)
-store_id INTEGER REFERENCES stores(id)
-status TEXT DEFAULT 'active'         -- active | draft | completed
-label TEXT                           -- user-assigned name (e.g. "Morning · Aisle 3")
-created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-expires_at DATETIME                  -- 8 hours from creation/last scan
-otp_attempts INTEGER DEFAULT 0      -- 5-strike OTP lockout
-```
+- `stores`: `name`, `street`, `city`, `zipcode`, `state`, `address`, `phone`, `email`, `logo`, `status`, `store_code`.
+- `users`: `username`, `password`, `role`, `store_id`, `store_name`, `email`, `oauth_provider`, `oauth_id`, `failed_login_attempts`, `locked_until`, `token_version`, `must_reset_password`.
+- `inventory`: item fields plus `external_system`, `external_store_id`, `external_category_id`, `external_item_id`, `external_sku`, `last_imported_at`, `last_exported_at`, `sync_status`.
+- `scan_sessions`: `session_id`, `otp`, `user_id`, `store_id`, `status`, `label`, `expires_at`, `otp_attempts`.
+- `session_items`: `upc`, `quantity`, `lookup_status`, `product_name`, `brand`, `image`, `source`, `exists_in_inventory`, `sale_price`, `unit`, `tag_names`, `device_id`, `updated_at`.
 
-#### `session_items`
-```sql
-id INTEGER PRIMARY KEY AUTOINCREMENT
-session_id TEXT REFERENCES scan_sessions(session_id)
-upc TEXT NOT NULL
-quantity INTEGER DEFAULT 1
-scanned_at DATETIME DEFAULT CURRENT_TIMESTAMP
-lookup_status TEXT DEFAULT 'unknown' -- unknown | new_candidate | existing
-product_name TEXT
-brand TEXT
-image TEXT
-source TEXT   -- scan_only | open_food_facts | upcitemdb | inventory | manual
-exists_in_inventory INTEGER DEFAULT 0
-sale_price REAL
-unit TEXT
-tag_names TEXT
-```
+Useful indexes include:
 
-#### `logs`
-```sql
-id INTEGER PRIMARY KEY AUTOINCREMENT
-action TEXT NOT NULL  -- CREATE | UPDATE | DELETE | IMPORT | BATCH | EXPORT | LOGIN
-details TEXT
-user_id INTEGER
-store_id INTEGER
-timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-```
+- `idx_session_items_session_upc`
+- `idx_session_items_session_at`
+- `idx_session_items_session_updated`
+- `idx_inventory_upc_store`
+- `idx_inventory_number_store`
+- `idx_inventory_external_item_store`
+- `idx_scan_sessions_store_status`
+- `idx_scan_sessions_user_store`
+- `idx_logs_store_ts`
 
-#### `schema_migrations`
-```sql
-version INTEGER PRIMARY KEY
-```
+Migrations are defined in `src/server/db.ts` with `runMigration(version, fn)` and are designed to be idempotent.
 
-### Indexes
-```sql
-idx_session_items_session_upc    ON session_items(session_id, upc)
-idx_session_items_session_at     ON session_items(session_id, scanned_at DESC)
-idx_inventory_upc_store          ON inventory(upc, store_id)
-idx_scan_sessions_store_status   ON scan_sessions(store_id, status, expires_at)
-idx_inventory_number_store       ON inventory(number, store_id) WHERE number IS NOT NULL
-idx_users_oauth                  ON users(oauth_provider, oauth_id) WHERE both non-null
-```
+## 7. Authentication And Authorization
 
-### Migration Pattern
+Credential login:
 
-Migrations use a `runMigration(version, fn)` helper that wraps each change in a check against `schema_migrations`. Safe to re-run; idempotent.
+- Owner/taker login uses store code, username, and password.
+- Superadmin login uses username and password without a store code.
+- Usernames are unique inside a store context, not globally.
 
-```typescript
-runMigration(7, () => {
-  const cols = db.prepare('PRAGMA table_info(scan_sessions)').all();
-  if (!cols.find(c => c.name === 'label'))
-    db.prepare("ALTER TABLE scan_sessions ADD COLUMN label TEXT DEFAULT NULL").run();
-});
-```
+Cookie session:
 
-10 migrations defined at server startup. New columns via `ALTER TABLE ... ADD COLUMN`; breaking changes via table recreation with FK enforcement temporarily disabled (`PRAGMA foreign_keys = OFF / ON`).
+- JWT algorithm: `HS256`
+- issuer: `opticapture`
+- audience: `opticapture-app`
+- cookie name: `token`
+- cookie is `httpOnly`
+- secure cookie is enabled on HTTPS
+- cookie sameSite is `strict` on HTTPS and `lax` on plain HTTP development
+- token lifetime is 8 hours
 
----
+Request enforcement:
 
-## 7. Authentication & Authorization
+- revoked tokens are rejected
+- token version mismatch invalidates the session
+- users with `must_reset_password` are restricted until they update their password
+- superadmin requests bypass store resolution for admin operations
+- single-store users auto-resolve to their active store
+- multi-store users must send a valid `X-Store-Id`
+- suspended stores are rejected
 
-### Store Code Login
+Role guards:
 
-Every store has a unique 6-character alphanumeric code (`store_code`) generated at registration using CSPRNG from the same unambiguous charset as OTPs (`ABCDEFGHJKLMNPQRSTUVWXYZ23456789`).
+| Guard | Allows |
+|---|---|
+| `authenticateToken` | Any valid account and resolved store when required |
+| `requireOwner` | owner, superadmin |
+| `requireOwnerOrTaker` | owner, taker, superadmin |
+| `requireSuperadmin` | superadmin |
 
-**Login flow:**
+Google OAuth flow:
 
-| User type | Fields required |
-|-----------|----------------|
-| Owner / Taker | Store Code + Username + Password |
-| Superadmin | Username + Password (no store code) |
+1. `GET /api/auth/google` creates a state nonce and redirects to Google.
+2. `GET /api/auth/google/callback` validates state and the ID token.
+3. Existing users are found by OAuth ID.
+4. Email auto-link is allowed only for verified email payloads and local accounts with no password.
+5. Unknown OAuth users are stored briefly in `pendingOAuth`.
+6. Signup can complete through `POST /api/auth/register`.
 
-```
-POST /api/auth/login  { store_code, username, password }
-
-If store_code provided:
-  → find store WHERE store_code = ?
-  → find user WHERE username = ? AND store_id = store.id
-  → verify bcrypt password
-
-If no store_code:
-  → find user WHERE username = ? AND role = 'superadmin'
-  → verify bcrypt password
-```
-
-Store codes are visible in **Store Settings** (blurred by default, reveal with "View Code" button) and in the **SuperAdmin** panel. Owners share their code with staff so they can log in.
-
-### JWT Flow
-
-```
-POST /api/auth/login
-  → validate credentials via store-scoped lookup
-  → issueJwt(user)  →  Set-Cookie: token=<jwt>; httpOnly; secure; sameSite
-  → return user object (no token in body)
-
-Subsequent requests
-  → authenticateToken middleware reads cookie
-  → verifies HS256 signature + issuer/audience
-  → checks store status (suspended → 401)
-  → attaches req.user = { id, username, role, store_id, store_name }
-```
-
-**JWT claims:**
-```json
-{
-  "sub": "42",
-  "username": "jane",
-  "role": "owner",
-  "store_id": 7,
-  "store_name": "Main St Store",
-  "iss": "opticapture",
-  "aud": "opticapture-client",
-  "exp": "<8 hours>"
-}
-```
-
-### Role Guards
-
-| Middleware | Passes | Blocks |
-|-----------|--------|--------|
-| `authenticateToken` | Any valid JWT | Expired / invalid / suspended store |
-| `requireOwner` | role = owner or superadmin | role = taker |
-
-Routes that use `requireOwner`: inventory write (POST/PUT/DELETE), session commit, store settings write, all admin endpoints.
-
-### Account Lockout
-
-- 5 consecutive failed logins → `locked_until = NOW + 15 minutes`
-- Lock cleared on: successful login, superadmin password reset, or user changes their own password
-- Response: `{ error: 'Account locked. Try again in X minutes.' }`
-
-### Google OAuth
-
-```
-GET /api/auth/google              → redirect to Google consent screen
-GET /api/auth/google/callback     → verify state nonce (CSRF), exchange code
-  → verify ID token with google-auth-library
-  → lookup user by oauth_id; if missing, try email auto-link:
-      only if payload.email_verified AND existing user has no password
-  → if still no user, store pending profile in memory (10-min TTL)
-  → redirect to /login?linked=1 or /login?pending=1
-```
-
-### Store Switching
-
-Calling `POST /api/auth/switch-store` with `{ storeId }` reissues the JWT scoped to the target store. The user must have an entry in `user_stores` for that store. Frontend reloads to flush all cached state.
-
-### Mobile OTP Auth
-
-Mobile clients never log in. They authenticate using `sessionId + OTP`:
-
-- OTP: 8 characters from `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` (no ambiguous chars I/O/1/0)
-- Entropy: 32^8 ≈ 2^40 combinations
-- Rate limited: 60 req/min per IP on scan endpoints
-- OTP lockout: 5 wrong attempts → session locked
-
----
-
-## 8. Scan Session Lifecycle
-
-```
-OWNER (Desktop)                     STAFF (Mobile Phone)
-─────────────────────────────────   ─────────────────────────
-POST /api/session/create
-  ← { sessionId, otp }
-Render QR code (sessionId+otp)      Scan QR code
-                                    POST /api/session/:id/scan
-                                      body: { upc, otp }
-                                      ← 200 OK immediately
-                                      [background: UPC lookup]
-
-GET /api/session/:id?since=T  ──────────── polling every 1–3s
-  ← { items: [...], expires_at }
-  (delta updates via `since` param)
-
-[User reviews items]
-PATCH /api/session/:id/status       [Staff saves draft]
-  body: { status: 'draft',
-          label: 'Morning · Aisle 3' }
-
-[Owner resumes, reviews]
-POST /api/session/:id/commit
-  body: { selectedIds: [1,2,3], category_id: 5 }
-  ← { inserted, skippedExisting, skippedUnknown }
-
-Session status → 'completed'
-```
-
-### Session Reuse
-
-If the authenticated user already has an **empty active session** (no items, same store), `POST /api/session/create` reuses it instead of creating a duplicate. If the existing OTP is the old 6-digit format, it is regenerated transparently.
-
-### Named Drafts
-
-```
-PATCH /api/session/:id/status
-  { status: 'draft', label: 'Aisle 3 · Mon 9am' }
-```
-
-`label` uses `COALESCE(?, label)` so it only updates when explicitly provided. Dashboard displays the label on each session card so multiple concurrent drafts are distinguishable.
-
-### Commit Transaction Logic
-
-```typescript
-db.transaction(() => {
-  for (const item of selectedItems) {
-    if (item.lookup_status !== 'new_candidate') continue;  // skip unknowns
-    const existing = db.prepare('SELECT id FROM inventory WHERE upc = ? AND store_id = ?')
-                       .get(item.upc, storeId);
-    if (existing) continue;  // skip already-in-inventory
-    db.prepare('INSERT INTO inventory (...) VALUES (...)').run(item);
-  }
-  db.prepare("UPDATE scan_sessions SET status = 'completed' WHERE session_id = ?").run(sessionId);
-})();
-```
-
----
-
-## 9. UPC Resolution Pipeline
-
-Each scan triggers this lookup chain:
-
-```
-1. Check inventory table (upc, store_id) ─── instant
-       ↓ miss
-2. Check in-memory UPC cache (7-day TTL) ─── instant
-       ↓ miss
-3. POST /api/session/:id/scan returns 200 immediately
-       ↓ (background promise)
-4. Fetch Open Food Facts API
-       ↓ miss or unavailable
-5. Fetch UPCitemDB API (if UPCITEMDB_API_KEY set)
-       ↓ result or null
-6. Update session_item in DB
-7. Store result in upcCache (even nulls — prevents re-hammering)
-```
-
-**Why async?** External UPC APIs can take 2–3 seconds. The mobile client can't block on that — it needs to confirm the scan immediately so staff can move on. The desktop sees updated metadata on the next polling interval.
-
-**Cache invalidation:** When an inventory item is updated via `PUT /api/inventory/:id`, the server deletes its UPC entry from `upcCache` so the next lookup gets fresh data.
-
----
-
-## 10. API Reference
+## 8. API Reference
 
 ### Auth
 
 | Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| POST | `/api/auth/login` | — | Login (credentials or OAuth pending) |
-| POST | `/api/auth/register` | — | Register new store + owner |
-| POST | `/api/auth/logout` | Cookie | Clear JWT cookie |
-| GET | `/api/auth/me` | Cookie | Get current user |
-| GET | `/api/auth/my-stores` | Cookie | List accessible stores |
-| POST | `/api/auth/switch-store` | Cookie | Reissue JWT for different store |
-| GET | `/api/auth/google` | — | Begin OAuth flow |
-| GET | `/api/auth/google/callback` | — | OAuth callback |
+|---|---|---|---|
+| POST | `/api/auth/login` | public | Credential login |
+| GET | `/api/auth/google` | public | Begin Google OAuth |
+| GET | `/api/auth/google/callback` | public | Google OAuth callback |
+| GET | `/api/auth/google/pending` | public | Read pending OAuth signup context |
+| POST | `/api/auth/register` | public | Register store and owner |
+| POST | `/api/auth/logout` | cookie | Revoke current cookie and clear it |
+| GET | `/api/auth/me` | cookie | Current account/store context |
+| GET | `/api/auth/my-stores` | cookie | Accessible store list |
+| POST | `/api/auth/switch-store` | cookie | Validate and select store context |
+| GET | `/api/auth/store/settings` | cookie | Read store settings |
+| PUT | `/api/auth/store/settings` | owner | Update store settings |
+| PUT | `/api/auth/store/password` | cookie | Change own password |
 
 ### Inventory
 
 | Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/api/inventory` | Cookie | List items (`?category_id=&q=`) |
-| POST | `/api/inventory` | Owner | Create item |
-| PUT | `/api/inventory/:id` | Owner | Update item + invalidate UPC cache |
-| DELETE | `/api/inventory/:id` | Owner | Delete item |
-| POST | `/api/inventory/export` | Cookie | Export (body: `{ format: 'xlsx'\|'csv'\|'json'\|'pdf' }`) |
-| POST | `/api/inventory/batch-upload` | Owner | Parse file → preview |
-| POST | `/api/inventory/batch-confirm` | Owner | Commit mapped import |
+|---|---|---|---|
+| GET | `/api/inventory` | cookie | List/search inventory; paginated when `page` is present |
+| GET | `/api/inventory/export?format=xlsx|csv|json|pdf` | owner | Export inventory and mark rows exported |
+| POST | `/api/inventory` | owner/taker | Create item |
+| PUT | `/api/inventory/:id` | owner/taker | Update item and invalidate UPC cache |
+| DELETE | `/api/inventory/:id` | owner/taker | Delete item |
+| POST | `/api/inventory/batch-upload` | owner | Parse XLSX/CSV/JSON and return preview/mapping data |
+| POST | `/api/inventory/batch-confirm` | owner | Apply mapped import in a transaction |
+
+### Categories And Dashboard
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/api/dashboard/stats` | cookie | Store totals |
+| GET | `/api/categories` | cookie | Category list with item counts |
+| POST | `/api/categories` | owner | Create category |
+| PUT | `/api/categories/:id` | owner | Rename/update icon |
+| PUT | `/api/categories/:id/status` | owner | Toggle active/inactive |
+| DELETE | `/api/categories/:id/items` | owner | Delete all items in a category |
+| DELETE | `/api/categories/:id` | owner | Delete category |
 
 ### Scan Sessions
 
 | Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| POST | `/api/session/create` | Cookie | Create or reuse empty session |
-| GET | `/api/sessions/active` | Cookie | List active/draft sessions (store-scoped) |
-| GET | `/api/session/:id` | OTP param | Poll items (`?otp=&since=ISO`) |
-| POST | `/api/session/:id/scan` | OTP body | Record scan (mobile, rate-limited) |
-| PATCH | `/api/session/:id/status` | Cookie | Toggle draft/active + optional label |
-| PATCH | `/api/session/:id/items/:itemId` | Cookie | Edit scanned item |
-| DELETE | `/api/session/:id/items/:itemId` | Cookie | Remove scanned item |
-| POST | `/api/session/:id/commit` | Owner | Commit selected items to inventory |
-
-### Dashboard & Categories
-
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/api/dashboard/stats` | Cookie | Count totals per store |
-| GET | `/api/categories` | Cookie | List with item_count + total_stock |
-| POST | `/api/categories` | Owner | Create category |
-| PUT | `/api/categories/:id` | Owner | Update name/icon |
-| PATCH | `/api/categories/:id/status` | Owner | Toggle Active/Inactive |
-| DELETE | `/api/categories/:id` | Owner | Delete + cascade items |
-
-### Store Settings
-
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/api/store/settings` | Cookie | Get store profile |
-| PUT | `/api/store/settings` | Owner | Update profile + logo |
-| PUT | `/api/store/password` | Cookie | Change own password |
+|---|---|---|---|
+| POST | `/api/session/create` | cookie | Create or reuse an empty active session |
+| GET | `/api/sessions/active` | cookie | List active/draft sessions for dashboard |
+| PATCH | `/api/session/:id/status` | cookie | Save as draft or resume as active |
+| DELETE | `/api/session/:id` | cookie | Delete non-completed session |
+| GET | `/api/session/:id/meta` | cookie | Read session metadata |
+| GET | `/api/session/:id/items?otp=...` | OTP | Mobile session item list |
+| GET | `/api/session/:id` | cookie | Desktop poll; supports `since_updated_at` and `since_id` |
+| POST | `/api/session/:id/scan` | OTP | Add/increment scanned item |
+| PATCH | `/api/session/:id/items/:itemId` | cookie | Edit staged item |
+| DELETE | `/api/session/:id/items` | cookie | Clear staged items |
+| DELETE | `/api/session/:id/items/:itemId` | cookie | Delete staged item |
+| POST | `/api/session/:id/commit` | owner | Commit selected staged items to inventory |
 
 ### Logs
 
 | Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/api/logs` | Cookie | Activity log (`?from=&to=&limit=1000&action=`) |
+|---|---|---|---|
+| GET | `/api/logs` | owner | Filtered audit log |
 
-### Admin (Superadmin only)
+### Admin
 
 | Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/api/admin/stores` | Superadmin | All stores with counts |
-| PUT | `/api/admin/stores/:id` | Superadmin | Edit store |
-| PUT | `/api/admin/stores/:id/status` | Superadmin | Suspend/activate |
-| DELETE | `/api/admin/stores/:id` | Superadmin | Cascade-delete all store data |
-| GET | `/api/admin/stores/:id/users` | Superadmin | List users + roles |
-| POST | `/api/admin/stores/:id/users` | Superadmin | Grant access |
-| DELETE | `/api/admin/stores/:id/users/:userId` | Superadmin | Revoke access |
-| POST | `/api/admin/users/:userId/reset-password` | Superadmin | Generate temp password |
+|---|---|---|---|
+| GET | `/api/admin/stores` | superadmin | List stores with user/item counts |
+| PUT | `/api/admin/stores/:id/status` | superadmin | Activate or suspend store |
+| GET | `/api/admin/stores/:id/users` | superadmin | List users with store access |
+| POST | `/api/admin/stores/:id/users` | superadmin | Grant existing user access or create store user |
+| DELETE | `/api/admin/stores/:id/users/:userId` | superadmin | Revoke non-primary store access |
+| DELETE | `/api/admin/stores/:id` | superadmin | Delete a store and its data |
+| PUT | `/api/admin/stores/:id` | superadmin | Edit store details |
+| POST | `/api/admin/users/:userId/reset-password` | superadmin | Generate one-time password and force reset |
 
 ### Utility
 
 | Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/api/server-info` | Cookie | LAN IP, port, tunnel URL |
+|---|---|---|---|
+| GET | `/api/server-info` | public | LAN/tunnel URL details for QR generation |
+| GET | `/api/drive-image/:fileId` | public | Server-side Google Drive image proxy |
 
----
+## 9. Scan Session Lifecycle
 
-## 11. Frontend Architecture
+```text
+Desktop owner/taker opens /scan
+  -> POST /api/session/create
+  <- { sessionId, otp }
 
-### Route Guards
+Desktop renders QR:
+  /mobile-scan/:sessionId?otp=<otp>
 
-```typescript
-// App.tsx
-<ProtectedRoute>   // requires any authenticated user; redirects superadmin → /admin
-<AdminRoute>       // requires role === 'superadmin'
+Phone opens QR link
+  -> GET /api/session/:id/items?otp=<otp>&device_id=<device>
+  <- session status and visible items
+
+Phone scans barcode
+  -> POST /api/session/:id/scan
+     body: { upc, otp, item_name? }
+     header: X-Device-Id
+  <- staged item
+
+Desktop polls:
+  -> GET /api/session/:id?since_updated_at=<cursor>&since_id=<id>
+  <- full or incremental item envelope
+
+Owner reviews selected items
+  -> POST /api/session/:id/commit
+  <- inserted/skipped counts
 ```
 
-### Code Splitting
+Session behavior:
 
-Heavy pages are lazy-loaded to reduce initial bundle:
+- Empty active sessions are reused for the same user and store.
+- Fresh sessions expire after 8 hours.
+- Draft sessions extend expiry to 24 hours.
+- Completed sessions cannot be reactivated or deleted.
+- Duplicate UPC scans increment quantity.
+- Device IDs are preserved when a staged item belongs to one device; mixed-device duplicates are treated as shared.
 
-```typescript
-const Scan         = lazy(() => import('./pages/Scan'));
-const Import       = lazy(() => import('./pages/Import'));
-const Logs         = lazy(() => import('./pages/Logs'));
-const StoreSettings = lazy(() => import('./pages/StoreSettings'));
-```
+## 10. UPC Resolution Pipeline
 
-Initial bundle: ~947KB. Each lazy page adds ~50–150KB on first navigation.
+Each scan follows this order:
 
-### AuthContext
+1. Normalize UPC variants.
+2. Check store inventory.
+3. Check in-memory UPC cache.
+4. Insert/update the staged session item quickly.
+5. Fetch external UPC providers when needed.
+6. Update session item metadata.
+7. Cache the lookup result for future scans.
 
-```typescript
-interface User {
-  id: number;
-  username: string;
-  role: 'owner' | 'taker' | 'superadmin';
-  store_name: string;
-  store_logo?: string | null;
-}
-```
+Current providers:
 
-On mount: fetches `/api/auth/me` and `/api/auth/my-stores`. Exposes `login`, `logout`, `switchStore` functions.
+- Open Food Facts
+- UPCitemDB
 
-### Styling Conventions
+The async pattern keeps the mobile scan response fast while the desktop feed receives richer product metadata on a later poll.
 
-- Tailwind CSS 4.1 utility classes throughout
-- `cn(...classes)` — `clsx` + `tailwind-merge` for conditional class merging
-- Color system: `navy-{700,800,900}` for sidebar/header chrome; `slate-{50,100,...}` for content areas
-- `motion/react` for animated dropdowns, modals, mobile menu
-- `useReducedMotion()` disables animations for accessibility
+## 11. Batch Import Pipeline
 
-### Scan.tsx State Machine
+Upload:
 
-```
-idle → loading → ready → active ─┐
-                  ↑               │ save as draft
-                  └── draft ◄─────┘
-                         │ commit (owner only)
-                         ▼
-                    completed (read-only)
-```
+- accepts XLSX, CSV, and JSON
+- uses `multer` memory storage
+- limits files to 20 MB
+- returns sheets, headers, preview rows, full rows, row counts, and initial mappings
 
-Key refs used to avoid stale closure bugs in polling callbacks:
-- `sessionStatusRef` — mirrors `sessionStatus` for use inside intervals
-- `isBusyRef` — prevents concurrent poll requests
-- `lastScannedUpcRef` + `lastScannedAtRef` — hardware scanner dedup (1.5s window)
-- `expiryWarnedRef` — fire expiry toast only once
+Client mapping:
 
----
+- auto-detects common headers
+- supports applying mappings across sheets
+- includes external mapping fields
 
-## 12. Batch Import Pipeline
+Confirm:
 
-### Flow
+- uses a larger JSON body limit for mapped row payloads
+- processes rows in a transaction
+- creates missing categories
+- updates by external item ID, UPC, item number, or external SKU where possible
+- inserts new rows when no existing match is found
+- records skipped rows and import log details
+- sets `last_imported_at` and `sync_status='imported'`
 
-```
-File upload (XLSX/CSV/JSON ≤ 20MB)
-  ↓
-POST /api/inventory/batch-upload
-  Server parses with xlsx library
-  Returns: { sheets: [{ name, headers, preview[5], rows, rowCount, mapping }] }
-  ↓
-Column mapping UI (auto-detect via synonym dictionary)
-  "SKU" → number, "Qty" / "Quantity" → quantity, etc.
-  One mapping per sheet; "Apply to all sheets" button
-  ↓
-POST /api/inventory/batch-confirm  (express.json 50MB limit)
-  Transaction per sheet:
-    • Category auto-create if missing (icon auto-assigned)
-    • Upsert: UPC match → update; SKU match → update; else insert
-    • Skips rows where both UPC and SKU are empty
-  Returns: { added, updated, skipped, errors[], skipped_rows[] }
-```
+## 12. Export Pipeline
 
-### Multi-Sheet Behavior
+`GET /api/inventory/export` accepts `format=xlsx|csv|json|pdf`.
 
-Each Excel sheet maps to one category. If the sheet name matches an existing category, items go there. Otherwise a new category is created. This matches the common workflow where a buyer organizes spreadsheets by product type.
+Before generating output, the server stamps the store's inventory rows with:
 
-### Export Format Behaviour
+- `last_exported_at`
+- `sync_status='exported'`
 
-| Format | Structure |
-|--------|-----------|
-| **XLSX** | One sheet per category — sheet name = category name (max 31 chars, invalid chars stripped) |
-| **CSV** | Single file; `### Category Name` header rows separate groups |
-| **JSON** | Flat array with `category` field on each item |
-| **PDF** | Grouped by category with bold section headers |
-
-### Google Drive Image Normalization
-
-Import accepts Google Drive sharing URLs. The server extracts the file ID via regex and converts to the thumbnail API format:
-
-```
-https://drive.google.com/file/d/{FILE_ID}/view
-  → https://drive.google.com/thumbnail?id={FILE_ID}&sz=w800
-```
-
----
+Export columns include local inventory fields plus external mapping fields so exports can round-trip with an upstream platform.
 
 ## 13. Security Posture
 
-### Rate Limiting (Three Tiers)
+Rate limits:
 
-| Tier | Scope | Limit | Reason |
-|------|-------|-------|--------|
-| Auth | `authLimiter` | 20 req / 15 min per IP | Brute-force on login/register |
-| API | `apiLimiter` | 2,000 req / 15 min per IP | Covers 1,000-item sessions with headroom |
-| Scan | `scanLimiter` | 60 req / 60 s per IP | OTP brute-force across session IDs |
+| Tier | Limit | Scope |
+|---|---|---|
+| Auth | 20 requests / 15 minutes | Login, registration, OAuth start/pending |
+| API | 2000 requests / 15 minutes | All `/api/*` routes |
+| Scan | 60 requests / 60 seconds | OTP scan endpoints |
 
-### Threats Mitigated
+Mitigations:
 
-| Threat | Mitigation |
-|--------|-----------|
-| CSRF on OAuth | State nonce in httpOnly cookie (10-min TTL) |
-| OAuth account takeover | Auto-link only if `email_verified` AND target account has no password |
-| Brute-force login | Account lockout after 5 attempts (15-min lock) + auth rate limit |
-| OTP brute-force | 5-strike session lockout + scan rate limit |
-| Credential sharing across stores | Store-scoped usernames — login requires Store Code + Username + Password |
-| Store code shoulder-surfing | Store code blurred by default in Settings; reveal requires explicit click |
-| SQL injection | Prepared statements throughout (better-sqlite3) |
-| XSS via image upload | MIME type whitelist: JPEG, PNG, GIF, WebP only — SVG/PHP rejected |
-| Cross-store data leakage | All queries filtered by `req.user.store_id` from JWT |
-| Credential exposure on reset | Temp password displayed once, never stored in plaintext |
-
-### Notable Design Choices
-
-**JWT in httpOnly cookie, not localStorage** — prevents XSS from reading the token.
-
-**OTP scoped to session, not to user** — mobile clients don't need an account. The OTP is the only credential they present. Its short life (8 hours) and high entropy (2^40) make it safe for this use case.
-
-**Store code blurred by default** — Store Settings page renders the code with `filter: blur(8px)`. Staff must click "View Code" to reveal it, preventing shoulder-surfing. Copy button works regardless of blur state.
-
-**Log details include item names, not IDs** — CREATE / UPDATE / DELETE audit entries record the full `item_name` string. Item IDs are stored in the DB but not surfaced in the UI to reduce information leakage.
-
-**SQLite single-file DB** — acceptable at the current scale (one store = hundreds to low thousands of items). WAL mode allows concurrent reads while a write is in progress, which matters during multi-phone scan sessions.
-
----
+- httpOnly cookies keep JWTs out of JavaScript.
+- JWT issuer/audience/algorithm are pinned.
+- Token revocation and `token_version` invalidate sessions.
+- Password reset state restricts access until the password is changed.
+- Store access is checked through `user_stores`.
+- All tenant data routes filter by `req.user.store_id`.
+- OAuth state nonce protects the callback flow.
+- Account lockout slows credential guessing.
+- OTP attempts and scan rate limits reduce brute-force risk.
+- Prepared SQLite statements are used throughout the routes.
+- File/image upload paths validate supported formats.
+- Drive proxy validates file IDs and only returns image content.
+- Uploaded files are served with dotfiles denied and download disposition.
 
 ## 14. Performance Characteristics
 
-| Operation | Latency | Notes |
-|-----------|---------|-------|
-| Scan (POST) | < 50 ms | In-memory upsert; UPC lookup is async |
-| Session poll (GET) | < 30 ms | Delta via `since` param; indexed query |
-| Inventory list (GET) | < 100 ms | Paginated + indexed |
-| Batch import (1k rows) | ~2–5 s | Single transaction |
-| PDF export (1k items) | ~1 s | PDFKit streaming |
-| Full UPC lookup cycle | 2–4 s | External API; hidden by async pattern |
+| Operation | Expected behavior |
+|---|---|
+| Scan POST | Fast local DB write; external lookup can complete afterward |
+| Desktop polling | Incremental cursor support through `since_updated_at` and `since_id` |
+| Mobile item refresh | OTP-scoped item list, optionally filtered by device |
+| Inventory list | Paginated when page params are provided |
+| Batch import | Transactional row processing |
+| Export | Generated on demand from store-scoped rows |
 
-### Concurrency Ceiling
+Current scale assumption: one application instance with SQLite WAL and local uploads. Moving to multiple instances requires shared storage for uploads, session/cache state, token revocation, and OAuth pending registrations.
 
-SQLite WAL supports roughly **10–50 concurrent writers** before contention becomes noticeable. For a typical deployment (1–3 phones scanning + 1 desktop polling), this is more than sufficient. Migration to PostgreSQL would be the path if concurrent user count grows beyond ~20.
-
----
-
-## 15. Key Files to Review
-
-When onboarding, read these in order:
+## 15. Key Files To Review
 
 | Priority | File | Why |
-|----------|------|-----|
-| 1 | `server.ts` | Entire backend — schema, routes, auth, business logic |
-| 2 | `src/context/AuthContext.tsx` | Auth state that every page depends on |
-| 3 | `src/pages/Scan.tsx` | Core product differentiator — session + polling logic |
-| 4 | `src/App.tsx` | Route guards + lazy loading |
-| 5 | `src/components/Layout.tsx` | Navigation shell, store switcher |
-| 6 | `src/pages/Dashboard.tsx` | Inventory management hub |
-| 7 | `src/pages/Import.tsx` | Batch import wizard |
-| 8 | `src/pages/SuperAdmin.tsx` | Multi-tenant admin ops |
-| 9 | `vite.config.ts` | Dev proxy + HMR config |
-| 10 | `.github/workflows/ci.yml` | CI gates |
+|---|---|---|
+| 1 | `server.ts` | Runtime bootstrap, HTTPS, Vite, server-info |
+| 2 | `src/server/app.ts` | Express middleware and route mounting |
+| 3 | `src/server/db.ts` | Schema, migrations, indexes, seed behavior |
+| 4 | `src/server/middleware.ts` | Auth, active-store resolution, role guards |
+| 5 | `src/server/routes/sessions.ts` | Core scan session behavior |
+| 6 | `src/server/routes/inventory.ts` | CRUD, import, export |
+| 7 | `src/App.tsx` | Routes and guards |
+| 8 | `src/context/AuthContext.tsx` | Auth and store switching state |
+| 9 | `src/hooks/useScanSession.ts` | Desktop polling/session workflow |
+| 10 | `src/hooks/useMobileScan.ts` | Phone scanner workflow |
+| 11 | `src/lib/apiFetch.ts` | Active-store header injection |
+| 12 | `src/lib/mobileScanScanner.ts` | Native/Zxing scan runtime |
 
----
+## 16. Technical Debt And Roadmap
 
-## 16. Technical Debt & Roadmap
+Current debt:
 
-### Current Debt
+| Item | Impact | Likely path |
+|---|---|---|
+| No request schema library | Validation is hand-rolled in route handlers | Add Zod or similar at route boundaries |
+| Local SQLite DB | Single-instance deployment assumption | Postgres or another server DB |
+| Local uploads | Not suitable for horizontal scaling | Object storage |
+| In-memory OAuth/token/UPC caches | Lost on restart and not shared across instances | Redis or persistent tables |
+| Polling scan updates | Simple but chatty | SSE or WebSockets |
+| Mixed API error shapes | Harder client integration | Standard response envelope |
 
-| Item | Impact | Effort |
-|------|--------|--------|
-| `server.ts` is ~2,000 LOC monolith | Maintainability | Medium — split into route modules |
-| No input validation schema (Zod/Joi) | Reliability, security | Medium |
-| No unit or integration tests | Confidence in refactors | High effort to retrofit |
-| Images stored as base64 in `/uploads` | Storage bloat; no CDN | Medium — migrate to S3/R2 |
-| In-memory UPC cache (lost on restart) | Cold-start performance | Low — add Redis or SQLite cache table |
-| No log rotation / external log aggregation | Operations | Low |
-| Inconsistent API error response format | DX for consumers | Low |
+Near-term engineering priorities:
 
-### Suggested Next Steps (v2)
-
-1. **Split server.ts** into `routes/auth.ts`, `routes/inventory.ts`, `routes/sessions.ts`, etc.
-2. **Add Zod schemas** for all request bodies — replaces inline validation
-3. **Integration tests** for session lifecycle + commit transaction
-4. **Object storage** for product images (Cloudflare R2 or AWS S3)
-5. **Persistent UPC cache** (SQLite table with TTL column) — survives server restarts
-6. **PostgreSQL migration** path if multi-store load increases significantly
-7. **Deployment guide** for production (PM2 / Docker + nginx reverse proxy)
-
----
-
-*Last updated: 2026-04-01*
+1. Keep `TECHNICAL.md` and `ARCHITECTURE.md` updated when route or schema boundaries move.
+2. Add schema validation around auth, inventory, import, admin, and session payloads.
+3. Add explicit integration tests for multi-store active-store headers.
+4. Add reconciliation/export history for the integration workflow.
+5. Prepare a deployment guide once the production host is chosen.
