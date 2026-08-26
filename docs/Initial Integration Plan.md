@@ -1,6 +1,6 @@
-# OptiCapture Initial Integration Technical Plan
+# OptiCapture Initial Integration Plan
 
-Last updated: 2026-08-25
+Last updated: 2026-08-26
 
 ## Purpose
 
@@ -32,6 +32,21 @@ The main rule for the initial phase:
 The existing platform remains the source of truth.
 OptiCapture produces trusted scan/count results that can be reviewed and applied.
 ```
+
+## Current OptiCapture Baseline
+
+The current application already has several integration-ready pieces in place:
+
+- store-scoped inventory, categories, logs, scan sessions, and user access
+- per-tab active-store selection with server validation through `X-Store-Id`
+- mobile scan sessions protected by session ID and OTP
+- mobile device tracking through `device_id`
+- batch import support for XLSX, CSV, and JSON
+- import/export mapping fields for external system identifiers
+- inventory export to XLSX, CSV, JSON, and PDF
+- session audit trail through staged `session_items` and store logs
+
+The remaining integration work is not basic inventory capture. It is the handoff layer between the existing platform and OptiCapture, plus reviewed application of count results back into the existing platform.
 
 ## Hosting And Domain Shape
 
@@ -204,6 +219,8 @@ OptiCapture item 42 maps to existing platform item ABC-123.
 
 That mapping is required before any automated or semi-automated update back to the existing platform.
 
+Current status: these fields exist on inventory records and are included in the import/export pipeline. The next step is to define which existing-platform columns map to each field and to verify a real sample export/import round trip.
+
 ## Inherited SSO And Session Handoff
 
 The integrated version should inherit the existing platform's SSO/login. OptiCapture should not become a second primary identity system for users who enter through the existing inventory platform.
@@ -239,6 +256,8 @@ The token should include:
 - nonce or token ID for replay protection
 
 OptiCapture validates the token and creates or resumes a local session for that user and store.
+
+Current status: this endpoint does not exist yet. The app currently supports local credential login, optional Google OAuth, account-scoped cookies, and active store selection. The SSO launch endpoint should reuse the same store resolution rules rather than introduce a second tenant-scoping model.
 
 ### SSO Security Requirements
 
@@ -286,6 +305,8 @@ Recommended initial permissions:
 | Inventory staff | Assigned store or session | Scan items, update draft quantities, submit scan results |
 
 The SSO launch token should include both role and store scope. OptiCapture should never infer store access from role alone.
+
+Current status: OptiCapture currently enforces `owner`, `taker`, and `superadmin` internally. Integrated roles should map explicitly onto those permissions or onto a future renamed permission layer.
 
 ## Source Of Truth Rules
 
@@ -429,15 +450,16 @@ Success criteria:
 
 ## Recommended Build Order
 
-1. Confirm external ID mapping in the current Excel import.
-2. Add or verify storage for external item/store/category identifiers.
-3. Add count result export using the existing platform's accepted Excel format.
+1. Confirm external ID mapping against a real existing-platform Excel export.
+2. Verify the existing external item/store/category/SKU fields cover the real export shape.
+3. Add a count-result export shaped exactly like the existing platform's accepted import format.
 4. Add session-level export history and status.
 5. Add signed SSO launch endpoint.
-6. Add store-scoped launch from the existing platform.
-7. Run Excel round-trip pilot.
-8. Add reconciliation reporting.
-9. Consider API sync only after the Excel round trip is reliable.
+6. Reuse the current active-store enforcement model for SSO-launched users.
+7. Add store-scoped launch from the existing platform.
+8. Run Excel round-trip pilot.
+9. Add reconciliation reporting.
+10. Consider API sync only after the Excel round trip is reliable.
 
 ## Initial Phase Summary
 
