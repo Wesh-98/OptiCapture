@@ -8,8 +8,8 @@ OptiCapture replaces manual spreadsheets and legacy tools with a fast, multi-ten
 
 ## Overview
 
-| | |
-|---|---|
+| Attribute | Details |
+| :--- | :--- |
 | **Type** | Multi-tenant SaaS (white-label ready) |
 | **Target** | Convenience stores, grocery, small retail |
 | **Replaces** | Petrosoft, manual Excel, paper logs |
@@ -127,7 +127,7 @@ src/
 ## Tech Stack
 
 | Layer | Technology |
-|---|---|
+| :--- | :--- |
 | Frontend | React 19, React Router v7, Tailwind CSS v4, Motion |
 | Backend | Express, TypeScript, tsx |
 | Database | SQLite via better-sqlite3 |
@@ -142,7 +142,7 @@ src/
 ## Roles
 
 | Role | Dashboard | Scan | Item CRUD | Import | Logs | Store Settings | SuperAdmin |
-|---|---|---|---|---|---|---|---|
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | **SuperAdmin** | — | — | — | — | — | — | Full access |
 | **Owner** | Full | Full | Full | Full | Full | Full | — |
 | **Taker** | View | Scan | Add / Edit / Delete | — | View | View only | — |
@@ -188,7 +188,7 @@ The Scan page auto-detects the tunnel URL and updates the QR code automatically.
 ## Environment Variables
 
 | Variable | Required | Description |
-|---|---|---|
+| :--- | :---: | :--- |
 | `JWT_SECRET` | **Yes** | Random 32-byte hex — `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
 | `GOOGLE_CLIENT_ID` | No | Google OAuth client ID (Google Cloud Console) |
 | `GOOGLE_CLIENT_SECRET` | No | Google OAuth client secret |
@@ -204,7 +204,7 @@ The Scan page auto-detects the tunnel URL and updates the QR code automatically.
 ## Scripts
 
 | Command | Description |
-|---|---|
+| :--- | :--- |
 | `npm run dev` | Dev server — HTTPS on localhost:3000 |
 | `npm run dev:scan` | Dev server + Cloudflare tunnel for mobile scanning |
 | `npm run tunnel` | Tunnel only |
@@ -224,7 +224,7 @@ The Scan page auto-detects the tunnel URL and updates the QR code automatically.
 Seeded automatically when `NODE_ENV !== production`:
 
 | Username | Password | Role | Store Code |
-|---|---|---|---|
+| :--- | :--- | :---: | :---: |
 | `admin` | `Optimart1234` | Owner | EATEM6 |
 | `taker` | `taker123` | Taker | EATEM6 |
 | `superadmin` | `superadmin123` | SuperAdmin | — |
@@ -236,7 +236,7 @@ Seeded automatically when `NODE_ENV !== production`:
 OptiCapture is built to grow. Planned for v2:
 
 | Feature | Notes |
-|---|---|
+| :--- | :--- |
 | Email password reset | Self-service, no superadmin dependency |
 | Google OAuth account linking | Merge existing accounts with Google sign-in |
 | API versioning (`/api/v1/`) | Stable contracts for third-party integrations |
