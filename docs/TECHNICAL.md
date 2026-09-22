@@ -1,6 +1,6 @@
 # OptiCapture Technical Reference
 
-Last updated: 2026-08-26
+Last updated: 2026-09-22
 
 For engineering collaborators. Covers the current application structure, data model, API surface, scan lifecycle, security posture, and known trade-offs.
 
@@ -40,6 +40,7 @@ server.ts
 src/server/app.ts
   - exports createApp()
   - configures trust proxy, Helmet, JSON parsing, cookies
+  - rate-limits API requests before body parsing and validates JSON object bodies
   - serves /uploads and /icons
   - exposes /api/drive-image/:fileId
   - mounts API routers
@@ -88,6 +89,7 @@ GOOGLE_CLIENT_ID=<optional>
 GOOGLE_CLIENT_SECRET=<optional>
 GOOGLE_REDIRECT_URI=<optional>
 UPCITEMDB_API_KEY=<optional>
+GO_UPC_API_KEY=<optional paid provider>
 NODE_ENV=<development|production|test>
 ALLOW_DEMO_SEED=<true for local demo seed only>
 TUNNEL_HOST=<optional local tunnel host>
@@ -271,7 +273,7 @@ Google OAuth flow:
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/api/inventory` | cookie | List/search inventory; paginated when `page` is present |
+| GET | `/api/inventory` | cookie | List/search inventory; always returns `{ items, total, page, limit }` (default 50, maximum 500) |
 | GET | `/api/inventory/export?format=xlsx|csv|json|pdf` | owner | Export inventory and mark rows exported |
 | POST | `/api/inventory` | owner/taker | Create item |
 | PUT | `/api/inventory/:id` | owner/taker | Update item and invalidate UPC cache |
@@ -312,7 +314,7 @@ Google OAuth flow:
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/api/logs` | owner | Filtered audit log |
+| GET | `/api/logs` | cookie | Store-scoped audit log; supports action, keyword, date, page, and limit filters |
 
 ### Admin
 
@@ -386,6 +388,7 @@ Each scan follows this order:
 
 Current providers:
 
+- Go-UPC when `GO_UPC_API_KEY` is configured; successful results have priority
 - Open Food Facts
 - UPCitemDB
 
@@ -412,6 +415,7 @@ Confirm:
 - processes rows in a transaction
 - creates missing categories
 - updates by external item ID, UPC, item number, or external SKU where possible
+- preserves omitted values on updates and round-trips descriptions, categories, images, pricing, tax, tags, status, and external IDs
 - inserts new rows when no existing match is found
 - records skipped rows and import log details
 - sets `last_imported_at` and `sync_status='imported'`
@@ -451,6 +455,9 @@ Mitigations:
 - Prepared SQLite statements are used throughout the routes.
 - File/image upload paths validate supported formats.
 - Drive proxy validates file IDs and only returns image content.
+- Drive proxy enforces an 8-second timeout, an image MIME allowlist, and a streaming 5 MB cap.
+- Malformed JSON and non-object JSON API bodies receive stable 400 responses.
+- Suspended stores and expired sessions are rejected throughout OTP scan paths.
 - Uploaded files are served with dotfiles denied and download disposition.
 
 ## 14. Performance Characteristics
@@ -460,7 +467,8 @@ Mitigations:
 | Scan POST | Fast local DB write; external lookup can complete afterward |
 | Desktop polling | Incremental cursor support through `since_updated_at` and `since_id` |
 | Mobile item refresh | OTP-scoped item list, optionally filtered by device |
-| Inventory list | Paginated when page params are provided |
+| Inventory list | Always paginated; defaults to 50 rows and caps requests at 500 |
+| Audit log | SQL-filtered and paginated before rows are returned |
 | Batch import | Transactional row processing |
 | Export | Generated on demand from store-scoped rows |
 
@@ -495,11 +503,14 @@ Current debt:
 | In-memory OAuth/token/UPC caches | Lost on restart and not shared across instances | Redis or persistent tables |
 | Polling scan updates | Simple but chatty | SSE or WebSockets |
 | Mixed API error shapes | Harder client integration | Standard response envelope |
+| Scan hook coverage | Network, reconnect, and draft transitions have limited component coverage | Add hook/component integration tests |
+| Device-dependent camera behavior | Desktop automation cannot represent the full mobile matrix | Validate supported iOS/Android browsers and lighting conditions |
 
 Near-term engineering priorities:
 
 1. Keep `TECHNICAL.md` and `ARCHITECTURE.md` updated when route or schema boundaries move.
 2. Add schema validation around auth, inventory, import, admin, and session payloads.
-3. Add explicit integration tests for multi-store active-store headers.
-4. Add reconciliation/export history for the integration workflow.
-5. Prepare a deployment guide once the production host is chosen.
+3. Add explicit integration tests for multi-store active-store headers and scan reconnection paths.
+4. Add load/concurrency tests for large imports and shared scan sessions.
+5. Add reconciliation/export history for the integration workflow.
+6. Prepare a deployment guide with migration backup and integrity checks once the production host is chosen.

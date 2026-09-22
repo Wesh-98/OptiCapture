@@ -35,7 +35,36 @@ const SYNONYMS: Record<AutoDetectField, readonly string[]> = {
   external_sku: ['external sku', 'platform sku', 'source sku'],
 };
 
-function autoDetect(headers: readonly string[]): ColumnMapping {
+// Export files use these stable machine-readable headers. Resolve them before
+// fuzzy synonym matching so fields such as `external_category_id`,
+// `description`, `tag_names`, and `sync_status` cannot be mistaken for a
+// shorter field name during a round trip.
+const CANONICAL_HEADERS: Partial<Record<string, DestinationField>> = {
+  item_name: 'item_name',
+  description: 'description',
+  quantity: 'quantity',
+  upc: 'upc',
+  number: 'number',
+  sku: 'number',
+  sale_price: 'sale_price',
+  unit: 'unit',
+  category: 'category',
+  status: 'status',
+  tax_percent: 'tax_percent',
+  tag_names: 'tag_names',
+  image: 'image',
+  external_system: 'external_system',
+  external_store_id: 'external_store_id',
+  external_category_id: 'external_category_id',
+  external_item_id: 'external_item_id',
+  external_sku: 'external_sku',
+  sync_status: '__ignore__',
+  last_imported_at: '__ignore__',
+  last_exported_at: '__ignore__',
+  created_at: '__ignore__',
+};
+
+export function autoDetect(headers: readonly string[]): ColumnMapping {
   const mapping: ColumnMapping = {};
   const usedDest = new Set<AutoDetectField>();
   const synonymEntries = (Object.entries(SYNONYMS) as Array<[AutoDetectField, readonly string[]]>)
@@ -45,6 +74,13 @@ function autoDetect(headers: readonly string[]): ColumnMapping {
   for (const header of headers) {
     const lower = header.toLowerCase().trim();
     let matched: DestinationField = '__ignore__';
+
+    const canonical = CANONICAL_HEADERS[lower];
+    if (canonical && (canonical === '__ignore__' || !usedDest.has(canonical))) {
+      mapping[header] = canonical;
+      if (canonical !== '__ignore__') usedDest.add(canonical);
+      continue;
+    }
 
     const exactMatch = synonymEntries.find(
       ({ dest, synonym }) => !usedDest.has(dest) && lower === synonym

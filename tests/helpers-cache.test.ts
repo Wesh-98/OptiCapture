@@ -15,6 +15,7 @@ import {
 import {
   UPLOADS_DIR,
   UnsupportedImageTypeError,
+  fetchGoUpc,
   fetchOpenFoodFacts,
   fetchUpcItemDb,
   generateOTP,
@@ -39,6 +40,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 
   if (createdUploadPath && fs.existsSync(createdUploadPath)) {
     fs.unlinkSync(createdUploadPath);
@@ -119,6 +121,38 @@ describe('helper utilities', () => {
       brand: 'Brewed',
       image: 'https://example.com/upc.png',
       source: 'upcitemdb',
+    });
+  });
+
+  it('calls Go-UPC with its documented endpoint and bearer response shape', async () => {
+    vi.stubEnv('GO_UPC_API_KEY', 'go-upc-secret');
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          product: {
+            name: 'Go UPC Product',
+            brand: 'Lookup Brand',
+            imageUrl: 'https://example.com/go-upc.png',
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      )
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await fetchGoUpc('123456789012', new AbortController().signal);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://go-upc.com/api/v1/code/123456789012',
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer go-upc-secret' }),
+      })
+    );
+    expect(result).toEqual({
+      product_name: 'Go UPC Product',
+      brand: 'Lookup Brand',
+      image: 'https://example.com/go-upc.png',
+      source: 'go_upc',
     });
   });
 

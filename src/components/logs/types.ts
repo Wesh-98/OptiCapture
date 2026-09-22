@@ -4,6 +4,7 @@ import {
   Layers,
   ListFilter,
   LogIn,
+  KeyRound,
   Pencil,
   PlusCircle,
   Trash2,
@@ -27,6 +28,8 @@ export const LOG_ACTIONS = [
   'BATCH',
   'EXPORT',
   'LOGIN',
+  'PASSWORD',
+  'ADMIN',
 ] as const;
 
 export type LogActionFilter = (typeof LOG_ACTIONS)[number];
@@ -80,5 +83,15 @@ export const LOG_ACTION_META: Record<LogActionFilter, LogActionMeta> = {
     badgeClassName: 'bg-slate-100 text-slate-600',
     dotClassName: 'bg-slate-400',
     icon: LogIn,
+  },
+  PASSWORD: {
+    badgeClassName: 'bg-indigo-100 text-indigo-700',
+    dotClassName: 'bg-indigo-500',
+    icon: KeyRound,
+  },
+  ADMIN: {
+    badgeClassName: 'bg-rose-100 text-rose-700',
+    dotClassName: 'bg-rose-500',
+    icon: Pencil,
   },
 };

@@ -1,6 +1,6 @@
 # OptiCapture Operating Procedure
 
-Last updated: 2026-08-26
+Last updated: 2026-09-22
 
 Use this procedure to operate the OptiCapture workflow from login through inventory capture, review, administration, and cleanup checks.
 
@@ -86,16 +86,17 @@ Expected result:
 5. Scan the QR code with the phone.
 6. Confirm the phone opens `/mobile-scan/:sessionId`.
 7. Allow camera access on the phone.
-8. Scan a product barcode.
-9. Confirm the scanned item appears on the phone.
-10. Confirm the scanned item appears in the desktop feed.
-11. Switch the phone to manual entry.
-12. Submit a manual UPC or item name.
-13. Confirm the manual entry appears in the desktop feed.
-14. Edit a staged item from the desktop if needed.
-15. Delete a staged item from the desktop if needed.
-16. Select items for commit.
-17. Commit selected items when ready.
+8. If camera permission is denied, confirm the scanner waits for **Try Again** instead of entering a retry loop.
+9. Scan a product barcode.
+10. Confirm the scanned item appears on the phone.
+11. Confirm the scanned item appears in the desktop feed.
+12. Switch the phone to manual entry.
+13. Submit a manual UPC or item name.
+14. Confirm the manual entry appears in the desktop feed.
+15. Edit a staged item from the desktop if needed.
+16. Delete a staged item from the desktop if needed.
+17. Select items for commit.
+18. Commit selected items when ready.
 
 Expected result:
 
@@ -168,6 +169,7 @@ Expected result:
 4. Filter by date range.
 5. Search log details if needed.
 6. Change page size if needed.
+7. Move between pages and confirm the result count reflects the active filters.
 
 Expected result:
 

@@ -86,6 +86,68 @@ test('renders mobile scan and submits a manual scan through the browser', async 
   await expect(page.getByText('bottle')).toBeVisible();
 });
 
+test('shows camera permission failures once and retries only when requested', async ({ page }) => {
+  await page.addInitScript(() => {
+    class TestBarcodeDetector {
+      static async getSupportedFormats() {
+        return ['upc_a', 'ean_13'];
+      }
+
+      async detect() {
+        return [];
+      }
+    }
+
+    Object.defineProperty(globalThis, 'BarcodeDetector', {
+      configurable: true,
+      value: TestBarcodeDetector,
+    });
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: {
+        getUserMedia: async () => {
+          const testWindow = window as typeof window & { __cameraAttempts?: number };
+          testWindow.__cameraAttempts = (testWindow.__cameraAttempts ?? 0) + 1;
+          throw new DOMException('Permission denied for test', 'NotAllowedError');
+        },
+      },
+    });
+  });
+
+  await page.route('**/api/session/session-camera/items?*', async route => {
+    await route.fulfill({ json: { status: 'active', items: [] } });
+  });
+
+  await page.goto('/mobile-scan/session-camera?otp=otp-camera');
+
+  const permissionError = page.getByText(/camera permission denied/i);
+  await expect(permissionError).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (window as typeof window & { __cameraAttempts?: number }).__cameraAttempts ?? 0
+      )
+    )
+    .toBe(1);
+
+  await page.waitForTimeout(500);
+  expect(
+    await page.evaluate(
+      () => (window as typeof window & { __cameraAttempts?: number }).__cameraAttempts ?? 0
+    )
+  ).toBe(1);
+
+  await page.getByRole('button', { name: 'Try Again' }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (window as typeof window & { __cameraAttempts?: number }).__cameraAttempts ?? 0
+      )
+    )
+    .toBe(2);
+  await expect(permissionError).toBeVisible();
+});
+
 test('opens category inventory even after filtering the category list', async ({ page }) => {
   await page.route('**/api/auth/me', async route => {
     await route.fulfill({

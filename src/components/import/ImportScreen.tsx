@@ -18,6 +18,7 @@ export function ImportScreen() {
           isParsing={workflow.state.isParsing}
           parseError={workflow.state.parseError}
           onFileChange={workflow.handleFileChange}
+          onFileSelect={workflow.handleFile}
         />
       )}
 

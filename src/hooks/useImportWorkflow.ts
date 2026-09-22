@@ -21,13 +21,8 @@ function getErrorMessage(error: unknown, fallback: string): string {
 export function useImportWorkflow() {
   const [state, setState] = useState<ImportState>(initialState);
 
-  const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
-    const input = event.target;
-
+  const handleFile = async (file: File) => {
     try {
-      const file = input.files?.[0];
-      if (!file) return;
-
       setState(prev => ({
         ...prev,
         step: 'upload',
@@ -51,9 +46,14 @@ export function useImportWorkflow() {
     } catch (error) {
       const message = getErrorMessage(error, 'Network error - could not reach server');
       setState(prev => ({ ...prev, isParsing: false, parseError: message }));
-    } finally {
-      input.value = '';
     }
+  };
+
+  const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const input = event.target;
+    const file = input.files?.[0];
+    if (file) await handleFile(file);
+    input.value = '';
   };
 
   const handleMappingChange = (header: string, destination: DestinationField) => {
@@ -115,6 +115,7 @@ export function useImportWorkflow() {
     mappedCount,
     totalRows,
     handleFileChange,
+    handleFile,
     handleMappingChange,
     setActiveSheet,
     applyToAllSheets,

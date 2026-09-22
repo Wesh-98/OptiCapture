@@ -2,6 +2,7 @@ import express from 'express';
 import { db } from '../db.js';
 import { authenticateToken, requireOwner } from '../middleware.js';
 import type { AuthRequest } from '../types.js';
+import { logError } from '../logger.js';
 
 export const categoriesRouter = express.Router();
 
@@ -11,6 +12,20 @@ const visibleCategoryCondition = `LOWER(TRIM(c.name)) NOT IN (${reservedCategory
 
 function isReservedCategoryName(name: string): boolean {
   return RESERVED_CATEGORY_NAMES.includes(name.trim().toLowerCase());
+}
+
+function writeCategoryLog(
+  action: string,
+  details: string,
+  userId: number,
+  storeId: number | undefined
+) {
+  db.prepare('INSERT INTO logs (action, details, user_id, store_id) VALUES (?, ?, ?, ?)').run(
+    action,
+    details,
+    userId,
+    storeId
+  );
 }
 
 // Dashboard Stats
@@ -72,6 +87,11 @@ categoriesRouter.put(
       return res.status(400).json({ error: 'Status must be Active or Inactive' });
     }
 
+    const category = db
+      .prepare('SELECT name FROM categories WHERE id = ? AND store_id = ?')
+      .get(id, storeId) as { name: string } | undefined;
+    if (!category) return res.status(404).json({ error: 'Category not found' });
+
     db.transaction(() => {
       db.prepare('UPDATE categories SET status = ? WHERE id = ? AND store_id = ?').run(
         status,
@@ -85,6 +105,12 @@ categoriesRouter.put(
           storeId
         );
       }
+      writeCategoryLog(
+        'UPDATE',
+        `Set category "${category.name}" to ${status}`,
+        req.user.id,
+        storeId
+      );
     })();
 
     res.json({ success: true });
@@ -98,27 +124,49 @@ categoriesRouter.delete(
   (req: AuthRequest, res) => {
     const { id } = req.params;
     const storeId = req.user.store_id;
-    db.prepare('DELETE FROM inventory WHERE category_id = ? AND store_id = ?').run(id, storeId);
+    const category = db
+      .prepare('SELECT name FROM categories WHERE id = ? AND store_id = ?')
+      .get(id, storeId) as { name: string } | undefined;
+    if (!category) return res.status(404).json({ error: 'Category not found' });
+    db.transaction(() => {
+      const result = db
+        .prepare('DELETE FROM inventory WHERE category_id = ? AND store_id = ?')
+        .run(id, storeId);
+      writeCategoryLog(
+        'DELETE',
+        `Deleted ${result.changes} item(s) from category "${category.name}"`,
+        req.user.id,
+        storeId
+      );
+    })();
     res.json({ success: true });
   }
 );
 
 categoriesRouter.post('/categories', authenticateToken, requireOwner, (req: AuthRequest, res) => {
   const { name, icon } = req.body;
-  if (!name?.trim()) return res.status(400).json({ error: 'Category name is required' });
+  if (typeof name !== 'string' || !name.trim())
+    return res.status(400).json({ error: 'Category name is required' });
+  if (name.length > 100) return res.status(400).json({ error: 'Category name is too long' });
+  if (icon !== undefined && typeof icon !== 'string')
+    return res.status(400).json({ error: 'Category icon must be a string' });
   if (isReservedCategoryName(name)) {
     return res.status(400).json({ error: 'Inventory is not a category name' });
   }
   const storeId = req.user.store_id;
   try {
-    const info = db
-      .prepare('INSERT INTO categories (name, icon, store_id) VALUES (?, ?, ?)')
-      .run(name.trim(), icon || 'Package', storeId);
+    const info = db.transaction(() => {
+      const result = db
+        .prepare('INSERT INTO categories (name, icon, store_id) VALUES (?, ?, ?)')
+        .run(name.trim(), icon || 'Package', storeId);
+      writeCategoryLog('CREATE', `Created category "${name.trim()}"`, req.user.id, storeId);
+      return result;
+    })();
     res.status(201).json({ id: info.lastInsertRowid });
   } catch (err: any) {
     if (err.message?.includes('UNIQUE'))
       return res.status(409).json({ error: 'Category name already exists' });
-    console.error('[categories:create]', err);
+    logError('categories:create', err);
     res.status(500).json({ error: 'An internal error occurred' });
   }
 });
@@ -131,22 +179,32 @@ categoriesRouter.put(
     const { name, icon } = req.body;
     const { id } = req.params;
     const storeId = req.user.store_id;
-    if (!name?.trim()) return res.status(400).json({ error: 'Category name is required' });
+    if (typeof name !== 'string' || !name.trim())
+      return res.status(400).json({ error: 'Category name is required' });
+    if (name.length > 100) return res.status(400).json({ error: 'Category name is too long' });
+    if (icon !== undefined && typeof icon !== 'string')
+      return res.status(400).json({ error: 'Category icon must be a string' });
     if (isReservedCategoryName(name)) {
       return res.status(400).json({ error: 'Inventory is not a category name' });
     }
     try {
-      db.prepare('UPDATE categories SET name = ?, icon = ? WHERE id = ? AND store_id = ?').run(
-        name.trim(),
-        icon || 'Package',
-        id,
-        storeId
-      );
+      const updated = db.transaction(() => {
+        const result = db
+          .prepare('UPDATE categories SET name = ?, icon = ? WHERE id = ? AND store_id = ?')
+          .run(name.trim(), icon || 'Package', id, storeId);
+        if (result.changes) {
+          writeCategoryLog('UPDATE', `Updated category "${name.trim()}"`, req.user.id, storeId);
+        }
+        return result.changes;
+      })();
+      if (!updated) return res.status(404).json({ error: 'Category not found' });
       res.json({ success: true });
     } catch (err: any) {
       if (err.message?.includes('UNIQUE'))
         return res.status(409).json({ error: 'Category name already exists' });
-      console.error('[categories:update]', err);
+      logError('categories:update', err, 'Failed to update category', {
+        categoryId: req.params.id,
+      });
       res.status(500).json({ error: 'An internal error occurred' });
     }
   }
@@ -159,9 +217,14 @@ categoriesRouter.delete(
   (req: AuthRequest, res) => {
     const { id } = req.params;
     const storeId = req.user.store_id;
+    const category = db
+      .prepare('SELECT name FROM categories WHERE id = ? AND store_id = ?')
+      .get(id, storeId) as { name: string } | undefined;
+    if (!category) return res.status(404).json({ error: 'Category not found' });
     db.transaction(() => {
       db.prepare('DELETE FROM inventory WHERE category_id = ? AND store_id = ?').run(id, storeId);
       db.prepare('DELETE FROM categories WHERE id = ? AND store_id = ?').run(id, storeId);
+      writeCategoryLog('DELETE', `Deleted category "${category.name}"`, req.user.id, storeId);
     })();
     res.json({ success: true });
   }

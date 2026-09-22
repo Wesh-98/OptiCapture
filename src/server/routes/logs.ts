@@ -1,18 +1,30 @@
 import express from 'express';
 import { db } from '../db.js';
-import { authenticateToken, requireOwner } from '../middleware.js';
+import { authenticateToken } from '../middleware.js';
 import type { AuthRequest } from '../types.js';
 
 export const logsRouter = express.Router();
 
-logsRouter.get('/logs', authenticateToken, requireOwner, (req: AuthRequest, res) => {
+logsRouter.get('/logs', authenticateToken, (req: AuthRequest, res) => {
   const storeId = req.user.store_id;
   const {
     from,
     to,
+    q,
+    action,
+    page: pageParam,
     limit: limitParam,
-  } = req.query as { from?: string; to?: string; limit?: string };
-  const limit = Math.min(Number(limitParam) || 1000, 5000);
+  } = req.query as {
+    from?: string;
+    to?: string;
+    q?: string;
+    action?: string;
+    page?: string;
+    limit?: string;
+  };
+  const parsedLimit = Number.parseInt(limitParam ?? '', 10);
+  const page = Math.max(Number.parseInt(pageParam ?? '', 10) || 1, 1);
+  const limit = Math.min(Math.max(Number.isFinite(parsedLimit) ? parsedLimit : 1000, 1), 5000);
 
   const conditions: string[] = ['logs.store_id = ?'];
   const params: any[] = [storeId];
@@ -34,19 +46,45 @@ logsRouter.get('/logs', authenticateToken, requireOwner, (req: AuthRequest, res)
     params.push(to + 'T23:59:59');
   }
 
-  params.push(limit);
+  if (action) {
+    if (action.length > 50) return res.status(400).json({ error: 'action is too long' });
+    conditions.push('logs.action = ?');
+    params.push(action);
+  }
+  if (q?.trim()) {
+    if (q.length > 200) return res.status(400).json({ error: 'q is too long' });
+    const escaped = q
+      .trim()
+      .toLowerCase()
+      .replace(/[%_\\]/g, '\\$&');
+    const pattern = `%${escaped}%`;
+    conditions.push(
+      `(LOWER(COALESCE(logs.details, '')) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(users.username, '')) LIKE ? ESCAPE '\\')`
+    );
+    params.push(pattern, pattern);
+  }
+
+  const fromSql = `FROM logs LEFT JOIN users ON logs.user_id = users.id WHERE ${conditions.join(' AND ')}`;
+  const total = (db.prepare(`SELECT COUNT(*) AS count ${fromSql}`).get(...params) as {
+    count: number;
+  }).count;
+  const storeTotal = (
+    db.prepare('SELECT COUNT(*) AS count FROM logs WHERE store_id = ?').get(storeId) as {
+      count: number;
+    }
+  ).count;
 
   const logs = db
     .prepare(
       `
     SELECT logs.*, users.username
-    FROM logs
-    LEFT JOIN users ON logs.user_id = users.id
-    WHERE ${conditions.join(' AND ')}
+    ${fromSql}
     ORDER BY timestamp DESC
-    LIMIT ?
+    LIMIT ? OFFSET ?
   `
     )
-    .all(...params);
-  res.json(logs);
+    .all(...params, limit, (page - 1) * limit);
+
+  if (!pageParam) return res.json(logs);
+  res.json({ items: logs, total, store_total: storeTotal, page, limit });
 });

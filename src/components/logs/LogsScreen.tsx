@@ -18,8 +18,8 @@ export function LogsScreen() {
         dateTo={logsPage.dateTo}
         filterOpen={logsPage.filterOpen}
         filterRef={logsPage.filterRef}
-        logsCount={logsPage.logs.length}
-        resultCount={logsPage.filteredLogs.length}
+        logsCount={logsPage.logsCount}
+        resultCount={logsPage.resultCount}
         search={logsPage.search}
         onClearActionFilter={logsPage.clearActionFilter}
         onClearDateRange={logsPage.clearDateRange}
@@ -38,6 +38,7 @@ export function LogsScreen() {
         pageSize={logsPage.pageSize}
         pagedLogs={logsPage.pagedLogs}
         totalPages={logsPage.totalPages}
+        totalCount={logsPage.resultCount}
         onNextPage={logsPage.goToNextPage}
         onPageSizeChange={logsPage.setPageSize}
         onPreviousPage={logsPage.goToPreviousPage}

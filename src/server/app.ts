@@ -23,6 +23,33 @@ import { categoriesRouter } from './routes/categories.js';
 import { inventoryRouter } from './routes/inventory.js';
 import { sessionsRouter } from './routes/sessions.js';
 import { logsRouter } from './routes/logs.js';
+import { logError, logWarn } from './logger.js';
+
+const MAX_PROXIED_IMAGE_BYTES = 5 * 1024 * 1024;
+
+async function readBodyWithLimit(response: Response, maxBytes: number): Promise<Buffer | null> {
+  const declaredLength = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    await response.body?.cancel();
+    return null;
+  }
+  if (!response.body) return Buffer.alloc(0);
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks.map(chunk => Buffer.from(chunk)), total);
+}
 
 export function createApp() {
   const app = express();
@@ -66,6 +93,9 @@ export function createApp() {
     })
   );
 
+  // Reject excessive API traffic before spending work parsing request bodies.
+  app.use('/api', apiLimiter);
+
   // ── Body parsing + cookies ───────────────────────────────────────────────────
   // Most endpoints take small JSON bodies, so the global cap stays tight to limit
   // DoS exposure. /api/inventory/batch-confirm is the one exception: it echoes back
@@ -76,6 +106,16 @@ export function createApp() {
   app.use('/api/inventory/batch-confirm', express.json({ limit: '60mb' }));
   app.use(express.json({ limit: '10mb' }));
   app.use(cookieParser());
+  app.use('/api', (req, res, next) => {
+    if (
+      ['POST', 'PUT', 'PATCH'].includes(req.method) &&
+      req.is('application/json') &&
+      (typeof req.body !== 'object' || req.body === null || Array.isArray(req.body))
+    ) {
+      return res.status(400).json({ error: 'JSON request body must be an object' });
+    }
+    next();
+  });
 
   // ── Static assets ────────────────────────────────────────────────────────────
   // Uploaded product images (saved to disk by saveBase64Image / multer).
@@ -105,18 +145,22 @@ export function createApp() {
       `https://drive.google.com/uc?export=view&id=${fileId}`,
     ];
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8_000);
     try {
       for (const url of candidateUrls) {
         const upstream = await fetch(url, {
           headers: { Accept: 'image/*', 'User-Agent': 'OptiCapture/1.0' },
+          signal: controller.signal,
         });
         if (!upstream.ok) continue;
         const contentType = upstream.headers.get('content-type') || '';
-        if (!contentType.startsWith('image/')) continue;
-        const buffer = Buffer.from(await upstream.arrayBuffer());
+        if (!['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/avif'].includes(contentType))
+          continue;
+        const buffer = await readBodyWithLimit(upstream, MAX_PROXIED_IMAGE_BYTES);
         // 5 MB cap — prevents unexpectedly large Drive files (videos, huge TIFFs)
         // from being fully buffered into memory before the response is sent.
-        if (buffer.length > 5 * 1024 * 1024) return res.status(413).end();
+        if (!buffer) return res.status(413).end();
         res.setHeader('Content-Type', contentType);
         res.setHeader(
           'Cache-Control',
@@ -126,15 +170,20 @@ export function createApp() {
       }
       return res.status(404).end();
     } catch (error) {
-      console.error('[drive-image]', error);
+      if (error instanceof Error && error.name === 'AbortError') {
+        logWarn('drive-image', 'Upstream image request timed out', { fileId });
+      } else {
+        logError('drive-image', error, 'Upstream image request failed', { fileId });
+      }
       return res.status(502).end();
+    } finally {
+      clearTimeout(timeout);
     }
   });
 
   // ── API routes ───────────────────────────────────────────────────────────────
   // apiLimiter applies to every /api/* request (2000 req / 15 min per IP).
   // Auth routes have their own tighter authLimiter defined inside authRouter.
-  app.use('/api', apiLimiter);
   app.use('/api/auth', authRouter); // login, logout, register, me, store settings
   app.use('/api/admin', adminRouter); // superadmin store/user management
   app.use('/api', categoriesRouter); // /api/categories, /api/dashboard/stats
@@ -147,7 +196,18 @@ export function createApp() {
   // Without this, Express 4 leaks a full HTML stack trace on uncaught errors.
   app.use(
     (err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-      console.error('[unhandled]', err);
+      if (
+        typeof err === 'object' &&
+        err !== null &&
+        'type' in err &&
+        err.type === 'entity.parse.failed'
+      ) {
+        return res.status(400).json({ error: 'Malformed JSON request body' });
+      }
+      logError('http', err, 'Unhandled request error', {
+        method: _req.method,
+        path: _req.path,
+      });
       res.status(500).json({ error: 'An internal error occurred' });
     }
   );

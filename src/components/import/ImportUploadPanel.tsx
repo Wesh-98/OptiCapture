@@ -1,4 +1,4 @@
-import type { ChangeEventHandler } from 'react';
+import { useState, type ChangeEventHandler, type DragEvent } from 'react';
 import { AlertTriangle, Loader2, Upload } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { DEST_FIELDS } from './types';
@@ -11,9 +11,25 @@ interface Props {
   isParsing: boolean;
   parseError: string | null;
   onFileChange: ChangeEventHandler<HTMLInputElement>;
+  onFileSelect: (file: File) => void | Promise<void>;
 }
 
-export function ImportUploadPanel({ isParsing, parseError, onFileChange }: Readonly<Props>) {
+export function ImportUploadPanel({
+  isParsing,
+  parseError,
+  onFileChange,
+  onFileSelect,
+}: Readonly<Props>) {
+  const [isDragging, setIsDragging] = useState(false);
+
+  const handleDrop = (event: DragEvent<HTMLLabelElement>) => {
+    event.preventDefault();
+    setIsDragging(false);
+    if (isParsing) return;
+    const file = event.dataTransfer.files[0];
+    if (file) void onFileSelect(file);
+  };
+
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
       <label
@@ -21,8 +37,17 @@ export function ImportUploadPanel({ isParsing, parseError, onFileChange }: Reado
           'flex h-64 w-full cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed transition-colors',
           isParsing
             ? 'cursor-not-allowed border-slate-200 bg-slate-50'
-            : 'border-slate-300 bg-slate-50 hover:bg-slate-100'
+            : isDragging
+              ? 'border-blue-500 bg-blue-50'
+              : 'border-slate-300 bg-slate-50 hover:bg-slate-100'
         )}
+        onDragEnter={event => {
+          event.preventDefault();
+          if (!isParsing) setIsDragging(true);
+        }}
+        onDragOver={event => event.preventDefault()}
+        onDragLeave={() => setIsDragging(false)}
+        onDrop={handleDrop}
       >
         <div className="flex flex-col items-center justify-center px-6 pt-5 pb-6 text-center">
           {isParsing ? (
@@ -37,7 +62,7 @@ export function ImportUploadPanel({ isParsing, parseError, onFileChange }: Reado
                 <span className="font-semibold text-navy-900">Click to upload</span> or drag and
                 drop
               </p>
-              <p className="text-xs text-slate-400">Excel (.xlsx, .xls), CSV, or JSON - max 20MB</p>
+              <p className="text-xs text-slate-400">Excel (.xlsx), CSV, or JSON - max 20MB</p>
               <p className="mt-1 text-xs text-slate-400">
                 Multi-sheet Excel supported - each sheet = one category
               </p>
@@ -47,9 +72,10 @@ export function ImportUploadPanel({ isParsing, parseError, onFileChange }: Reado
         <input
           type="file"
           className="hidden"
-          accept=".csv,.xlsx,.xls,.json"
+          accept=".csv,.xlsx,.json"
           onChange={onFileChange}
           disabled={isParsing}
+          aria-label="Choose inventory import file"
         />
       </label>
 

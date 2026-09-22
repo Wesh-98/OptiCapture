@@ -106,6 +106,12 @@ describe('categories routes', () => {
       .set('Cookie', adminCookie)
       .send({ name: categoryName, icon: 'Package' });
     expect(duplicateRes.status).toBe(409);
+
+    const auditLog = db
+      .prepare("SELECT action, details FROM logs WHERE action = 'CREATE' ORDER BY id DESC LIMIT 1")
+      .get() as { action: string; details: string };
+    expect(auditLog).toMatchObject({ action: 'CREATE' });
+    expect(auditLog.details).toContain(categoryName);
   });
 
   it('rejects Inventory as a category name', async () => {
@@ -275,6 +281,20 @@ describe('categories routes', () => {
 });
 
 describe('logs route', () => {
+  it('allows takers to view their store audit trail and clamps invalid limits', async () => {
+    db.prepare(
+      'INSERT INTO logs (action, details, user_id, store_id) VALUES (?, ?, ?, ?)'
+    ).run('READ', 'Taker-visible log', 1, 1);
+
+    const res = await request
+      .get('/api/logs')
+      .set('Cookie', takerCookie)
+      .query({ limit: '-20' });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(1);
+    expect(res.body[0].details).toBe('Taker-visible log');
+  });
   it('rejects malformed date parameters', async () => {
     const badFromRes = await request
       .get('/api/logs')
@@ -329,5 +349,29 @@ describe('logs route', () => {
     ]);
     expect(res.body.every((entry: any) => entry.store_id === 1)).toBe(true);
     expect(res.body.every((entry: any) => entry.username === 'admin')).toBe(true);
+  });
+
+  it('filters and paginates logs in SQL before returning a page', async () => {
+    const insert = db.prepare(
+      `INSERT INTO logs (action, details, user_id, store_id, timestamp)
+       VALUES (?, ?, 1, 1, ?)`
+    );
+    insert.run('CREATE', 'Needle older result', '2026-01-01T10:00:00');
+    insert.run('CREATE', 'Needle newest result', '2026-01-02T10:00:00');
+    insert.run('DELETE', 'Unrelated result', '2026-01-03T10:00:00');
+
+    const firstPage = await request
+      .get('/api/logs')
+      .set('Cookie', adminCookie)
+      .query({ page: '1', limit: '1', action: 'CREATE', q: 'needle' });
+    const secondPage = await request
+      .get('/api/logs')
+      .set('Cookie', adminCookie)
+      .query({ page: '2', limit: '1', action: 'CREATE', q: 'needle' });
+
+    expect(firstPage.status).toBe(200);
+    expect(firstPage.body).toMatchObject({ total: 2, store_total: 3, page: 1, limit: 1 });
+    expect(firstPage.body.items[0].details).toBe('Needle newest result');
+    expect(secondPage.body.items[0].details).toBe('Needle older result');
   });
 });

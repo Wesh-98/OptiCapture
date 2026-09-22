@@ -31,6 +31,7 @@ export function MobileScanCameraPanel({
         autoPlay
         muted
         playsInline
+        aria-label="Live barcode camera preview"
       />
 
       <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
@@ -46,22 +47,16 @@ export function MobileScanCameraPanel({
       {isProcessing && <div className="absolute inset-0 bg-emerald-400/10 pointer-events-none" />}
 
       {inputMode === 'camera' && cameraIdle && (
-        <div
-          role="button"
-          tabIndex={0}
+        <button
+          type="button"
           className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 gap-4 cursor-pointer"
           onClick={() => {
             void onResumeCamera();
           }}
-          onKeyDown={event => {
-            if (event.key === 'Enter' || event.key === ' ') {
-              void onResumeCamera();
-            }
-          }}
         >
           <Camera size={40} className="text-white" />
           <p className="text-white text-lg font-medium">Tap to resume</p>
-        </div>
+        </button>
       )}
 
       {inputMode === 'camera' && cameraError && (
@@ -69,6 +64,7 @@ export function MobileScanCameraPanel({
           <AlertTriangle size={40} className="text-red-400" />
           <p className="text-white text-sm text-center">{cameraError}</p>
           <button
+            type="button"
             onClick={() => {
               void onResetCamera();
             }}
@@ -81,11 +77,13 @@ export function MobileScanCameraPanel({
 
       {inputMode === 'camera' && !cameraError && !cameraIdle && (
         <button
+          type="button"
           onClick={() => {
             void onResetCamera();
           }}
           className="absolute top-2 right-2 p-2 bg-black/40 hover:bg-black/60 rounded-full text-white transition-colors"
           title="Reset camera"
+          aria-label="Reset camera"
         >
           <RefreshCw size={14} />
         </button>

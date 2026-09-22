@@ -56,7 +56,7 @@ export function useItemManagement(
         setIsAddModalOpen(false);
         setFormData({ ...emptyForm });
         onStatsChange();
-        if (viewMode === 'items' && selectedCategoryId) void fetchItems(selectedCategoryId);
+        if (viewMode === 'items') void fetchItems(selectedCategoryId);
       } else {
         const err = await res.json();
         addToast('error', err.error || 'Failed to add item');
@@ -80,7 +80,7 @@ export function useItemManagement(
       if (res.ok) {
         setEditingItem(null);
         onStatsChange();
-        if (viewMode === 'items' && selectedCategoryId) void fetchItems(selectedCategoryId);
+        if (viewMode === 'items') void fetchItems(selectedCategoryId);
       } else {
         const err = await res.json();
         addToast('error', err.error || 'Failed to update item');
@@ -122,10 +122,19 @@ export function useItemManagement(
   const handleDeleteItem = async (itemId: number) => {
     setDeletingItemId(itemId);
     try {
-      await fetch(`/api/inventory/${itemId}`, { method: 'DELETE', credentials: 'include' });
+      const res = await fetch(`/api/inventory/${itemId}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        const payload = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(payload?.error || 'Failed to delete item');
+      }
       setItems(prev => prev.filter(i => i.id !== itemId));
       onStatsChange();
-    } catch {
+      if (viewMode === 'items') void fetchItems(selectedCategoryId);
+    } catch (error) {
+      addToast('error', error instanceof Error ? error.message : 'Failed to delete item');
     } finally {
       setDeletingItemId(null);
       setConfirmDeleteItemId(null);

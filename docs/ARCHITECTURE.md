@@ -1,6 +1,6 @@
 # OptiCapture Architecture
 
-Last updated: 2026-08-26
+Last updated: 2026-09-22
 
 This document reflects the current codebase after the server/app split, lazy route loading, multi-store active-store selection, and the mobile-scan extraction.
 
@@ -34,7 +34,7 @@ Runtime bootstrap (server.ts)
             |
             +--> SQLite (better-sqlite3, WAL mode)
             +--> local uploads directory
-            +--> Open Food Facts / UPCitemDB
+            +--> Go-UPC / Open Food Facts / UPCitemDB
             +--> Google OAuth
 ```
 
@@ -122,6 +122,7 @@ OptiCapture/
 |     |- cache.ts
 |     |- db.ts
 |     |- helpers.ts
+|     |- logger.ts
 |     |- middleware.ts
 |     |- types.ts
 |     \- routes/
@@ -186,7 +187,7 @@ The app uses feature-oriented route composition rather than large all-in-one pag
 - Desktop scan state is split across hooks such as `useScanSession`, `useHardwareScanner`, `useDraftManagement`, `useCommitModal`, `useActiveSessions`, and `useServerInfo`.
 - Phone-side scan state lives in `useMobileScan`.
 - `src/lib/mobileScanScanner.ts` prefers the native `BarcodeDetector` API when available and falls back to the ZXing-based scanner.
-- `src/lib/zxingStoreScanner.ts` keeps the ZXing integration isolated from the main mobile scanner hook.
+- `src/lib/zxingStoreScanner.ts` implements the small lazy ZXing camera fallback directly from `@zxing/library`, avoiding the larger browser package.
 - Mobile clients identify themselves with a locally generated `scan_device_id`, sent on scan requests as `X-Device-Id`.
 
 ## Backend Architecture
@@ -204,6 +205,7 @@ The app uses feature-oriented route composition rather than large all-in-one pag
 - attaching Vite middleware in development
 - serving `dist/index.html` in production
 - logging process-level unhandled errors
+- emitting structured JSON startup, shutdown, warning, and error records
 - graceful shutdown on `SIGTERM` and `SIGINT`
 
 ### App factory
@@ -212,11 +214,11 @@ The app uses feature-oriented route composition rather than large all-in-one pag
 
 - `trust proxy: 1`
 - Helmet security headers with stricter production CSP
-- JSON body parsing, including a larger limit for `batch-confirm`
+- API limiting before body parsing, JSON body parsing, and object-body validation, including a larger limit for `batch-confirm`
 - cookie parsing
 - `/uploads` static serving with dotfiles denied and forced download disposition
 - `/icons` static serving from `public/icons`
-- `/api/drive-image/:fileId` Google Drive image proxy with file ID validation and a 5 MB response cap
+- `/api/drive-image/:fileId` Google Drive image proxy with file ID validation, an 8-second timeout, MIME allowlist, and streaming 5 MB response cap
 - API rate limiting on `/api`
 - route mounting
 - global JSON error handler
@@ -229,6 +231,7 @@ The app uses feature-oriented route composition rather than large all-in-one pag
 | `src/server/db.ts` | SQLite connection, schema creation, numbered migrations, indexes, seed data, audit pruning |
 | `src/server/middleware.ts` | JWT auth, active-store resolution, rate limiters, Google OAuth client, role guards |
 | `src/server/helpers.ts` | UPC lookup, image persistence, image URL normalization, store code generation, OTP generation, tunnel/LAN helpers |
+| `src/server/logger.ts` | Structured JSON application and process logging |
 | `src/server/cache.ts` | In-memory UPC cache, pending OAuth registrations, revoked token tracking |
 | `src/server/types.ts` | Shared request, auth, lookup, and session-status types |
 
@@ -254,7 +257,8 @@ Current database characteristics:
 - WAL mode is enabled for better concurrent read/write behavior.
 - `busy_timeout` is set to reduce transient `SQLITE_BUSY` failures during active scanning.
 - foreign keys are enabled on the connection.
-- startup applies schema creation and numbered migrations inside `src/server/db.ts`.
+- startup applies schema creation and numbered migrations inside `src/server/db.ts`; migrations are transactional where SQLite permits it.
+- migration 17 restores the `users.store_id -> stores.id` foreign key and verifies the rebuilt table.
 - audit logs older than 90 days are pruned at startup and then daily.
 
 ### Core tables
@@ -366,7 +370,7 @@ The desktop scan flow is owned by `Scan.tsx` and the scan hooks/components.
 6. The phone submits scans to `POST /api/session/:id/scan` with OTP and `X-Device-Id`.
 7. Hardware scanners use keyboard-wedge input on desktop and submit through the same session workflow.
 8. The server checks existing inventory first, then falls back to cached/external UPC lookup providers.
-9. The desktop page polls `GET /api/session/:id` using `since_id` for incremental refresh.
+9. The desktop page polls `GET /api/session/:id` using the stable `since_updated_at` plus `since_id` cursor for incremental refresh.
 10. The session can be saved as a draft, resumed, cleared, deleted, edited, or committed into inventory with category assignments.
 
 ### External product lookup
@@ -375,6 +379,7 @@ UPC lookup lives in `src/server/helpers.ts` and currently uses:
 
 - Open Food Facts
 - UPCitemDB
+- Go-UPC when `GO_UPC_API_KEY` is configured; a successful Go-UPC result is preferred
 
 Results are cached in memory for 7 days in `upcCache` to avoid repeated external lookups for the same barcode.
 
@@ -408,7 +413,7 @@ Imported image URLs:
 
 - inventory import reads image values from sheet rows
 - `normalizeImageUrl()` converts supported Google Drive sharing links into `/api/drive-image/:fileId`
-- non-Drive URLs are stored as-is
+- non-Drive URLs are stored as-is; supported base64 images are persisted through the normal image helper
 
 Drive proxy:
 
@@ -421,7 +426,8 @@ Drive proxy:
 ### Audit logs
 
 - activity logs are stored in the `logs` table
-- reads are exposed through `GET /api/logs`
+- reads are exposed through `GET /api/logs` with server-side action, keyword, date, and page filters
+- both owners and takers can view their current store's isolated audit trail
 - the logs page is split into `LogsScreen`, `LogsFilters`, `LogsTable`, `logsApi`, and `useLogsPage`
 - old log entries are pruned automatically after 90 days
 
@@ -464,14 +470,14 @@ Still mostly route-local:
 
 - Login
 
-The clearest next frontend extraction candidate is `Login.tsx`. On the backend, the biggest future boundary is replacing single-instance in-memory caches with shared storage if the app moves to multiple server instances.
+The clearest next frontend extraction candidate is `Login.tsx`. The highest-value reliability work is broader hook-level scan coverage and real-device scanner validation. On the backend, the biggest future boundary is replacing single-instance state and local persistence if the app moves to multiple server instances.
 
 ## Scaling Notes
 
 | Concern | Current state | Likely next step |
 |---|---|---|
 | Database | SQLite file with WAL | move to Postgres or another server DB for multi-instance scaling |
-| Live session updates | polling with incremental `since_id` refresh | move to SSE or WebSockets |
+| Live session updates | polling with a timestamp-and-ID cursor | move to SSE or WebSockets |
 | File storage | local disk | move uploads to object storage |
 | OAuth state and token revocation | in-memory maps | move to Redis or persistent shared storage |
 | UPC lookup cache | in-memory map with 7-day TTL | move to shared cache if running multiple instances |

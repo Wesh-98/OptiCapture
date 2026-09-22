@@ -52,10 +52,7 @@ export default defineConfig(() => {
               return 'motion';
             }
 
-            if (
-              normalizedId.includes('/node_modules/@zxing/browser/') ||
-              normalizedId.includes('/node_modules/@zxing/library/')
-            ) {
+            if (normalizedId.includes('/node_modules/@zxing/library/')) {
               return 'scanner';
             }
 

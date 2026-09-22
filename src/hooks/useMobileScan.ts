@@ -367,6 +367,8 @@ export function useMobileScan({ sessionId, otp }: UseMobileScanOptions) {
   });
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isProcessingRef = useRef(false);
+  const cameraErrorRef = useRef<string | null>(null);
+  const isConnectedRef = useRef(true);
   const idleDeadlineRef = useRef(0);
   const idleIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const onScanRef = useRef<(code: string) => Promise<void>>(async () => {});
@@ -384,6 +386,14 @@ export function useMobileScan({ sessionId, otp }: UseMobileScanOptions) {
   const [isConnected, setIsConnected] = useState(true);
   const [reconnectAttempts, setReconnectAttempts] = useState(0);
   const [sessionStatus, setSessionStatus] = useState<MobileSessionStatus | null>(null);
+
+  useEffect(() => {
+    cameraErrorRef.current = cameraError;
+  }, [cameraError]);
+
+  useEffect(() => {
+    isConnectedRef.current = isConnected;
+  }, [isConnected]);
 
   const showToast = useCallback((type: ScanToast['type'], message: string) => {
     setToast({ type, message });
@@ -406,13 +416,13 @@ export function useMobileScan({ sessionId, otp }: UseMobileScanOptions) {
         showToast('error', guardMessage);
         isProcessingRef.current = false;
         setIsProcessing(false);
-        return;
+        return false;
       }
 
       try {
         const activeSessionId = sessionId;
         if (!activeSessionId) {
-          return;
+          return false;
         }
 
         const request = buildSubmitScanRequest(activeSessionId, otp, upc, itemName);
@@ -424,7 +434,7 @@ export function useMobileScan({ sessionId, otp }: UseMobileScanOptions) {
         if (!res.ok) {
           const message = readScanErrorMessage(payload, 'Could not add barcode');
           showToast('error', message);
-          return;
+          return false;
         }
 
         setIsConnected(true);
@@ -442,11 +452,13 @@ export function useMobileScan({ sessionId, otp }: UseMobileScanOptions) {
         }
 
         showToast('success', newItem.name);
+        return true;
       } catch (error) {
         console.error('Submit scan error:', error);
         setIsConnected(false);
         setReconnectAttempts(prev => prev + 1);
         showToast('error', 'Network error while submitting scan');
+        return false;
       } finally {
         isProcessingRef.current = false;
         setIsProcessing(false);
@@ -460,19 +472,24 @@ export function useMobileScan({ sessionId, otp }: UseMobileScanOptions) {
       return;
     }
 
-    fetch(
-      `/api/session/${sessionId}/items?otp=${otp}&device_id=${encodeURIComponent(getDeviceId())}`
-    )
-      .then(async res => {
+    let cancelled = false;
+
+    const syncSession = async () => {
+      try {
+        const res = await fetch(
+          `/api/session/${sessionId}/items?otp=${otp}&device_id=${encodeURIComponent(getDeviceId())}`
+        );
         const raw = await res.text();
         const payload = parseScanResponsePayload(raw);
         const classification = classifySessionSyncResponse(
           res.ok,
           res.status,
           payload,
-          cameraError,
-          isConnected
+          cameraErrorRef.current,
+          isConnectedRef.current
         );
+
+        if (cancelled) return;
 
         if (classification.kind !== 'success') {
           if (classification.kind === 'fatal_error' || classification.kind === 'invalid_payload') {
@@ -495,12 +512,20 @@ export function useMobileScan({ sessionId, otp }: UseMobileScanOptions) {
         setScannedItems(snapshot.items);
         setScanCount(snapshot.scanCount);
         setSessionStatus(snapshot.sessionStatus);
-      })
-      .catch(() => {
+      } catch {
+        if (cancelled) return;
         setIsConnected(false);
         setReconnectAttempts(prev => prev + 1);
-      });
-  }, [cameraError, isConnected, otp, sessionId, showToast]);
+      }
+    };
+
+    void syncSession();
+    const interval = globalThis.setInterval(() => void syncSession(), 3000);
+    return () => {
+      cancelled = true;
+      globalThis.clearInterval(interval);
+    };
+  }, [otp, sessionId, showToast]);
 
   useEffect(() => {
     onScanRef.current = async (code: string) => {
@@ -513,10 +538,6 @@ export function useMobileScan({ sessionId, otp }: UseMobileScanOptions) {
 
       if (!result.acceptedCode) {
         return;
-      }
-
-      if (import.meta.env.DEV) {
-        console.warn('SCANNED CODE:', result.acceptedCode);
       }
 
       isProcessingRef.current = true;
@@ -563,7 +584,6 @@ export function useMobileScan({ sessionId, otp }: UseMobileScanOptions) {
     codeReaderRef.current = null;
 
     await stopScannerResources(MOBILE_SCAN_ELEMENT_ID, controls, reader);
-    setCameraError(null);
   }, []);
 
   const startScanner = useCallback(async () => {
@@ -692,9 +712,11 @@ export function useMobileScan({ sessionId, otp }: UseMobileScanOptions) {
       isProcessingRef.current = true;
       setIsProcessing(true);
 
-      await submitScan(upc, manualItemName.trim() || undefined);
-      setManualInput('');
-      setManualItemName('');
+      const submitted = await submitScan(upc, manualItemName.trim() || undefined);
+      if (submitted) {
+        setManualInput('');
+        setManualItemName('');
+      }
     },
     [manualInput, manualItemName, submitScan]
   );
@@ -709,8 +731,7 @@ export function useMobileScan({ sessionId, otp }: UseMobileScanOptions) {
     await stopScanner();
     await new Promise(resolve => setTimeout(resolve, 300));
     setCameraError(null);
-    await startScanner();
-  }, [startScanner, stopScanner]);
+  }, [stopScanner]);
 
   const retryConnection = useCallback(() => {
     setReconnectAttempts(0);

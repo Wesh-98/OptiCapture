@@ -28,6 +28,7 @@ import express from 'express';
 import './src/server/db.js';
 import { createApp } from './src/server/app.js';
 import { getLocalIP, getTunnelUrl } from './src/server/helpers.js';
+import { logError, logInfo, logWarn } from './src/server/logger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const PORT = 3000;
@@ -35,9 +36,11 @@ export const PORT = 3000;
 // ── Guard — fail fast if secrets are missing ────────────────────────────────
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
-  console.error(
-    'FATAL: JWT_SECRET environment variable is not set. ' +
-      "Generate one with: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\""
+  logError(
+    'startup',
+    new Error('JWT_SECRET is not set'),
+    'Required environment variable is missing',
+    { variable: 'JWT_SECRET' }
   );
   process.exit(1);
 }
@@ -46,10 +49,10 @@ if (!JWT_SECRET) {
 // Unhandled rejections crash Node 18+ silently — log before exit so the failure
 // is observable in logs rather than disappearing without a trace.
 process.on('unhandledRejection', reason => {
-  console.error('[unhandledRejection]', reason);
+  logError('process', reason, 'Unhandled promise rejection');
 });
 process.on('uncaughtException', err => {
-  console.error('[uncaughtException]', err);
+  logError('process', err, 'Uncaught exception');
   process.exit(1);
 });
 
@@ -82,7 +85,7 @@ function getHttpsOptions() {
   const devKeyPath = path.join(__dirname, 'dev-key.pem');
   const devCertPath = path.join(__dirname, 'dev-cert.pem');
   if (fs.existsSync(devKeyPath) && fs.existsSync(devCertPath)) {
-    console.log('✓ Using SSL certificates (dev-key.pem / dev-cert.pem)');
+    logInfo('startup', 'Using local SSL certificates');
     return { key: fs.readFileSync(devKeyPath), cert: fs.readFileSync(devCertPath) };
   }
   return null;
@@ -102,8 +105,10 @@ if (httpsOptions) {
   try {
     nodeServer = https.createServer(httpsOptions, app);
     protocol = 'https';
-  } catch (err: any) {
-    console.log(`ℹ HTTPS setup failed, using HTTP: ${err.message}`);
+  } catch (err: unknown) {
+    logWarn('startup', 'HTTPS setup failed; using HTTP', {
+      error: err instanceof Error ? err.message : String(err),
+    });
     nodeServer = http.createServer(app);
   }
 } else {
@@ -137,7 +142,7 @@ if (process.env.NODE_ENV !== 'production') {
 // clients receive a complete response rather than a connection reset.
 const shutdown = () => {
   nodeServer.close(() => {
-    console.log('Server closed gracefully');
+    logInfo('shutdown', 'Server closed gracefully');
     process.exit(0);
   });
 };
@@ -147,11 +152,16 @@ process.on('SIGINT', shutdown);
 // ── Start listening ───────────────────────────────────────────────────────────
 nodeServer.listen(PORT, '0.0.0.0', () => {
   if (protocol === 'https') {
-    console.log(`🔒 HTTPS Server running on https://localhost:${PORT}`);
-    console.log(`🔒 HTTPS Server running on https://127.0.0.1:${PORT}`);
-    console.log(`✓ Camera scanning enabled via HTTPS`);
+    logInfo('startup', 'HTTPS server is listening', {
+      port: PORT,
+      addresses: [`https://localhost:${PORT}`, `https://127.0.0.1:${PORT}`],
+      cameraScanning: true,
+    });
   } else {
-    console.log(`🔓 HTTP Server running on http://localhost:${PORT}`);
-    console.log(`ℹ No SSL cert files found. HTTPS is required for camera scanning.`);
+    logWarn('startup', 'HTTP server is listening without camera support', {
+      port: PORT,
+      address: `http://localhost:${PORT}`,
+      cameraScanning: false,
+    });
   }
 });

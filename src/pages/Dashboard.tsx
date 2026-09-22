@@ -46,7 +46,7 @@ export default function Dashboard() {
     useActiveSessions();
   const { globalSearch, setGlobalSearch, searchResults, isSearching } = useGlobalSearch();
 
-  const cats = useCategoryManagement(fetchStats);
+  const cats = useCategoryManagement(fetchStats, addToast);
 
   const items = useItemManagement(viewMode, selectedCategory?.id ?? null, fetchStats, addToast);
   const { setShowExportModal } = items;
