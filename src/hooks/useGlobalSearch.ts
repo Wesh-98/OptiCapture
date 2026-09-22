@@ -23,11 +23,19 @@ export function useGlobalSearch() {
       const controller = new AbortController();
       abortControllerRef.current = controller;
       try {
-        const res = await fetch(`/api/inventory?q=${encodeURIComponent(globalSearch.trim())}`, {
+        const params = new URLSearchParams({
+          q: globalSearch.trim(),
+          page: '1',
+          limit: '100',
+        });
+        const res = await fetch(`/api/inventory?${params.toString()}`, {
           credentials: 'include',
           signal: controller.signal,
         });
-        if (res.ok) setSearchResults(await res.json());
+        if (res.ok) {
+          const data = await res.json();
+          setSearchResults(data.items ?? []);
+        }
       } catch (err) {
         if (err instanceof Error && err.name === 'AbortError') return;
       } finally {

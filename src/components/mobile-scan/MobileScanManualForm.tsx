@@ -20,7 +20,11 @@ export function MobileScanManualForm({
   return (
     <div className="shrink-0 mx-4 mt-3 space-y-3">
       <form onSubmit={onSubmit} className="space-y-3">
+        <label htmlFor="mobile-item-name" className="sr-only">
+          Item name (optional)
+        </label>
         <input
+          id="mobile-item-name"
           type="text"
           value={manualItemName}
           onChange={event => onItemNameChange(event.target.value)}
@@ -29,7 +33,11 @@ export function MobileScanManualForm({
           disabled={isProcessing}
         />
 
+        <label htmlFor="mobile-upc" className="sr-only">
+          UPC or barcode
+        </label>
         <input
+          id="mobile-upc"
           type="text"
           inputMode="numeric"
           value={manualInput}
@@ -38,6 +46,7 @@ export function MobileScanManualForm({
           className="w-full px-4 py-3 bg-white/[0.08] border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono"
           disabled={isProcessing}
           autoFocus
+          maxLength={128}
         />
 
         <button

@@ -23,7 +23,7 @@ OptiCapture replaces manual spreadsheets and legacy tools with a fast, multi-ten
 2. The React frontend powers the dashboard, scan page, imports, logs, and settings.
 3. The Express backend handles auth, inventory, categories, scan sessions, and audit logging.
 4. SQLite stores the app data for each store, including products, users, scan sessions, and logs.
-5. Scans can come from a phone camera or hardware scanner — the backend checks existing inventory and external UPC sources (Open Food Facts + UPCitemDB, queried in parallel) before saving results.
+5. Scans can come from a phone camera or hardware scanner — the backend checks existing inventory first, then queries configured external UPC sources (Go-UPC, Open Food Facts, and UPCitemDB) in parallel.
 6. After scanning, the user selects items and commits them to the inventory database with a per-item or bulk category assignment.
 
 ### Stack in Plain English
@@ -33,7 +33,7 @@ OptiCapture replaces manual spreadsheets and legacy tools with a fast, multi-ten
 - `Express + Node.js + TypeScript`: runs the API, server logic, auth flow, uploads, and scan-session workflows.
 - `SQLite + better-sqlite3`: stores inventory, categories, users, stores, sessions, and logs.
 - `JWT cookies + bcryptjs + Google OAuth`: handles login, secure sessions, password hashing, and optional Google sign-in.
-- `ZXing + html5-qrcode`: powers mobile barcode scanning; hardware scanners work as keyboard (HID) input.
+- `BarcodeDetector + ZXing`: powers mobile barcode scanning with a native-first, lazy-loaded fallback; hardware scanners work as keyboard (HID) input.
 - `exceljs + papaparse + multer + pdfkit`: supports import/export workflows for XLSX, CSV, JSON, and PDF.
 
 ---
@@ -51,8 +51,8 @@ OptiCapture replaces manual spreadsheets and legacy tools with a fast, multi-ten
 ### Barcode Scanning
 - **Mobile camera** — QR code links any phone to the desktop session in seconds
 - **USB / Bluetooth scanner** — plug-and-play HID keyboard-wedge, no drivers or pairing required
-- **Product auto-lookup** — UPC queries Open Food Facts and UPCitemDB in parallel; best result wins
-- OTP-secured scan sessions with 2-hour expiry and attempt lockout
+- **Product auto-lookup** — UPC queries Go-UPC when configured plus Open Food Facts and UPCitemDB in parallel; the best available result wins
+- OTP-secured scan sessions with 8-hour active expiry and attempt lockout
 - Draft sessions — pause scanning, name the draft, and resume later
 - Per-item category assignment at commit time (individual or bulk)
 
@@ -61,6 +61,7 @@ OptiCapture replaces manual spreadsheets and legacy tools with a fast, multi-ten
 - Auto-detects column headers — no rigid template required
 - Multi-sheet Excel: each sheet maps to a category automatically
 - Full error reporting: skipped rows, failed rows, added vs. updated counts
+- Re-importable exports preserve descriptions, quantities, pricing, tax, tags, status, images, categories, and external IDs
 
 ### Access Control
 - Three roles: **SuperAdmin**, **Owner**, **Taker**
@@ -72,6 +73,7 @@ OptiCapture replaces manual spreadsheets and legacy tools with a fast, multi-ten
 - JWT authentication via httpOnly cookies (8-hour expiry)
 - Login lockout after 5 failed attempts (15-minute cooldown)
 - Rate limiting on all API routes (2 000 req / 15 min general; 20 req / 15 min auth)
+- Malformed/non-object JSON rejection and bounded upstream image proxy reads with an 8-second timeout
 - MIME-type validation on all file and image uploads
 - Helmet security headers (CSP, HSTS, referrer policy) on every response
 - Google OAuth 2.0 sign-in
@@ -79,7 +81,8 @@ OptiCapture replaces manual spreadsheets and legacy tools with a fast, multi-ten
 
 ### Operations
 - Full audit log: every CREATE, UPDATE, DELETE, IMPORT, LOGIN with user and timestamp
-- Filter logs by action type, keyword, and date range
+- Server-side log filtering and pagination by action type, keyword, and date range
+- Structured JSON server logs for startup, shutdown, route, proxy, and process errors
 - All activity scoped and isolated per store tenant
 
 ### Multi-Store
@@ -96,7 +99,8 @@ The codebase is fully decomposed into focused modules:
 ```
 server.ts                   Express bootstrap, middleware, route mounting
 src/server/
-  db.ts                     SQLite connection + migrations + seed
+  db.ts                     SQLite connection + transactional migrations + seed
+  logger.ts                 Structured JSON application logging
   middleware.ts             Auth (JWT), rate limiters, role guards (requireOwner / requireOwnerOrTaker)
   helpers.ts                UPC lookup, image utilities, OTP/store-code generation
   cache.ts                  In-memory UPC and token-revocation cache
@@ -128,7 +132,7 @@ src/
 | Backend | Express, TypeScript, tsx |
 | Database | SQLite via better-sqlite3 |
 | Auth | JWT (httpOnly cookies), bcryptjs, Google OAuth 2.0 |
-| Scanning | @zxing/browser (camera), HID keyboard-wedge (hardware) |
+| Scanning | @zxing/library (camera), HID keyboard-wedge (hardware) |
 | Import/Export | exceljs, papaparse, pdfkit, multer |
 | Security | helmet, express-rate-limit |
 | CI | GitHub Actions — type-check + build on every push |
@@ -190,6 +194,7 @@ The Scan page auto-detects the tunnel URL and updates the QR code automatically.
 | `GOOGLE_CLIENT_SECRET` | No | Google OAuth client secret |
 | `GOOGLE_REDIRECT_URI` | No | OAuth callback URL (default: `https://localhost:3000/api/auth/google/callback`) |
 | `UPCITEMDB_API_KEY` | No | Upgrades UPCitemDB from the trial endpoint (100 req/day) to the paid /v1 endpoint |
+| `GO_UPC_API_KEY` | No | Enables the preferred paid Go-UPC lookup provider |
 | `NODE_ENV` | No | Set to `production` to disable demo accounts and enable production hardening |
 | `TUNNEL_HOST` | No | Cloudflare tunnel hostname — tightens Vite HMR `allowedHosts` in dev |
 | `DISABLE_HMR` | No | Set to `true` to disable Vite HMR when the tunnel doesn't support WebSocket upgrades |
@@ -207,6 +212,10 @@ The Scan page auto-detects the tunnel URL and updates the QR code automatically.
 | `npm run lint` | TypeScript type check |
 | `npm run lint:eslint` | ESLint |
 | `npm run format` | Prettier format |
+| `npm run test` | Vitest unit and API integration suite |
+| `npm run test:coverage` | Vitest suite with V8 coverage |
+| `npm run test:e2e` | Playwright browser tests |
+| `npm run test:full` | TypeScript, ESLint, coverage, browser tests, and production build |
 
 ---
 
@@ -230,11 +239,11 @@ OptiCapture is built to grow. Planned for v2:
 |---|---|
 | Email password reset | Self-service, no superadmin dependency |
 | Google OAuth account linking | Merge existing accounts with Google sign-in |
-| goupc API integration | Paid UPC lookup as a third parallel source alongside Open Food Facts and UPCitemDB |
 | API versioning (`/api/v1/`) | Stable contracts for third-party integrations |
-| Postgres migration | Drop-in swap via a single DB adapter — all queries already parameterised |
+| Postgres migration | Replace the single-instance SQLite persistence layer for horizontal scaling |
 | Webhook events | Inventory changes pushed to ERP / POS systems |
-| Full test suite | Vitest unit + Playwright end-to-end |
+| Shared runtime state | Move UPC cache, OAuth pending state, and token revocation to Redis or persistent storage |
+| Request schemas | Replace hand-written validation with shared schemas at API boundaries |
 | White-label theming | Per-store brand colours and logo in the UI shell |
 | Mobile app | React Native wrapper around the existing scan flow |
 

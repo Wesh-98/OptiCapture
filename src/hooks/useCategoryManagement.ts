@@ -1,7 +1,10 @@
 import { useState } from 'react';
 import type { Category } from '../components/dashboard/types';
 
-export function useCategoryManagement(onStatsChange: () => void) {
+export function useCategoryManagement(
+  onStatsChange: () => void,
+  addToast: (type: 'success' | 'error' | 'warning', message: string) => void
+) {
   const [categories, setCategories] = useState<Category[]>([]);
   const [showCatModal, setShowCatModal] = useState(false);
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
@@ -63,11 +66,20 @@ export function useCategoryManagement(onStatsChange: () => void) {
 
   const handleDeleteCategory = async (catId: number) => {
     try {
-      await fetch(`/api/categories/${catId}`, { method: 'DELETE', credentials: 'include' });
+      const res = await fetch(`/api/categories/${catId}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        const payload = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(payload?.error || 'Failed to delete category');
+      }
       setDeletingCategoryId(null);
-      fetchCategories();
+      await fetchCategories();
       onStatsChange();
-    } catch {}
+    } catch (error) {
+      addToast('error', error instanceof Error ? error.message : 'Failed to delete category');
+    }
   };
 
   const handleCategoryAction = async (
@@ -76,21 +88,31 @@ export function useCategoryManagement(onStatsChange: () => void) {
   ) => {
     try {
       if (action === 'activate' || action === 'deactivate') {
-        await fetch(`/api/categories/${categoryId}/status`, {
+        const res = await fetch(`/api/categories/${categoryId}/status`, {
           method: 'PUT',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ status: action === 'activate' ? 'Active' : 'Inactive' }),
         });
+        if (!res.ok) {
+          const payload = (await res.json().catch(() => null)) as { error?: string } | null;
+          throw new Error(payload?.error || 'Failed to update category');
+        }
       } else if (action === 'deleteItems') {
-        await fetch(`/api/categories/${categoryId}/items`, {
+        const res = await fetch(`/api/categories/${categoryId}/items`, {
           method: 'DELETE',
           credentials: 'include',
         });
+        if (!res.ok) {
+          const payload = (await res.json().catch(() => null)) as { error?: string } | null;
+          throw new Error(payload?.error || 'Failed to delete category items');
+        }
       }
-      fetchCategories();
+      await fetchCategories();
       onStatsChange();
-    } catch {}
+    } catch (error) {
+      addToast('error', error instanceof Error ? error.message : 'Category action failed');
+    }
   };
 
   return {

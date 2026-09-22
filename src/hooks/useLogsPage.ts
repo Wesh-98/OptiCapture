@@ -18,6 +18,8 @@ export function useLogsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [resultCount, setResultCount] = useState(0);
+  const [logsCount, setLogsCount] = useState(0);
 
   const filterRef = useRef<HTMLDivElement>(null);
 
@@ -26,8 +28,17 @@ export function useLogsPage() {
     setFetchError('');
 
     try {
-      const activityLogs = await fetchActivityLogs();
-      setLogs(activityLogs);
+      const page = await fetchActivityLogs({
+        action: actionFilter === 'All' ? undefined : actionFilter,
+        from: dateFrom || undefined,
+        to: dateTo || undefined,
+        q: search.trim() || undefined,
+        page: currentPage,
+        limit: pageSize,
+      });
+      setLogs(page.items);
+      setResultCount(page.total);
+      setLogsCount(page.storeTotal);
     } catch (error) {
       setFetchError(
         error instanceof Error
@@ -37,11 +48,12 @@ export function useLogsPage() {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [actionFilter, currentPage, dateFrom, dateTo, pageSize, search]);
 
   useEffect(() => {
-    void refreshLogs();
-  }, [refreshLogs]);
+    const timer = globalThis.setTimeout(() => void refreshLogs(), search.trim() ? 300 : 0);
+    return () => globalThis.clearTimeout(timer);
+  }, [refreshLogs, search]);
 
   useEffect(() => {
     const handler = (event: MouseEvent) => {
@@ -58,49 +70,18 @@ export function useLogsPage() {
     setCurrentPage(1);
   }, [actionFilter, search, dateFrom, dateTo, pageSize]);
 
-  const filteredLogs = useMemo(() => {
-    let nextLogs = logs;
-
-    if (actionFilter !== 'All') {
-      nextLogs = nextLogs.filter(log => log.action === actionFilter);
-    }
-
-    const trimmedSearch = search.trim().toLowerCase();
-    if (trimmedSearch) {
-      nextLogs = nextLogs.filter(log => {
-        const details = log.details.toLowerCase();
-        const username = log.username.toLowerCase();
-        return details.includes(trimmedSearch) || username.includes(trimmedSearch);
-      });
-    }
-
-    if (dateFrom) {
-      const from = new Date(dateFrom);
-      nextLogs = nextLogs.filter(log => new Date(log.timestamp) >= from);
-    }
-
-    if (dateTo) {
-      const to = new Date(dateTo);
-      to.setHours(23, 59, 59, 999);
-      nextLogs = nextLogs.filter(log => new Date(log.timestamp) <= to);
-    }
-
-    return nextLogs;
-  }, [logs, actionFilter, search, dateFrom, dateTo]);
+  const filteredLogs = logs;
 
   const totalPages = useMemo(
-    () => Math.max(1, Math.ceil(filteredLogs.length / pageSize)),
-    [filteredLogs.length, pageSize]
+    () => Math.max(1, Math.ceil(resultCount / pageSize)),
+    [resultCount, pageSize]
   );
 
   useEffect(() => {
     setCurrentPage(prev => Math.min(prev, totalPages));
   }, [totalPages]);
 
-  const pagedLogs = useMemo(
-    () => filteredLogs.slice((currentPage - 1) * pageSize, currentPage * pageSize),
-    [filteredLogs, currentPage, pageSize]
-  );
+  const pagedLogs = filteredLogs;
 
   const clearDateRange = useCallback(() => {
     setDateFrom('');
@@ -126,6 +107,8 @@ export function useLogsPage() {
 
   return {
     logs,
+    logsCount,
+    resultCount,
     actionFilter,
     search,
     filterOpen,

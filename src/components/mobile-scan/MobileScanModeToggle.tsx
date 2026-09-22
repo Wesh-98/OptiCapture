@@ -10,7 +10,9 @@ export function MobileScanModeToggle({ inputMode, onChange }: MobileScanModeTogg
   return (
     <div className="shrink-0 mx-4 mt-3 flex bg-white/5 rounded-2xl p-1">
       <button
+        type="button"
         onClick={() => onChange('camera')}
+        aria-pressed={inputMode === 'camera'}
         className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-semibold transition-colors ${
           inputMode === 'camera' ? 'bg-emerald-600 text-white' : 'text-slate-500'
         }`}
@@ -20,7 +22,9 @@ export function MobileScanModeToggle({ inputMode, onChange }: MobileScanModeTogg
       </button>
 
       <button
+        type="button"
         onClick={() => onChange('manual')}
+        aria-pressed={inputMode === 'manual'}
         className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-semibold transition-colors ${
           inputMode === 'manual' ? 'bg-emerald-600 text-white' : 'text-slate-500'
         }`}

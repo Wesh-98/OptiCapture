@@ -9,6 +9,7 @@ import {
   UnsupportedImageTypeError,
 } from '../helpers.js';
 import type { AuthRequest } from '../types.js';
+import { logError } from '../logger.js';
 
 export const adminRouter = express.Router();
 const HQ_STORE_ID = 0;
@@ -30,19 +31,25 @@ function isValidEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
+function writeAdminLog(details: string, userId: number, storeId: number) {
+  db.prepare('INSERT INTO logs (action, details, user_id, store_id) VALUES (?, ?, ?, ?)').run(
+    'ADMIN',
+    details,
+    userId,
+    storeId
+  );
+}
+
 // Super admin — list all stores
 adminRouter.get('/stores', authenticateToken, requireSuperadmin, (_req: AuthRequest, res) => {
   const stores = db
     .prepare(
       `
     SELECT s.*,
-      COUNT(DISTINCT us.user_id) AS user_count,
-      COUNT(DISTINCT i.id) AS item_count
+      (SELECT COUNT(*) FROM user_stores us WHERE us.store_id = s.id) AS user_count,
+      (SELECT COUNT(*) FROM inventory i WHERE i.store_id = s.id) AS item_count
     FROM stores s
-    LEFT JOIN user_stores us ON us.store_id = s.id
-    LEFT JOIN inventory i ON i.store_id = s.id
     WHERE s.id != ?
-    GROUP BY s.id
     ORDER BY s.created_at DESC
   `
     )
@@ -64,7 +71,9 @@ adminRouter.put(
     const { status } = req.body;
     if (!['active', 'suspended'].includes(status))
       return res.status(400).json({ error: 'Invalid status' });
-    db.prepare('UPDATE stores SET status = ? WHERE id = ?').run(status, storeId);
+    const result = db.prepare('UPDATE stores SET status = ? WHERE id = ?').run(status, storeId);
+    if (!result.changes) return res.status(404).json({ error: 'Store not found' });
+    writeAdminLog(`Set store ${storeId} status to ${status}`, req.user.id, storeId);
     res.json({ ok: true });
   }
 );
@@ -175,6 +184,11 @@ adminRouter.post(
             store.id,
             role
           );
+          writeAdminLog(
+            `Created user "${normalizedUsername}" with ${role} access`,
+            req.user.id,
+            store.id
+          );
           return db
             .prepare(
               `
@@ -199,7 +213,9 @@ adminRouter.post(
           tempPassword,
         });
       } catch (error) {
-        console.error('[admin:create-store-user]', error);
+        logError('admin:create-store-user', error, 'Failed to create store user', {
+          storeId: req.params.id,
+        });
         return res.status(500).json({ error: 'An internal error occurred' });
       }
     }
@@ -222,6 +238,11 @@ adminRouter.post(
       user.id,
       storeId,
       role
+    );
+    writeAdminLog(
+      `Granted ${role} access to "${normalizedUsername}"`,
+      req.user.id,
+      storeId
     );
     const createdAccess = db
       .prepare(
@@ -278,6 +299,7 @@ adminRouter.delete(
     if (target?.role === 'owner' && ownerCount <= 1)
       return res.status(400).json({ error: 'Cannot remove the last owner of a store' });
     db.prepare('DELETE FROM user_stores WHERE user_id = ? AND store_id = ?').run(userId, storeId);
+    writeAdminLog(`Revoked store access for user ${userId}`, req.user.id, storeId);
     res.json({ ok: true });
   }
 );
@@ -331,6 +353,8 @@ adminRouter.delete('/stores/:id', authenticateToken, requireSuperadmin, (req: Au
     db.prepare(`DELETE FROM stores WHERE id = ?`).run(storeId);
   })();
 
+  writeAdminLog(`Deleted store "${store.name}" (${storeId})`, req.user.id, HQ_STORE_ID);
+
   res.json({ ok: true, deleted: store.name });
 });
 
@@ -342,7 +366,14 @@ adminRouter.put('/stores/:id', authenticateToken, requireSuperadmin, (req: AuthR
     return res.status(403).json({ error: 'The HQ store is managed internally' });
   }
   const { name, street, city, zipcode, state, phone, email, logo } = req.body;
-  if (!name?.trim()) return res.status(400).json({ error: 'Store name is required' });
+  const stringFields = { name, street, city, zipcode, state, phone, email, logo };
+  if (
+    Object.values(stringFields).some(value => value !== undefined && typeof value !== 'string')
+  ) {
+    return res.status(400).json({ error: 'Store fields must be strings' });
+  }
+  if (typeof name !== 'string' || !name.trim())
+    return res.status(400).json({ error: 'Store name is required' });
   if (name.length > 100)
     return res.status(400).json({ error: 'Store name must be 100 characters or fewer' });
   if (street && street.length > 200) {
@@ -379,6 +410,7 @@ adminRouter.put('/stores/:id', authenticateToken, requireSuperadmin, (req: AuthR
       storeId
     );
     db.prepare('UPDATE users SET store_name = ? WHERE store_id = ?').run(name.trim(), storeId);
+    writeAdminLog(`Updated store "${name.trim()}" (${storeId})`, req.user.id, storeId);
 
     const updatedStore = db
       .prepare(
@@ -392,7 +424,9 @@ adminRouter.put('/stores/:id', authenticateToken, requireSuperadmin, (req: AuthR
       return res.status(400).json({ error: error.message });
     }
 
-    console.error('[admin:edit-store]', error);
+    logError('admin:edit-store', error, 'Failed to edit store', {
+      storeId: req.params.id,
+    });
     return res.status(500).json({ error: 'An internal error occurred' });
   }
 });
@@ -405,7 +439,9 @@ adminRouter.post(
     const userId = Number.parseInt(req.params.userId);
     if (Number.isNaN(userId)) return res.status(400).json({ error: 'Invalid user ID' });
 
-    const user = db.prepare('SELECT id, username FROM users WHERE id = ?').get(userId) as any;
+    const user = db
+      .prepare('SELECT id, username, store_id FROM users WHERE id = ?')
+      .get(userId) as any;
     if (!user) return res.status(404).json({ error: 'User not found' });
 
     const tempPassword = generateTempPassword();
@@ -421,6 +457,11 @@ adminRouter.post(
     WHERE id = ?
   `
     ).run(hash, userId);
+    writeAdminLog(
+      `Reset password for "${user.username}" (${userId})`,
+      req.user.id,
+      user.store_id ?? HQ_STORE_ID
+    );
 
     // Resets also hand back a one-time password and route the user through the same
     // forced password-change flow as a newly created account.

@@ -18,6 +18,7 @@ interface LogsTableProps {
   pageSize: LogsPageSize;
   pagedLogs: readonly LogEntry[];
   totalPages: number;
+  totalCount: number;
   onNextPage: () => void;
   onPageSizeChange: (value: LogsPageSize) => void;
   onPreviousPage: () => void;
@@ -37,6 +38,7 @@ export function LogsTable({
   pageSize,
   pagedLogs,
   totalPages,
+  totalCount,
   onNextPage,
   onPageSizeChange,
   onPreviousPage,
@@ -137,9 +139,9 @@ export function LogsTable({
               Showing{' '}
               <span className="font-semibold text-slate-700">
                 {(currentPage - 1) * pageSize + 1}-
-                {Math.min(currentPage * pageSize, filteredLogs.length)}
+                {Math.min(currentPage * pageSize, totalCount)}
               </span>{' '}
-              of <span className="font-semibold text-slate-700">{filteredLogs.length}</span> logs
+              of <span className="font-semibold text-slate-700">{totalCount}</span> logs
             </>
           )}
         </p>
@@ -168,6 +170,7 @@ export function LogsTable({
               type="button"
               onClick={onPreviousPage}
               disabled={currentPage === 1}
+              aria-label="Previous activity log page"
               className="p-1.5 rounded-lg bg-navy-900 text-white hover:bg-navy-700 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
             >
               <ChevronLeft size={16} />
@@ -179,6 +182,7 @@ export function LogsTable({
               type="button"
               onClick={onNextPage}
               disabled={currentPage === totalPages}
+              aria-label="Next activity log page"
               className="p-1.5 rounded-lg bg-navy-900 text-white hover:bg-navy-700 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
             >
               <ChevronRight size={16} />

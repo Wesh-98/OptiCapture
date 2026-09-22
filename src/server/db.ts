@@ -41,10 +41,14 @@ const appliedMigrations = new Set(
   )
 );
 
-function runMigration(version: number, fn: () => void) {
+function runMigration(version: number, fn: () => void, transactional = true) {
   if (appliedMigrations.has(version)) return;
-  fn();
-  db.prepare('INSERT INTO schema_migrations (version) VALUES (?)').run(version);
+  const apply = () => {
+    fn();
+    db.prepare('INSERT INTO schema_migrations (version) VALUES (?)').run(version);
+  };
+  if (transactional) db.transaction(apply)();
+  else apply();
   appliedMigrations.add(version);
 }
 
@@ -373,34 +377,36 @@ runMigration(10, () => {
   // Disable FK enforcement so DROP TABLE users isn't blocked by user_stores referencing it
   db.exec('PRAGMA foreign_keys = OFF');
   try {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS users_new (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT NOT NULL,
-        password TEXT,
-        role TEXT NOT NULL DEFAULT 'owner',
-        store_id INTEGER,
-        store_name TEXT,
-        must_reset_password INTEGER NOT NULL DEFAULT 0,
-        email TEXT,
-        oauth_provider TEXT,
-        oauth_id TEXT,
-        failed_login_attempts INTEGER DEFAULT 0,
-        locked_until DATETIME,
-        UNIQUE(username, store_id)
-      );
-      INSERT OR IGNORE INTO users_new
-        SELECT id, username, password, role, store_id, store_name,
-               COALESCE(must_reset_password, 0), email,
-               oauth_provider, oauth_id, failed_login_attempts, locked_until
-        FROM users;
-      DROP TABLE users;
-      ALTER TABLE users_new RENAME TO users;
-    `);
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS users_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          username TEXT NOT NULL,
+          password TEXT,
+          role TEXT NOT NULL DEFAULT 'owner',
+          store_id INTEGER,
+          store_name TEXT,
+          must_reset_password INTEGER NOT NULL DEFAULT 0,
+          email TEXT,
+          oauth_provider TEXT,
+          oauth_id TEXT,
+          failed_login_attempts INTEGER DEFAULT 0,
+          locked_until DATETIME,
+          UNIQUE(username, store_id)
+        );
+        INSERT OR IGNORE INTO users_new
+          SELECT id, username, password, role, store_id, store_name,
+                 COALESCE(must_reset_password, 0), email,
+                 oauth_provider, oauth_id, failed_login_attempts, locked_until
+          FROM users;
+        DROP TABLE users;
+        ALTER TABLE users_new RENAME TO users;
+      `);
+    })();
   } finally {
     db.exec('PRAGMA foreign_keys = ON');
   }
-});
+}, false);
 
 runMigration(11, () => {
   const cols = (db.prepare('PRAGMA table_info(session_items)').all() as any[]).map(
@@ -467,6 +473,59 @@ runMigration(16, () => {
   addTextColumn('sync_status');
 });
 
+// Migration 10 rebuilt users to change its unique key but omitted the original
+// store foreign key. Rebuild once more so direct writes cannot leave users
+// pointing at stores that do not exist.
+runMigration(
+  17,
+  () => {
+    db.exec('PRAGMA foreign_keys = OFF');
+    try {
+      db.transaction(() => {
+        db.exec(`
+          CREATE TABLE users_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL,
+            password TEXT,
+            role TEXT NOT NULL DEFAULT 'owner',
+            store_id INTEGER,
+            store_name TEXT,
+            must_reset_password INTEGER NOT NULL DEFAULT 0,
+            email TEXT,
+            oauth_provider TEXT,
+            oauth_id TEXT,
+            failed_login_attempts INTEGER DEFAULT 0,
+            locked_until DATETIME,
+            token_version INTEGER NOT NULL DEFAULT 1,
+            UNIQUE(username, store_id),
+            FOREIGN KEY(store_id) REFERENCES stores(id)
+          );
+          INSERT INTO users_new (
+            id, username, password, role, store_id, store_name,
+            must_reset_password, email, oauth_provider, oauth_id,
+            failed_login_attempts, locked_until, token_version
+          )
+          SELECT id, username, password, role, store_id, store_name,
+                 COALESCE(must_reset_password, 0), email, oauth_provider, oauth_id,
+                 COALESCE(failed_login_attempts, 0), locked_until,
+                 COALESCE(token_version, 1)
+          FROM users;
+          DROP TABLE users;
+          ALTER TABLE users_new RENAME TO users;
+        `);
+      })();
+    } finally {
+      db.exec('PRAGMA foreign_keys = ON');
+    }
+
+    const violations = db.prepare('PRAGMA foreign_key_check(users)').all();
+    if (violations.length > 0) {
+      throw new Error('users migration produced foreign-key violations');
+    }
+  },
+  false
+);
+
 db.prepare(
   `
   CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oauth
@@ -485,9 +544,8 @@ db.prepare(
 db.prepare(
   'CREATE INDEX IF NOT EXISTS idx_session_items_session_updated ON session_items(session_id, updated_at DESC, id DESC)'
 ).run();
-db.prepare(
-  'CREATE INDEX IF NOT EXISTS idx_inventory_upc_store        ON inventory(upc, store_id)'
-).run();
+// UNIQUE(upc, store_id) already owns an equivalent SQLite auto-index.
+db.prepare('DROP INDEX IF EXISTS idx_inventory_upc_store').run();
 db.prepare(
   'CREATE INDEX IF NOT EXISTS idx_scan_sessions_store_status ON scan_sessions(store_id, status, expires_at)'
 ).run();

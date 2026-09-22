@@ -63,7 +63,7 @@ export default function Login() {
       {/* Left brand panel — hidden on mobile */}
       <div className="hidden lg:flex lg:w-1/2 flex-col justify-between p-12 bg-navy-900">
         <div>
-          <h1 className="text-4xl font-bold text-white tracking-tight">OptiCapture</h1>
+          <h1 className="text-4xl font-bold text-white tracking-tight">Inventory Portal</h1>
           <p className="text-slate-400 mt-2 text-lg">Smart inventory for modern stores</p>
         </div>
 

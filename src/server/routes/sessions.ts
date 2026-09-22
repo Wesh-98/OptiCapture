@@ -14,6 +14,7 @@ import {
   upcVariants,
 } from '../helpers.js';
 import { SESSION_STATUS } from '../types.js';
+import { logError } from '../logger.js';
 
 export const sessionsRouter = express.Router();
 
@@ -49,6 +50,13 @@ function getSessionAccessError(
   req: express.Request,
   sessionStoreId: number
 ): { error: string; status: number } | null {
+  const store = db.prepare('SELECT status FROM stores WHERE id = ?').get(sessionStoreId) as
+    | { status: string }
+    | undefined;
+  if (!store || store.status !== 'active') {
+    return { error: 'Store account suspended', status: 403 };
+  }
+
   const token = (req as any).cookies?.token;
   if (!token) {
     return null;
@@ -125,7 +133,7 @@ sessionsRouter.post('/session/create', authenticateToken, (req: AuthRequest, res
       `
     SELECT session_id, otp FROM scan_sessions
     WHERE user_id = ? AND store_id = ? AND status = 'active'
-      AND (expires_at IS NULL OR expires_at > datetime('now'))
+      AND (expires_at IS NULL OR datetime(expires_at) > datetime('now'))
       AND session_id NOT IN (SELECT DISTINCT session_id FROM session_items)
     ORDER BY created_at DESC LIMIT 1
   `
@@ -156,7 +164,7 @@ sessionsRouter.post('/session/create', authenticateToken, (req: AuthRequest, res
     ).run(sessionId, otp, req.user.id, req.user.store_id);
     res.json({ sessionId, otp });
   } catch (err: any) {
-    console.error('Failed to create scan session:', err);
+    logError('session:create', err);
     res.status(500).json({ error: 'Failed to create session' });
   }
 });
@@ -173,7 +181,7 @@ sessionsRouter.get('/sessions/active', authenticateToken, (req: AuthRequest, res
     LEFT JOIN session_items si ON si.session_id = s.session_id
     LEFT JOIN users u ON u.id = s.user_id
     WHERE s.store_id = ? AND s.status IN ('active', 'draft')
-      AND s.expires_at > datetime('now')
+      AND datetime(s.expires_at) > datetime('now')
     GROUP BY s.session_id
     HAVING item_count > 0
     ORDER BY s.created_at DESC
@@ -227,8 +235,10 @@ sessionsRouter.delete('/session/:id', authenticateToken, (req: AuthRequest, res)
   if (!session) return res.status(404).json({ error: 'Session not found' });
   if (session.status === SESSION_STATUS.COMPLETED)
     return res.status(403).json({ error: 'Cannot delete a committed session.' });
-  // Only remove the session record — session_items kept as audit trail
-  db.prepare('DELETE FROM scan_sessions WHERE session_id = ?').run(sessionId);
+  db.transaction(() => {
+    db.prepare('DELETE FROM session_items WHERE session_id = ?').run(sessionId);
+    db.prepare('DELETE FROM scan_sessions WHERE session_id = ?').run(sessionId);
+  })();
   res.json({ success: true });
 });
 
@@ -255,7 +265,13 @@ sessionsRouter.get('/session/:id/items', scanLimiter, (req, res) => {
   if (!otp) return res.status(400).json({ error: 'OTP required' });
 
   const session = db
-    .prepare('SELECT * FROM scan_sessions WHERE session_id = ? AND otp = ?')
+    .prepare(
+      `SELECT *,
+              CASE WHEN expires_at IS NOT NULL AND datetime(expires_at) <= datetime('now')
+                   THEN 1 ELSE 0 END AS is_expired
+       FROM scan_sessions
+       WHERE session_id = ? AND otp = ?`
+    )
     .get(sessionId, otp) as any;
 
   if (!session) {
@@ -274,7 +290,7 @@ sessionsRouter.get('/session/:id/items', scanLimiter, (req, res) => {
   }
 
   // Expired sessions shouldn't be readable via OTP.
-  if (session.expires_at && new Date(session.expires_at) < new Date()) {
+  if (session.is_expired) {
     return res.status(410).json({ error: 'Session has expired. Please start a new session.' });
   }
 
@@ -324,8 +340,11 @@ sessionsRouter.get('/session/:id', authenticateToken, (req: AuthRequest, res) =>
         SELECT ${COLS}
         FROM session_items si
         WHERE si.session_id = ?
-          AND (si.updated_at > ? OR (si.updated_at = ? AND si.id > ?))
-        ORDER BY si.updated_at DESC, si.id DESC
+          AND (
+            julianday(si.updated_at) > julianday(?)
+            OR (julianday(si.updated_at) = julianday(?) AND si.id > ?)
+          )
+        ORDER BY julianday(si.updated_at) DESC, si.id DESC
       `
           )
           .all(id, sinceUpdatedAt, sinceUpdatedAt, sinceId)
@@ -335,7 +354,7 @@ sessionsRouter.get('/session/:id', authenticateToken, (req: AuthRequest, res) =>
         SELECT ${COLS}
         FROM session_items si
         WHERE si.session_id = ?
-        ORDER BY si.updated_at DESC, si.id DESC
+        ORDER BY julianday(si.updated_at) DESC, si.id DESC
       `
           )
           .all(id);
@@ -363,7 +382,15 @@ sessionsRouter.post('/session/:id/scan', scanLimiter, async (req, res) => {
     return res.status(400).json({ error: 'UPC too long' });
   }
 
-  const session = db.prepare('SELECT * FROM scan_sessions WHERE session_id = ?').get(id) as any;
+  const session = db
+    .prepare(
+      `SELECT *,
+              CASE WHEN expires_at IS NOT NULL AND datetime(expires_at) <= datetime('now')
+                   THEN 1 ELSE 0 END AS is_expired
+       FROM scan_sessions
+       WHERE session_id = ?`
+    )
+    .get(id) as any;
 
   if (!session) {
     return res.status(404).json({ error: 'Session not found or inactive' });
@@ -378,7 +405,7 @@ sessionsRouter.post('/session/:id/scan', scanLimiter, async (req, res) => {
   }
 
   // Check session expiry
-  if (session.expires_at && new Date(session.expires_at) < new Date()) {
+  if (session.is_expired) {
     return res.status(410).json({ error: 'Session has expired. Please start a new session.' });
   }
 
@@ -476,10 +503,20 @@ sessionsRouter.post('/session/:id/scan', scanLimiter, async (req, res) => {
       db.prepare(
         `
         UPDATE session_items
-        SET quantity = quantity + 1, scanned_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP,
-            lookup_status = ?, product_name = COALESCE(?, product_name),
-            brand = COALESCE(?, brand), image = COALESCE(?, image),
-            unit = COALESCE(?, unit), source = ?, exists_in_inventory = ?, device_id = ?
+        SET quantity = quantity + 1,
+            scanned_at = strftime('%Y-%m-%d %H:%M:%f', 'now'),
+            updated_at = CASE
+              WHEN julianday(updated_at) >= julianday('now')
+                THEN strftime('%Y-%m-%d %H:%M:%f', updated_at, '+0.001 seconds')
+              ELSE strftime('%Y-%m-%d %H:%M:%f', 'now')
+            END,
+            lookup_status = CASE WHEN source = 'manual' THEN lookup_status ELSE ? END,
+            product_name = CASE WHEN source = 'manual' THEN product_name ELSE COALESCE(?, product_name) END,
+            brand = CASE WHEN source = 'manual' THEN brand ELSE COALESCE(?, brand) END,
+            image = CASE WHEN source = 'manual' THEN image ELSE COALESCE(?, image) END,
+            unit = CASE WHEN source = 'manual' THEN unit ELSE COALESCE(?, unit) END,
+            source = CASE WHEN source = 'manual' THEN source ELSE ? END,
+            exists_in_inventory = ?, device_id = ?
         WHERE id = ?
       `
       ).run(
@@ -500,7 +537,8 @@ sessionsRouter.post('/session/:id/scan', scanLimiter, async (req, res) => {
           session_id, upc, quantity, scanned_at, updated_at, lookup_status,
           product_name, brand, image, source, exists_in_inventory, unit, device_id
         )
-        VALUES (?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, 1, strftime('%Y-%m-%d %H:%M:%f', 'now'),
+                strftime('%Y-%m-%d %H:%M:%f', 'now'), ?, ?, ?, ?, ?, ?, ?, ?)
       `
       ).run(
         id,
@@ -559,10 +597,14 @@ sessionsRouter.post('/session/:id/scan', scanLimiter, async (req, res) => {
           db.prepare(
             `
           UPDATE session_items
-          SET updated_at = CURRENT_TIMESTAMP,
+          SET updated_at = CASE
+                WHEN julianday(updated_at) >= julianday('now')
+                  THEN strftime('%Y-%m-%d %H:%M:%f', updated_at, '+0.001 seconds')
+                ELSE strftime('%Y-%m-%d %H:%M:%f', 'now')
+              END,
               lookup_status = ?, product_name = COALESCE(?, product_name),
               brand = COALESCE(?, brand), image = COALESCE(?, image), source = ?
-          WHERE session_id = ? AND upc = ?
+          WHERE session_id = ? AND upc = ? AND source != 'manual'
         `
           ).run(
             resolvedStatus,
@@ -633,7 +675,12 @@ sessionsRouter.patch('/session/:id/items/:itemId', authenticateToken, (req: Auth
     // field keeps its stored value instead of being nulled out.
     const assignments: string[] = [
       "lookup_status = 'new_candidate'",
-      'updated_at = CURRENT_TIMESTAMP',
+      "source = 'manual'",
+      `updated_at = CASE
+        WHEN julianday(updated_at) >= julianday('now')
+          THEN strftime('%Y-%m-%d %H:%M:%f', updated_at, '+0.001 seconds')
+        ELSE strftime('%Y-%m-%d %H:%M:%f', 'now')
+      END`,
     ];
     const values: unknown[] = [];
     const assign = (column: string, value: unknown) => {
@@ -686,7 +733,10 @@ sessionsRouter.patch('/session/:id/items/:itemId', authenticateToken, (req: Auth
       return res.status(400).json({ error: error.message });
     }
 
-    console.error('[session:item-patch]', error);
+    logError('session:item-patch', error, 'Failed to update scanned item', {
+      sessionId: req.params.id,
+      itemId: req.params.itemId,
+    });
     return res.status(500).json({ error: 'An internal error occurred' });
   }
 });
@@ -773,8 +823,8 @@ sessionsRouter.post(
     if (items.length === 0) return res.json({ message: 'No items to commit' });
 
     const insertInventory = db.prepare(`
-    INSERT INTO inventory (item_name, upc, quantity, category_id, status, image, sale_price, unit, store_id)
-    VALUES (?, ?, ?, ?, 'Active', ?, ?, ?, ?)
+    INSERT INTO inventory (item_name, upc, quantity, category_id, status, image, sale_price, unit, tag_names, store_id)
+    VALUES (?, ?, ?, ?, 'Active', ?, ?, ?, ?, ?)
   `);
     const checkInventory = db.prepare('SELECT id FROM inventory WHERE upc = ? AND store_id = ?');
     const deleteSessionItem = db.prepare('DELETE FROM session_items WHERE id = ?');
@@ -807,6 +857,7 @@ sessionsRouter.post(
           item.image || null,
           price,
           item.unit || null,
+          item.tag_names || null,
           user.store_id
         );
         deleteSessionItem.run(item.id);
@@ -845,7 +896,9 @@ sessionsRouter.post(
         status: result.status,
       });
     } catch (err: any) {
-      console.error('[session:commit]', err);
+      logError('session:commit', err, 'Failed to commit scan session', {
+        sessionId: req.params.id,
+      });
       res.status(500).json({ error: 'An internal error occurred' });
     }
   }

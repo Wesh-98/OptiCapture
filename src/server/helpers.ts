@@ -159,6 +159,42 @@ export function upcVariants(upc: string): string[] {
   return variants;
 }
 
+export async function fetchGoUpc(
+  upc: string,
+  signal: AbortSignal
+): Promise<LookupResult | null> {
+  try {
+    const apiKey = process.env.GO_UPC_API_KEY?.trim();
+    // Go-UPC API requires an API key for lookups
+    if (!apiKey) return null;
+
+    const url = `https://go-upc.com/api/v1/code/${encodeURIComponent(upc)}`;
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${apiKey}`,
+      'User-Agent': 'OptiCapture/1.0',
+    };
+
+    const res = await fetch(url, { headers, signal });
+    if (!res.ok) return null;
+    const data = (await res.json()) as any;
+
+    if (!data?.product?.name) return null;
+
+    const product = data.product;
+    const product_name = product.name?.trim() || null;
+    if (!product_name) return null;
+
+    return {
+      product_name,
+      brand: product.brand?.trim() || null,
+      image: product.imageUrl || null,
+      source: 'go_upc',
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchOpenFoodFacts(
   upc: string,
   signal: AbortSignal
@@ -212,14 +248,25 @@ export async function lookupProductByUpc(upc: string): Promise<LookupResult | nu
   const cleanUpc = String(upc || '').trim();
   if (!cleanUpc) return null;
 
+  const variants = upcVariants(cleanUpc);
+
+  // Run every configured provider concurrently so a slow premium provider never
+  // delays the two fallbacks. Each provider has its own timeout.
+  const c0 = new AbortController();
   const c1 = new AbortController();
   const c2 = new AbortController();
+  const t0 = setTimeout(() => c0.abort(), 5000);
   const t1 = setTimeout(() => c1.abort(), 5000);
   const t2 = setTimeout(() => c2.abort(), 5000);
 
-  // Try all UPC variants (with/without leading zero) — first non-null result wins per source
-  const variants = upcVariants(cleanUpc);
-  const [offResult, upcResult] = await Promise.allSettled([
+  const [goUpcResult, offResult, upcResult] = await Promise.allSettled([
+    (async () => {
+      for (const v of variants) {
+        const r = await fetchGoUpc(v, c0.signal);
+        if (r) return r;
+      }
+      return null;
+    })(),
     (async () => {
       for (const v of variants) {
         const r = await fetchOpenFoodFacts(v, c1.signal);
@@ -236,11 +283,17 @@ export async function lookupProductByUpc(upc: string): Promise<LookupResult | nu
     })(),
   ]);
 
+  clearTimeout(t0);
   clearTimeout(t1);
   clearTimeout(t2);
 
+  const goUpc = goUpcResult.status === 'fulfilled' ? goUpcResult.value : null;
   const off = offResult.status === 'fulfilled' ? offResult.value : null;
   const upc_ = upcResult.status === 'fulfilled' ? upcResult.value : null;
+
+  // Prefer the paid provider when configured and it returned a product. The
+  // concurrent execution above keeps its latency from blocking the fallbacks.
+  if (goUpc) return goUpc;
 
   // Prefer whichever result has more complete data (name + image beats name-only).
   // When both have an image, prefer UPCitemdb — cleaner retail labelling.

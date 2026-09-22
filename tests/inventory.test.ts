@@ -76,22 +76,21 @@ describe('Inventory CRUD — Store A owner', () => {
     createdItemId = res.body.id;
   });
 
-  it('GET /api/inventory — lists only Store A items (flat array)', async () => {
-    // Route returns a flat array, not { items: [] }
+  it('GET /api/inventory — lists only Store A items', async () => {
     const res = await request.get('/api/inventory').set('Cookie', storeA.cookie);
 
     expect(res.status).toBe(200);
-    expect(Array.isArray(res.body)).toBe(true);
-    expect(res.body.length).toBeGreaterThan(0);
+    expect(Array.isArray(res.body.items)).toBe(true);
+    expect(res.body.items.length).toBeGreaterThan(0);
 
     // Every item in the response must belong to Store A — the store_id is
     // derived from the JWT on the server, not supplied by the client
-    for (const item of res.body) {
+    for (const item of res.body.items) {
       expect(item.store_id).toBe(storeA.storeId);
     }
 
     // The item we just created must be present
-    const found = res.body.find((i: any) => i.id === createdItemId);
+    const found = res.body.items.find((i: any) => i.id === createdItemId);
     expect(found).toBeDefined();
     expect(found.item_name).toBe('Test Chips');
   });
@@ -117,7 +116,7 @@ describe('Inventory CRUD — Store A owner', () => {
 
     // Confirm the update actually landed
     const getRes = await request.get('/api/inventory').set('Cookie', storeA.cookie);
-    const updated = (getRes.body as any[]).find((i: any) => i.id === createdItemId);
+    const updated = (getRes.body.items as any[]).find((i: any) => i.id === createdItemId);
     expect(updated?.item_name).toBe('Updated Chips');
     expect(updated?.quantity).toBe(20);
   });
@@ -132,8 +131,8 @@ describe('Inventory CRUD — Store A owner', () => {
 
   it('GET /api/inventory — item no longer appears after deletion', async () => {
     const res = await request.get('/api/inventory').set('Cookie', storeA.cookie);
-    expect(Array.isArray(res.body)).toBe(true);
-    expect((res.body as any[]).every((item: any) => item.id !== createdItemId)).toBe(true);
+    expect(Array.isArray(res.body.items)).toBe(true);
+    expect((res.body.items as any[]).every((item: any) => item.id !== createdItemId)).toBe(true);
   });
 });
 
@@ -160,10 +159,10 @@ describe('Multi-tenant isolation', () => {
     const res = await request.get('/api/inventory').set('Cookie', storeB.cookie);
 
     expect(res.status).toBe(200);
-    expect(Array.isArray(res.body)).toBe(true);
+    expect(Array.isArray(res.body.items)).toBe(true);
 
     // Store B starts with no inventory items of its own. It must not see Store A's.
-    const crossTenantLeak = (res.body as any[]).some(
+    const crossTenantLeak = (res.body.items as any[]).some(
       (item: any) => item.store_id === storeA.storeId
     );
     expect(crossTenantLeak).toBe(false);
@@ -191,7 +190,7 @@ describe('Multi-tenant isolation', () => {
   it('Store A item is unchanged after Store B cross-tenant attempts', async () => {
     // Verify the item still exists and was not mutated
     const res = await request.get('/api/inventory').set('Cookie', storeA.cookie);
-    const item = (res.body as any[]).find((i: any) => i.id === storeAItemId);
+    const item = (res.body.items as any[]).find((i: any) => i.id === storeAItemId);
 
     expect(item).toBeDefined();
     expect(item.item_name).toBe('Store A Secret Item');

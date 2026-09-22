@@ -200,6 +200,24 @@ describe('GET /api/drive-image/:fileId', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(consoleError).toHaveBeenCalled();
   });
+
+  it('rejects oversized upstream images before buffering their body', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(Uint8Array.from([1]), {
+        status: 200,
+        headers: {
+          'Content-Type': 'image/png',
+          'Content-Length': String(5 * 1024 * 1024 + 1),
+        },
+      })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await request.get('/api/drive-image/oversized123');
+
+    expect(res.status).toBe(413);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('GET /uploads/:filename', () => {

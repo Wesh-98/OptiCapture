@@ -12,8 +12,34 @@ import {
   UnsupportedImageTypeError,
 } from '../helpers.js';
 import type { AuthRequest } from '../types.js';
+import { logError } from '../logger.js';
 
 export const authRouter = express.Router();
+
+function isRequestBody(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function hasOnlyStringFields<T extends string>(
+  body: Record<string, unknown>,
+  fields: readonly T[]
+): body is Record<string, unknown> & Partial<Record<T, string>> {
+  return fields.every(field => body[field] === undefined || typeof body[field] === 'string');
+}
+
+function writeAuthLog(
+  action: string,
+  details: string,
+  userId: number,
+  storeId: number | null | undefined
+) {
+  db.prepare('INSERT INTO logs (action, details, user_id, store_id) VALUES (?, ?, ?, ?)').run(
+    action,
+    details,
+    userId,
+    storeId
+  );
+}
 
 function incrementFailedLoginAttempts(users: any[]) {
   const uniqueUsers = new Map<number, any>();
@@ -89,10 +115,16 @@ function issueJwt(
 }
 
 authRouter.post('/login', authLimiter, async (req, res) => {
+  if (!isRequestBody(req.body)) return res.status(400).json({ error: 'Invalid request body' });
   const { username, password, store_code } = req.body;
   const normalizedUsername = normalizeUsername(username);
 
-  if (!normalizedUsername || !password || typeof password !== 'string') {
+  if (
+    !normalizedUsername ||
+    !password ||
+    typeof password !== 'string' ||
+    (store_code !== undefined && typeof store_code !== 'string')
+  ) {
     return res.status(400).json({ error: 'Username and password are required' });
   }
   if (!store_code && normalizedUsername !== 'superadmin') {
@@ -208,6 +240,12 @@ authRouter.post('/login', authLimiter, async (req, res) => {
   }
 
   issueJwt(req, res, accountSession);
+  writeAuthLog(
+    'LOGIN',
+    `Signed in as ${sessionUser.username}`,
+    sessionUser.id,
+    sessionUser.store_id ?? null
+  );
   res.json({
     id: sessionUser.id,
     username: sessionUser.username,
@@ -289,6 +327,7 @@ authRouter.get('/google/callback', async (req, res) => {
       const accountSession = buildAccountSessionUser(user.id);
       if (!accountSession) return res.redirect('/login?error=oauth_failed');
       issueJwt(req, res, accountSession);
+      writeAuthLog('LOGIN', `Signed in with Google as ${user.username}`, user.id, user.store_id);
       return res.redirect(user.role === 'superadmin' ? '/admin' : '/');
     }
 
@@ -317,6 +356,22 @@ authRouter.get('/google/pending', authLimiter, (req, res) => {
 
 // Register new store + owner
 authRouter.post('/register', authLimiter, async (req, res) => {
+  if (!isRequestBody(req.body)) return res.status(400).json({ error: 'Invalid request body' });
+  const registerFields = [
+    'store_name',
+    'street',
+    'city',
+    'zipcode',
+    'state',
+    'phone',
+    'email',
+    'username',
+    'password',
+    'oauth_key',
+  ] as const;
+  if (!hasOnlyStringFields(req.body, registerFields)) {
+    return res.status(400).json({ error: 'Registration fields must be strings' });
+  }
   const { store_name, street, city, zipcode, state, phone, email, username, password, oauth_key } =
     req.body;
   const normalizedUsername = normalizeUsername(username);
@@ -412,13 +467,14 @@ authRouter.post('/register', authLimiter, async (req, res) => {
     ];
     for (const [name, icon] of defaults) catInsert.run(name, icon, storeId);
 
-    return { storeId, storeCode };
+    return { storeId, storeCode, userId };
   });
 
   try {
-    const { storeId, storeCode } = register();
+    const { storeId, storeCode, userId } = register();
+    writeAuthLog('CREATE', `Registered store "${store_name}"`, userId, storeId);
     if (oauthEntry) {
-      pendingOAuth.delete(oauth_key);
+      pendingOAuth.delete(oauth_key!);
       const newUser = db
         .prepare("SELECT * FROM users WHERE store_id = ? AND role = 'owner'")
         .get(storeId) as any;
@@ -438,7 +494,7 @@ authRouter.post('/register', authLimiter, async (req, res) => {
       .status(201)
       .json({ message: 'Store registered successfully', store_id: storeId, store_code: storeCode });
   } catch (err: any) {
-    console.error('[auth:register]', err);
+    logError('auth:register', err);
     res.status(500).json({ error: 'An internal error occurred' });
   }
 });
@@ -574,6 +630,21 @@ authRouter.put('/store/settings', authenticateToken, requireOwner, (req: AuthReq
     return res.status(409).json({ error: 'Store selection required', needs_store_selection: true });
   }
 
+  if (!isRequestBody(req.body)) return res.status(400).json({ error: 'Invalid request body' });
+  if (
+    !hasOnlyStringFields(req.body, [
+      'name',
+      'street',
+      'city',
+      'zipcode',
+      'state',
+      'phone',
+      'email',
+      'logo',
+    ])
+  ) {
+    return res.status(400).json({ error: 'Store fields must be strings' });
+  }
   const { name, street, city, zipcode, state, phone, email, logo } = req.body;
   if (!name?.trim()) return res.status(400).json({ error: 'Store name is required' });
   if (name.length > 100)
@@ -609,6 +680,12 @@ authRouter.put('/store/settings', authenticateToken, requireOwner, (req: AuthReq
       name.trim(),
       req.user.store_id
     );
+    writeAuthLog(
+      'UPDATE',
+      `Updated store settings for "${name.trim()}"`,
+      req.user.id,
+      req.user.store_id
+    );
 
     const updatedStore = db
       .prepare(
@@ -622,15 +699,21 @@ authRouter.put('/store/settings', authenticateToken, requireOwner, (req: AuthReq
       return res.status(400).json({ error: error.message });
     }
 
-    console.error('[auth:store-settings]', error);
+    logError('auth:store-settings', error);
     return res.status(500).json({ error: 'An internal error occurred' });
   }
 });
 
 // Store Settings — change password
 authRouter.put('/store/password', authenticateToken, async (req: AuthRequest, res) => {
+  if (!isRequestBody(req.body)) return res.status(400).json({ error: 'Invalid request body' });
   const { current_password, new_password } = req.body;
-  if (!current_password || !new_password)
+  if (
+    !current_password ||
+    !new_password ||
+    typeof current_password !== 'string' ||
+    typeof new_password !== 'string'
+  )
     return res.status(400).json({ error: 'Both fields are required' });
   if (new_password.length < 8 || !/[A-Z]/.test(new_password) || !/\d/.test(new_password))
     return res.status(400).json({
@@ -638,13 +721,14 @@ authRouter.put('/store/password', authenticateToken, async (req: AuthRequest, re
     });
 
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id) as any;
-  if (!user || !(await bcrypt.compare(current_password, user.password)))
+  if (!user?.password || !(await bcrypt.compare(current_password, user.password)))
     return res.status(401).json({ error: 'Current password is incorrect' });
 
   const newVersion = (user.token_version ?? 1) + 1;
   db.prepare(
     'UPDATE users SET password = ?, failed_login_attempts = 0, locked_until = NULL, must_reset_password = 0, token_version = ? WHERE id = ?'
   ).run(await bcrypt.hash(new_password, 12), newVersion, req.user.id);
+  writeAuthLog('PASSWORD', 'Changed account password', req.user.id, req.user.store_id);
   // Re-issue JWT so the current session stays valid and the reset-required flag drops immediately.
   const sessionUser = buildAccountSessionUser(req.user.id);
   if (!sessionUser) {

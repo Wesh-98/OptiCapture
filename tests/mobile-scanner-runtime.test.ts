@@ -251,4 +251,85 @@ describe('mobile scanner runtime', () => {
     expect(reset).toHaveBeenCalledTimes(1);
     expect(video.srcObject).toBeNull();
   });
+
+  it('releases the fallback camera stream when video startup fails', async () => {
+    const trackStop = vi.fn();
+    const stream = { getTracks: () => [{ stop: trackStop }] };
+    const video = {
+      srcObject: null as unknown,
+      playsInline: false,
+      play: vi.fn().mockRejectedValue(new Error('video failed')),
+    };
+
+    vi.stubGlobal('document', {
+      getElementById: (id: string) => (id === 'mobile-reader' ? video : null),
+    });
+    vi.stubGlobal('navigator', {
+      mediaDevices: { getUserMedia: vi.fn().mockResolvedValue(stream) },
+    });
+
+    const { BrowserStoreBarcodeReader } = await import('../src/lib/zxingStoreScanner.js');
+    const reader = new BrowserStoreBarcodeReader();
+
+    await expect(
+      reader.decodeFromConstraints({ video: true }, 'mobile-reader', () => {})
+    ).rejects.toThrow('video failed');
+
+    expect(trackStop).toHaveBeenCalledTimes(1);
+    expect(video.srcObject).toBeNull();
+  });
+
+  it('decodes fallback frames on an interval and stops all resources', async () => {
+    const trackStop = vi.fn();
+    const stream = { getTracks: () => [{ stop: trackStop }] };
+    const imageData = {
+      data: new Uint8ClampedArray(10 * 10 * 4).fill(255),
+      width: 10,
+      height: 10,
+    } as ImageData;
+    const context = {
+      drawImage: vi.fn(),
+      getImageData: vi.fn().mockReturnValue(imageData),
+    };
+    const canvas = {
+      width: 0,
+      height: 0,
+      getContext: vi.fn().mockReturnValue(context),
+    };
+    const video = {
+      srcObject: null as unknown,
+      playsInline: false,
+      readyState: 2,
+      videoWidth: 10,
+      videoHeight: 10,
+      play: vi.fn().mockResolvedValue(undefined),
+    };
+    const callback = vi.fn();
+
+    vi.stubGlobal('HTMLMediaElement', { HAVE_CURRENT_DATA: 2 });
+    vi.stubGlobal('document', {
+      getElementById: (id: string) => (id === 'mobile-reader' ? video : null),
+      createElement: (tag: string) => (tag === 'canvas' ? canvas : null),
+    });
+    vi.stubGlobal('navigator', {
+      mediaDevices: { getUserMedia: vi.fn().mockResolvedValue(stream) },
+    });
+
+    const { BrowserStoreBarcodeReader } = await import('../src/lib/zxingStoreScanner.js');
+    const reader = new BrowserStoreBarcodeReader();
+    const controls = await reader.decodeFromConstraints(
+      { video: true },
+      'mobile-reader',
+      callback
+    );
+
+    await vi.waitFor(() => expect(callback).toHaveBeenCalled());
+    expect(callback.mock.calls[0][0]).toBeNull();
+    expect(callback.mock.calls[0][1]).toBeInstanceOf(Error);
+    expect(context.drawImage).toHaveBeenCalledTimes(1);
+
+    await controls.stop();
+    expect(trackStop).toHaveBeenCalledTimes(1);
+    expect(video.srcObject).toBeNull();
+  });
 });

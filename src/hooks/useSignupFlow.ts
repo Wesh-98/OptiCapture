@@ -7,6 +7,7 @@ import {
   validateSignupForm,
 } from '../components/signup/types';
 import { fetchPendingGoogleProfile, registerStore } from '../components/signup/signupApi';
+import { useAuth } from '../context/AuthContext';
 
 const COPY_RESET_MS = 2000;
 
@@ -16,6 +17,7 @@ function getErrorMessage(error: unknown, fallback: string): string {
 
 export function useSignupFlow() {
   const navigate = useNavigate();
+  const { refreshUser } = useAuth();
   const [searchParams] = useSearchParams();
   const pendingKey = searchParams.get('pending');
 
@@ -115,6 +117,10 @@ export function useSignupFlow() {
       try {
         const result = await registerStore(formData, pendingKey);
         if (result.redirect) {
+          const authenticatedUser = await refreshUser();
+          if (!authenticatedUser) {
+            throw new Error('Account created, but the sign-in session could not be loaded.');
+          }
           navigate(result.redirect);
           return;
         }
@@ -126,7 +132,7 @@ export function useSignupFlow() {
         setIsSubmitting(false);
       }
     },
-    [formData, isGooglePrefilled, navigate, pendingKey]
+    [formData, isGooglePrefilled, navigate, pendingKey, refreshUser]
   );
 
   const copyRegisteredCode = useCallback(async () => {

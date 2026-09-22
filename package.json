@@ -21,7 +21,6 @@
     "test:full": "npm run lint && npm run lint:eslint && npm run test:coverage && npm run test:e2e && npm run build"
   },
   "dependencies": {
-    "@zxing/browser": "^0.1.5",
     "@zxing/library": "^0.21.3",
     "bcryptjs": "^3.0.3",
     "better-sqlite3": "^12.4.1",

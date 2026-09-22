@@ -60,12 +60,12 @@ describe('inventory listing and export', () => {
       .query({ category_id: String(categories[1].id) });
 
     expect(searchRes.status).toBe(200);
-    expect(searchRes.body).toHaveLength(1);
-    expect(searchRes.body[0].item_name).toBe('Cola Bottle');
+    expect(searchRes.body.items).toHaveLength(1);
+    expect(searchRes.body.items[0].item_name).toBe('Cola Bottle');
 
     expect(categoryRes.status).toBe(200);
-    expect(categoryRes.body).toHaveLength(1);
-    expect(categoryRes.body[0].item_name).toBe('Potato Chips');
+    expect(categoryRes.body.items).toHaveLength(1);
+    expect(categoryRes.body.items[0].item_name).toBe('Potato Chips');
   });
 
   it('treats LIKE metacharacters in search query as literals', async () => {
@@ -84,8 +84,8 @@ describe('inventory listing and export', () => {
     const res = await request.get('/api/inventory').set('Cookie', adminCookie).query({ q: '50%' });
 
     expect(res.status).toBe(200);
-    expect(res.body).toHaveLength(1);
-    expect(res.body[0].item_name).toBe('50% Off Special');
+    expect(res.body.items).toHaveLength(1);
+    expect(res.body.items[0].item_name).toBe('50% Off Special');
   });
 
   it('exports inventory as JSON for owners', async () => {
