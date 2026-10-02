@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import type { SessionItem, UiStatus } from '../components/scan/types';
+import { parseServerTimestamp } from '../lib/utils';
 type FetchInit = Parameters<typeof globalThis.fetch>[1];
 
 export interface PollCursor {
@@ -187,7 +188,9 @@ export function getSessionExpiryWarningMessage(
     return null;
   }
 
-  const msLeft = new Date(sessionExpiresAt).getTime() - now;
+  const expiresAt = parseServerTimestamp(sessionExpiresAt);
+  if (!expiresAt) return null;
+  const msLeft = expiresAt.getTime() - now;
   return msLeft > 0 && msLeft < 30 * 60 * 1000
     ? `Session expires in ${Math.ceil(msLeft / 60000)} min - save as draft or commit soon`
     : null;

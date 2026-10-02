@@ -1,6 +1,6 @@
 # OptiCapture Initial Integration Plan
 
-Last updated: 2026-09-22
+Last updated: 2026-10-01
 
 ## Purpose
 
@@ -164,6 +164,8 @@ Existing platform admin reviews the count session
 Existing platform admin commits or exports the count session
 ```
 
+Decision (2026-10-01): each scan is recorded as an append-only scan event attributed to the scanning device and its bound user. A phone binds to a user through its authenticated session or by admin assignment, so "counted by" stays accurate when several phones scan the same item. See [DATABASE_RELATIONSHIPS_INTEGRATION.md](DATABASE_RELATIONSHIPS_INTEGRATION.md).
+
 ### Count Result Export
 
 After commit, OptiCapture exports a result file for the existing platform.
@@ -306,6 +308,8 @@ Recommended initial permissions:
 
 The SSO launch token should include both role and store scope. OptiCapture should never infer store access from role alone.
 
+Decision (2026-10-01): every SSO launch, including a superadmin's, creates or refreshes an explicit per-store grant and store membership. External superadmins receive a read-only `auditor` role in each store they launch into, not OptiCapture's local cross-store `superadmin` role.
+
 Current status: OptiCapture currently enforces `owner`, `taker`, and `superadmin` internally. Integrated roles should map explicitly onto those permissions or onto a future renamed permission layer.
 
 ## Source Of Truth Rules
@@ -358,6 +362,8 @@ Needs review
 ## Initial Milestones
 
 ### Milestone 1: Excel Round Trip
+
+Decision (2026-10-01): scanning's primary purpose is adding new items. Counting (steps 4–8 below as count results) is deferred until the new-item capture baseline works. For now the round trip is: import the catalog, scan to find new items, and export the new items back for the existing platform to create.
 
 Goal:
 

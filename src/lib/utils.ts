@@ -21,15 +21,19 @@ function normalizeServerTimestamp(value: string): string {
   return trimmed;
 }
 
+// Parse a server timestamp (stored as UTC) or return null when it is missing or invalid.
+export function parseServerTimestamp(value: unknown): Date | null {
+  let next: Date;
+  if (value instanceof Date) next = value;
+  else if (typeof value === 'string') next = new Date(normalizeServerTimestamp(value));
+  else if (typeof value === 'number') next = new Date(value);
+  else return null;
+
+  return Number.isNaN(next.getTime()) ? null : next;
+}
+
 export function parseServerDate(value: unknown): Date {
-  if (value instanceof Date) {
-    return Number.isNaN(value.getTime()) ? new Date() : value;
-  }
-
-  const raw = typeof value === 'string' || typeof value === 'number' ? value : Date.now();
-  const next = typeof raw === 'string' ? new Date(normalizeServerTimestamp(raw)) : new Date(raw);
-
-  return Number.isNaN(next.getTime()) ? new Date() : next;
+  return parseServerTimestamp(value) ?? new Date();
 }
 
 export function formatServerTime(value: unknown): string {

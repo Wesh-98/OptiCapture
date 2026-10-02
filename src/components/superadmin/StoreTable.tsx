@@ -9,7 +9,7 @@ import {
   RefreshCw,
   Search,
 } from 'lucide-react';
-import { cn } from '../../lib/utils';
+import { cn, parseServerDate } from '../../lib/utils';
 import { StoreRow } from './types';
 
 interface Props {
@@ -196,15 +196,15 @@ export function StoreTable({
                       {store.item_count}
                     </td>
                     <td className="px-4 py-4 text-sm text-slate-600">
-                      {new Date(store.created_at).toLocaleDateString()}
+                      {parseServerDate(store.created_at).toLocaleDateString()}
                     </td>
                     <td className="px-4 py-4">
                       <span
                         className={cn(
-                          'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium capitalize',
+                          'inline-flex items-center rounded-md border bg-white px-2.5 py-1 text-xs font-medium capitalize',
                           store.status === 'active'
-                            ? 'bg-emerald-100 text-emerald-700'
-                            : 'bg-red-100 text-red-700'
+                            ? 'border-emerald-600 text-emerald-700'
+                            : 'border-red-600 text-red-600'
                         )}
                       >
                         {store.status}
@@ -220,7 +220,7 @@ export function StoreTable({
                         </button>
                         <button
                           onClick={() => onUsers(store)}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors"
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-theme-subtle text-brand-600 hover:bg-slate-200 transition-colors"
                         >
                           <Users size={13} /> Users
                         </button>

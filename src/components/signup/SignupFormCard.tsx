@@ -37,11 +37,11 @@ export function SignupFormCard({
     <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
       <div className="mb-6">
         <h2 className="text-2xl font-bold text-slate-900">Create your store</h2>
-        <p className="text-slate-500 mt-1 text-sm">Get started with OptiCapture in minutes</p>
+        <p className="text-slate-500 mt-1 text-sm">Get started with Inventory Portal in minutes</p>
       </div>
 
       {isGooglePrefilled && (
-        <div className="mb-4 bg-blue-50 text-blue-700 p-3 rounded-xl text-sm border border-blue-100 flex items-center gap-2">
+        <div className="mb-4 bg-theme-subtle text-brand-600 p-3 rounded-xl text-sm border border-theme-border flex items-center gap-2">
           <img
             src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg"
             className="w-4 h-4"

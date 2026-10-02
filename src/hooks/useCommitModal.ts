@@ -6,6 +6,13 @@ export function isCommitEligibleItem(item: SessionItem): boolean {
   return item.lookup_status === 'new_candidate' && item.exists_in_inventory !== 1;
 }
 
+// Existing catalog items are committed as "seen on the shelf"; nothing about them changes.
+export function getVerifyIds(items: SessionItem[], selectedIds: Set<number>): number[] {
+  return items
+    .filter(item => selectedIds.has(item.id) && item.exists_in_inventory === 1)
+    .map(item => item.id);
+}
+
 export function getCommitEligibleItems(
   items: SessionItem[],
   selectedIds: Set<number>
@@ -77,7 +84,12 @@ export function useCommitModal(
   const openCommitModal = async () => {
     if (!sessionId || selectedIds.size === 0 || isBusyRef.current) return;
     if (getCommitEligibleItems(items, selectedIds).length === 0) {
-      addToast('warning', 'Select at least one new item before committing.');
+      // Only existing items selected: no categories needed, mark them as seen directly.
+      if (getVerifyIds(items, selectedIds).length > 0) {
+        await submitCommit([]);
+        return;
+      }
+      addToast('warning', 'Select at least one new or existing item before committing.');
       return;
     }
 
@@ -102,6 +114,12 @@ export function useCommitModal(
     const assignments = buildCommitAssignments(items, selectedIds, itemCategories);
     if (assignments.length === 0) return;
     setShowCommitModal(false);
+    await submitCommit(assignments);
+  };
+
+  const submitCommit = async (assignments: Array<{ id: number; category_id: number }>) => {
+    if (!sessionId || isBusyRef.current) return;
+    const verifyIds = getVerifyIds(items, selectedIds);
     isBusyRef.current = true;
     setUiStatus('committing');
     setStatusMessage('Committing selected items to inventory...');
@@ -110,19 +128,14 @@ export function useCommitModal(
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ assignments }),
+        body: JSON.stringify({ assignments, verifyIds }),
       });
       if (!res.ok) throw new Error(`Commit failed: ${res.status}`);
       const result = await res.json();
-      const skipped = (result.skippedExisting ?? 0) + (result.skippedUnknown ?? 0);
-      let toastMsg: string;
-      if (skipped > 0) {
-        const dupSuffix = result.skippedExisting !== 1 ? 's' : '';
-        toastMsg = `${result.inserted ?? 0} committed - ${result.skippedExisting ?? 0} duplicate${dupSuffix}, ${result.skippedUnknown ?? 0} unknown skipped`;
-      } else {
-        toastMsg = `${result.inserted ?? 0} item(s) committed to inventory`;
-      }
-      addToast(result.inserted > 0 ? 'success' : 'warning', toastMsg);
+      const parts = [`${result.inserted ?? 0} added`, `${result.verified ?? 0} marked as seen`];
+      if (result.skipped > 0) parts.push(`${result.skipped} left in session`);
+      const committed = (result.inserted ?? 0) + (result.verified ?? 0);
+      addToast(committed > 0 ? 'success' : 'warning', parts.join(' - '));
       setItemCategories(new Map());
       setModalSelectedIds(new Set());
       setBulkCategoryId(null);

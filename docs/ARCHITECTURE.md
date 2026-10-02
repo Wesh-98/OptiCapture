@@ -259,6 +259,8 @@ Current database characteristics:
 - foreign keys are enabled on the connection.
 - startup applies schema creation and numbered migrations inside `src/server/db.ts`; migrations are transactional where SQLite permits it.
 - migration 17 restores the `users.store_id -> stores.id` foreign key and verifies the rebuilt table.
+- migration 19 adds the `inventory.last_verified_*` columns written when a scan session is committed.
+- timestamps are stored as UTC text `YYYY-MM-DD HH:MM:SS`, the form `CURRENT_TIMESTAMP` and `datetime('now')` produce; `session_items` keeps milliseconds for its sync cursor. Server code writes them with `toSqliteUtc()` and reads them with `parseSqliteUtc()`; the client parses them with `parseServerDate()`/`parseServerTimestamp()` so they are never read as local time. Exported files use ISO 8601 UTC with `Z`. Migration 18 converted earlier ISO values.
 - audit logs older than 90 days are pruned at startup and then daily.
 
 ### Core tables
@@ -371,7 +373,7 @@ The desktop scan flow is owned by `Scan.tsx` and the scan hooks/components.
 7. Hardware scanners use keyboard-wedge input on desktop and submit through the same session workflow.
 8. The server checks existing inventory first, then falls back to cached/external UPC lookup providers.
 9. The desktop page polls `GET /api/session/:id` using the stable `since_updated_at` plus `since_id` cursor for incremental refresh.
-10. The session can be saved as a draft, resumed, cleared, deleted, edited, or committed into inventory with category assignments.
+10. The session can be saved as a draft, resumed, cleared, deleted, edited, or committed. Commit adds new items with their scanned quantity and an assigned category, and records existing catalog items as seen on the shelf (`last_verified_at`, `last_verified_by`, `last_verified_session_id`) without changing their details or stock. Existing items are read-only in the scan workspace. The session completes once no staged items remain.
 
 ### External product lookup
 
@@ -395,10 +397,11 @@ Current behavior:
 
 1. The client uploads a file to `POST /api/inventory/batch-upload`.
 2. The server parses XLSX, CSV, or JSON input.
-3. The server returns normalized sheet payloads with headers, preview rows, full rows, and row counts.
-4. The client auto-detects column mappings from header synonyms.
-5. Confirming the import sends mapped sheet data to `POST /api/inventory/batch-confirm`.
-6. The server runs a transaction that creates missing categories, inserts new rows, updates existing rows, preserves external mapping fields, records skipped rows, and writes audit log details.
+3. For Excel files, the server detects the strongest header candidate within the first 100 worksheet rows, then returns normalized sheet payloads with the header-row number, worksheet used-column count, headers, preview rows, full rows, and row counts.
+4. The client auto-detects column mappings from header synonyms, presents the workbook filename and every worksheet name, count, and detected column, shows raw and mapped five-row previews, suggests editable categories from meaningful worksheet names, and validates every sheet for a supported identifier or header-count mismatch.
+5. Destination fields are one-to-one. Mapping choices can be copied to matching headers on other sheets without replacing mappings for differently named columns.
+6. Confirming the import sends mapped sheet data to `POST /api/inventory/batch-confirm`.
+7. The server validates the mappings, then runs a transaction that creates missing categories, inserts new rows, updates existing rows, preserves external mapping fields, records skipped rows, and writes audit log details. A mapped row category takes precedence over the user-reviewed worksheet category fallback.
 
 ### Image handling
 

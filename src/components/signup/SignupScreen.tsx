@@ -28,7 +28,7 @@ export function SignupScreen() {
           ) : (
             <>
               <div className="lg:hidden text-center mb-8">
-                <h1 className="text-3xl font-bold tracking-tight text-navy-900">OptiCapture</h1>
+                <h1 className="text-3xl font-bold tracking-tight text-navy-900">Inventory Portal</h1>
                 <p className="text-slate-500 mt-1">Create your store account</p>
               </div>
 

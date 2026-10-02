@@ -52,13 +52,13 @@ export function AddItemModal({
                 <button
                   type="button"
                   onClick={onClose}
-                  className="px-6 py-2 text-slate-600 font-medium hover:bg-slate-100 rounded-lg transition-colors"
+                  className="px-6 py-2 border border-accent-500 text-accent-500 font-medium hover:bg-accent-50 rounded-lg transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-6 py-2 bg-navy-900 text-white font-medium rounded-lg hover:bg-navy-800 transition-colors shadow-lg shadow-navy-900/20"
+                  className="px-6 py-2 bg-brand-600 text-white font-medium rounded-lg hover:bg-brand-700 transition-colors shadow-lg shadow-brand-600/20"
                 >
                   Add Item
                 </button>

@@ -48,7 +48,6 @@ export function CommitModal({
   const unassigned = newItems.filter(i => !itemCategories.has(i.id));
   const modalEligibleSelectedCount = newItems.filter(i => modalSelectedIds.has(i.id)).length;
   const modalAllSelected = newItems.length > 0 && newItems.every(i => modalSelectedIds.has(i.id));
-  const skippedBeforeCommitCount = existingItems.length + unknownItems.length;
 
   return (
     <AnimatePresence>
@@ -74,6 +73,8 @@ export function CommitModal({
                   <h3 className="text-lg font-bold text-navy-900">Commit to Inventory</h3>
                   <p className="text-sm text-slate-500 mt-0.5">
                     {newItems.length} new item{newItems.length !== 1 ? 's' : ''} ready to commit
+                    {existingItems.length > 0 &&
+                      ` · ${existingItems.length} existing item${existingItems.length !== 1 ? 's' : ''} to mark as seen`}
                   </p>
                 </div>
                 <button
@@ -122,24 +123,22 @@ export function CommitModal({
                 </div>
               ) : (
                 <>
-                  {skippedBeforeCommitCount > 0 && (
+                  {existingItems.length > 0 && (
+                    <div className="mx-4 mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+                      {existingItems.length} item{existingItems.length !== 1 ? 's' : ''} already in
+                      inventory will be marked as seen on the shelf. Their details and stock are not
+                      changed.
+                    </div>
+                  )}
+                  {unknownItems.length > 0 && (
                     <div className="mx-4 mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
                       <div className="flex gap-2">
                         <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-700" />
                         <div>
                           <p className="font-semibold">Some selected items will not be committed</p>
                           <p className="mt-0.5">
-                            {existingItems.length > 0 &&
-                              `${existingItems.length} item${
-                                existingItems.length !== 1 ? 's' : ''
-                              } already exist${
-                                existingItems.length === 1 ? 's' : ''
-                              } in inventory and will be skipped.`}
-                            {existingItems.length > 0 && unknownItems.length > 0 ? ' ' : ''}
-                            {unknownItems.length > 0 &&
-                              `${unknownItems.length} unknown item${
-                                unknownItems.length !== 1 ? 's' : ''
-                              } will be skipped until edited or identified.`}
+                            {unknownItems.length} unknown item{unknownItems.length !== 1 ? 's' : ''}{' '}
+                            will stay in the session until named or removed.
                           </p>
                         </div>
                       </div>
@@ -173,7 +172,7 @@ export function CommitModal({
                         key={item.id}
                         className={cn(
                           'flex items-center gap-3 px-4 py-2.5 border-b border-slate-100 hover:bg-slate-50',
-                          checked && 'bg-blue-50/40'
+                          checked && 'bg-theme-subtle'
                         )}
                       >
                         <input
@@ -273,14 +272,14 @@ export function CommitModal({
               )}
               <button
                 onClick={onClose}
-                className="px-4 py-2 rounded-lg border border-slate-300 text-sm text-slate-600 hover:bg-slate-50 transition-colors"
+                className="px-4 py-2 rounded-lg border border-accent-500 text-sm text-accent-500 hover:bg-accent-50 transition-colors"
               >
                 Cancel
               </button>
               <button
                 onClick={onConfirmCommit}
                 disabled={newItems.length === 0 || unassigned.length > 0 || categoriesLoading}
-                className="px-4 py-2 rounded-lg bg-navy-900 text-white text-sm font-medium hover:bg-navy-800 transition-colors disabled:opacity-50"
+                className="px-4 py-2 rounded-lg bg-brand-600 text-white text-sm font-medium hover:bg-brand-700 transition-colors disabled:opacity-50"
               >
                 Commit {newItems.length > 0 ? `(${newItems.length})` : ''}
               </button>
