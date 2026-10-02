@@ -53,6 +53,7 @@ import {
   buildCommitAssignments,
   getBulkCategoryTargetIds,
   getCommitEligibleItems,
+  getVerifyIds,
   isCommitEligibleItem,
 } from '../src/hooks/useCommitModal.js';
 import {
@@ -286,6 +287,14 @@ describe('scan session helpers', () => {
         new Date('2026-01-02T10:00:00Z').getTime()
       )
     ).toBeNull();
+    // scan_sessions.expires_at is stored as UTC without a zone suffix.
+    expect(
+      getSessionExpiryWarningMessage(
+        '2026-01-02 10:20:00',
+        'active',
+        new Date('2026-01-02T10:00:00Z').getTime()
+      )
+    ).toBe('Session expires in 20 min - save as draft or commit soon');
 
     expect(buildSessionStorageEntries('session-1', 'otp-1', 7)).toEqual([
       ['scan_session_id', 'session-1'],
@@ -471,6 +480,7 @@ describe('commit modal helpers', () => {
     expect(isCommitEligibleItem(items[1])).toBe(false);
     expect(isCommitEligibleItem(items[2])).toBe(false);
     expect(getCommitEligibleItems(items, selectedIds).map(item => item.id)).toEqual([10]);
+    expect(getVerifyIds(items, selectedIds)).toEqual([11]);
   });
 
   it('builds assignments and bulk targets from eligible commit items only', () => {

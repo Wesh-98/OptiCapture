@@ -31,6 +31,20 @@ function writeCategoryLog(
 // Dashboard Stats
 categoriesRouter.get('/dashboard/stats', authenticateToken, (req: AuthRequest, res) => {
   const storeId = req.user.store_id;
+  const categoryIdParam = req.query.category_id;
+  let categoryId: number | null = null;
+
+  if (categoryIdParam !== undefined) {
+    categoryId = Number(categoryIdParam);
+    if (!Number.isInteger(categoryId)) {
+      return res.status(400).json({ error: 'Invalid category ID' });
+    }
+    const categoryExists = db
+      .prepare('SELECT 1 FROM categories WHERE id = ? AND store_id = ?')
+      .get(categoryId, storeId);
+    if (!categoryExists) return res.status(404).json({ error: 'Category not found' });
+  }
+
   const totalCategories = db
     .prepare(
       `SELECT COUNT(*) as count
@@ -38,15 +52,21 @@ categoriesRouter.get('/dashboard/stats', authenticateToken, (req: AuthRequest, r
        WHERE c.store_id = ? AND ${visibleCategoryCondition}`
     )
     .get(storeId, ...RESERVED_CATEGORY_NAMES) as any;
+  const categoryCondition = categoryId === null ? '' : ' AND category_id = ?';
+  const inventoryParams = categoryId === null ? [storeId] : [storeId, categoryId];
   const totalItems = db
-    .prepare('SELECT COUNT(*) as count FROM inventory WHERE store_id = ?')
-    .get(storeId) as any;
+    .prepare(`SELECT COUNT(*) as count FROM inventory WHERE store_id = ?${categoryCondition}`)
+    .get(...inventoryParams) as any;
   const inStock = db
-    .prepare('SELECT COUNT(*) as count FROM inventory WHERE quantity > 0 AND store_id = ?')
-    .get(storeId) as any;
+    .prepare(
+      `SELECT COUNT(*) as count FROM inventory WHERE quantity > 0 AND store_id = ?${categoryCondition}`
+    )
+    .get(...inventoryParams) as any;
   const outOfStock = db
-    .prepare('SELECT COUNT(*) as count FROM inventory WHERE quantity = 0 AND store_id = ?')
-    .get(storeId) as any;
+    .prepare(
+      `SELECT COUNT(*) as count FROM inventory WHERE quantity = 0 AND store_id = ?${categoryCondition}`
+    )
+    .get(...inventoryParams) as any;
 
   res.json({
     totalCategories: totalCategories.count,
@@ -98,13 +118,11 @@ categoriesRouter.put(
         id,
         storeId
       );
-      if (status === 'Inactive') {
-        db.prepare('UPDATE inventory SET status = ? WHERE category_id = ? AND store_id = ?').run(
-          'Inactive',
-          id,
-          storeId
-        );
-      }
+      db.prepare('UPDATE inventory SET status = ? WHERE category_id = ? AND store_id = ?').run(
+        status,
+        id,
+        storeId
+      );
       writeCategoryLog(
         'UPDATE',
         `Set category "${category.name}" to ${status}`,

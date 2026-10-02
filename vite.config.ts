@@ -1,5 +1,6 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
+import { existsSync } from 'fs';
 import path from 'path';
 import { defineConfig } from 'vite';
 
@@ -13,7 +14,15 @@ export default defineConfig(() => {
       },
     },
     server: {
-      hmr: process.env.DISABLE_HMR === 'true' ? false : { clientPort: 443, protocol: 'wss' },
+      // Behind a Cloudflare tunnel the HMR socket must go through the tunnel's port 443.
+      // Opened directly (localhost, LAN, Tailscale) it uses the page's own port, as
+      // pointing at :443 there just fails on every load.
+      hmr:
+        process.env.DISABLE_HMR === 'true'
+          ? false
+          : process.env.TUNNEL_HOST || existsSync(path.join(__dirname, '.tunnel-url'))
+            ? { clientPort: 443, protocol: 'wss' }
+            : undefined,
       // When TUNNEL_HOST is set, trust only that hostname (plus localhost) — this is
       // what the README and .env.example have always advertised. Left unset we fall
       // back to accepting any host, which keeps rotating trycloudflare.com / ngrok

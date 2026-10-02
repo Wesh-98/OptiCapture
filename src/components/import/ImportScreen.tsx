@@ -34,8 +34,11 @@ export function ImportScreen() {
             parseError={workflow.state.parseError}
             totalRows={workflow.totalRows}
             mappedCount={workflow.mappedCount}
+            mappingIssues={workflow.mappingIssues}
+            mappingsReady={workflow.mappingsReady}
             onReset={workflow.reset}
             onSelectSheet={workflow.setActiveSheet}
+            onCategoryNameChange={workflow.setSheetCategoryName}
             onApplyToAllSheets={workflow.applyToAllSheets}
             onMappingChange={workflow.handleMappingChange}
             onConfirm={workflow.handleConfirm}

@@ -79,7 +79,7 @@ export function ImportResultPanel({
         <SummaryCard
           value={result.updated}
           label="Items Updated"
-          className="border-blue-100 bg-blue-50 text-blue-700"
+          className="border-theme-border bg-theme-subtle text-brand-600"
         />
         <SummaryCard
           value={result.skipped}

@@ -60,7 +60,7 @@ export default function Login() {
 
   return (
     <div className="min-h-screen flex bg-navy-900">
-      {/* Left brand panel — hidden on mobile */}
+      {/* Left brand panel â€” hidden on mobile */}
       <div className="hidden lg:flex lg:w-1/2 flex-col justify-between p-12 bg-navy-900">
         <div>
           <h1 className="text-4xl font-bold text-white tracking-tight">Inventory Portal</h1>
@@ -87,7 +87,7 @@ export default function Login() {
           ].map(({ icon: Icon, title, desc }) => (
             <div key={title} className="flex items-start gap-4">
               <div className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 bg-navy-700">
-                <Icon size={20} className="text-blue-400" />
+                <Icon size={20} className="text-brand-400" />
               </div>
               <div>
                 <p className="font-semibold text-white">{title}</p>
@@ -98,20 +98,20 @@ export default function Login() {
         </div>
 
         <p className="text-slate-600 text-sm">
-          © {new Date().getFullYear()} OptiCapture. All rights reserved.
+          Â© {new Date().getFullYear()} Inventory Portal. All rights reserved.
         </p>
       </div>
 
-      {/* Right form panel — navy on mobile, light on desktop */}
+      {/* Right form panel â€” navy on mobile, light on desktop */}
       <div className="w-full lg:w-1/2 flex items-center justify-center p-4 sm:p-6 bg-navy-900 lg:bg-slate-50 overflow-y-auto">
         <motion.div
           initial={prefersReducedMotion ? false : { opacity: 0, y: 16 }}
           animate={prefersReducedMotion ? {} : { opacity: 1, y: 0 }}
           className="w-full max-w-md my-auto"
         >
-          {/* Mobile logo — white text on navy background */}
+          {/* Mobile logo â€” white text on navy background */}
           <div className="lg:hidden text-center mb-4 sm:mb-8">
-            <h1 className="text-3xl font-bold tracking-tight text-white">OptiCapture</h1>
+            <h1 className="text-3xl font-bold tracking-tight text-white">Inventory Portal</h1>
             <p className="text-slate-400 mt-1">Smart inventory for modern stores</p>
           </div>
 

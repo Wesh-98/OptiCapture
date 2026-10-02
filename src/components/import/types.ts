@@ -22,6 +22,13 @@ export type DestinationField =
 export type AutoDetectField = Exclude<DestinationField, '__ignore__'>;
 export type ColumnMapping = Record<string, DestinationField>;
 
+export const IDENTIFIER_DESTINATIONS: readonly DestinationField[] = [
+  'upc',
+  'number',
+  'external_item_id',
+  'external_sku',
+];
+
 export interface SkippedRow {
   row_num: number;
   sheet: string;
@@ -38,7 +45,10 @@ export interface ImportResult {
 
 export interface SheetData {
   name: string;
+  categoryName: string | null;
   headers: string[];
+  headerRowNumber: number | null;
+  sourceColumnCount: number;
   preview: RowData[];
   rows: RowData[];
   rowCount: number;
@@ -55,25 +65,61 @@ export interface ImportState {
   isParsing: boolean;
 }
 
-export const DEST_FIELDS: ReadonlyArray<{ value: DestinationField; label: string }> = [
-  { value: '__ignore__', label: '- ignore -' },
-  { value: 'item_name', label: 'Item Name' },
-  { value: 'quantity', label: 'Stock Quantity (# units in stock)' },
-  { value: 'upc', label: 'UPC / Barcode' },
-  { value: 'number', label: 'SKU / Item Number' },
-  { value: 'sale_price', label: 'Sale Price ($)' },
-  { value: 'unit', label: 'Unit of Measure (e.g. 3oz, 1ct, 1L)' },
-  { value: 'category', label: 'Category' },
-  { value: 'status', label: 'Status' },
-  { value: 'tax_percent', label: 'Tax (%)' },
-  { value: 'tag_names', label: 'Tags' },
-  { value: 'description', label: 'Description' },
-  { value: 'image', label: 'Image URL (https:// or Google Drive link)' },
-  { value: 'external_system', label: 'External System' },
-  { value: 'external_store_id', label: 'External Store ID' },
-  { value: 'external_category_id', label: 'External Category ID' },
-  { value: 'external_item_id', label: 'External Item ID' },
-  { value: 'external_sku', label: 'External SKU' },
+export const DEST_FIELDS: ReadonlyArray<{
+  value: DestinationField;
+  label: string;
+  description: string;
+}> = [
+  { value: '__ignore__', label: '- ignore -', description: 'Do not import this column' },
+  { value: 'item_name', label: 'Item Name', description: 'Inventory display name' },
+  {
+    value: 'quantity',
+    label: 'Stock Quantity (# units in stock)',
+    description: 'Current quantity on hand',
+  },
+  { value: 'upc', label: 'UPC / Barcode', description: 'Identifier used to match inventory' },
+  {
+    value: 'number',
+    label: 'SKU / Item Number',
+    description: 'Identifier used to match inventory',
+  },
+  { value: 'sale_price', label: 'Sale Price ($)', description: 'Retail selling price' },
+  {
+    value: 'unit',
+    label: 'Unit of Measure (e.g. 3oz, 1ct, 1L)',
+    description: 'Package size or unit',
+  },
+  { value: 'category', label: 'Category', description: 'Category name for the row' },
+  { value: 'status', label: 'Status', description: 'Active or Inactive' },
+  { value: 'tax_percent', label: 'Tax (%)', description: 'Tax percentage' },
+  { value: 'tag_names', label: 'Tags', description: 'Comma-separated tags' },
+  { value: 'description', label: 'Description', description: 'Item description or notes' },
+  {
+    value: 'image',
+    label: 'Image URL (https:// or Google Drive link)',
+    description: 'Product image URL',
+  },
+  { value: 'external_system', label: 'External System', description: 'Source platform name' },
+  {
+    value: 'external_store_id',
+    label: 'External Store ID',
+    description: 'Store ID in the source platform',
+  },
+  {
+    value: 'external_category_id',
+    label: 'External Category ID',
+    description: 'Category ID in the source platform',
+  },
+  {
+    value: 'external_item_id',
+    label: 'External Item ID',
+    description: 'Identifier used to match inventory',
+  },
+  {
+    value: 'external_sku',
+    label: 'External SKU',
+    description: 'Identifier used to match inventory',
+  },
 ];
 
 export const IMPORT_STEPS = ['upload', 'map', 'done'] as const;

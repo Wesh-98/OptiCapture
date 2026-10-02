@@ -24,7 +24,7 @@ OptiCapture replaces manual spreadsheets and legacy tools with a fast, multi-ten
 3. The Express backend handles auth, inventory, categories, scan sessions, and audit logging.
 4. SQLite stores the app data for each store, including products, users, scan sessions, and logs.
 5. Scans can come from a phone camera or hardware scanner — the backend checks existing inventory first, then queries configured external UPC sources (Go-UPC, Open Food Facts, and UPCitemDB) in parallel.
-6. After scanning, the user selects items and commits them to the inventory database with a per-item or bulk category assignment.
+6. After scanning, the user selects items and commits them: new items are added to inventory with a per-item or bulk category assignment, and items already in inventory are marked as seen on the shelf without changing their details or stock.
 
 ### Stack in Plain English
 

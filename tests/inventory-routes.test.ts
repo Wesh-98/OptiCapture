@@ -15,12 +15,10 @@ function binaryParser(res: any, callback: (err: Error | null, data?: Buffer) => 
 }
 
 let adminCookie: string;
-let takerCookie: string;
 
 beforeAll(async () => {
   const adminStoreCode = getStoreCode(1);
   adminCookie = await login(request, 'admin', 'admin123', adminStoreCode);
-  takerCookie = await login(request, 'taker', 'taker123', adminStoreCode);
 });
 
 beforeEach(() => {
@@ -58,6 +56,10 @@ describe('inventory listing and export', () => {
       .get('/api/inventory')
       .set('Cookie', adminCookie)
       .query({ category_id: String(categories[1].id) });
+    const categoryIdsRes = await request
+      .get('/api/inventory/ids')
+      .set('Cookie', adminCookie)
+      .query({ category_id: String(categories[1].id) });
 
     expect(searchRes.status).toBe(200);
     expect(searchRes.body.items).toHaveLength(1);
@@ -66,6 +68,8 @@ describe('inventory listing and export', () => {
     expect(categoryRes.status).toBe(200);
     expect(categoryRes.body.items).toHaveLength(1);
     expect(categoryRes.body.items[0].item_name).toBe('Potato Chips');
+    expect(categoryIdsRes.status).toBe(200);
+    expect(categoryIdsRes.body.ids).toEqual([categoryRes.body.items[0].id]);
   });
 
   it('treats LIKE metacharacters in search query as literals', async () => {
@@ -136,7 +140,8 @@ describe('inventory listing and export', () => {
     expect(res.text).toContain('"upc","sku","tag_names"');
     expect(res.text).not.toContain('"number"');
     expect(res.text).toContain('"CSV Export Item"');
-    expect(res.text).toContain('"### ');
+    // Machine-readable: one header row, then data rows only (no category dividers).
+    expect(res.text).not.toContain('"### ');
   });
 
   it('exports inventory as PDF for owners', async () => {
@@ -162,7 +167,34 @@ describe('inventory listing and export', () => {
     expect(res.headers['content-type']).toMatch(/application\/pdf/);
     expect(Buffer.isBuffer(res.body)).toBe(true);
     expect((res.body as Buffer).length).toBeGreaterThan(100);
+    // A PDF is a report, not a re-importable data file: it does not mark items exported.
+    expect(
+      db.prepare('SELECT sync_status, last_exported_at FROM inventory WHERE upc = ?').get('inv-export-pdf')
+    ).toEqual({ sync_status: null, last_exported_at: null });
   }, 15000);
+
+  it('marks items exported only for data files and stamps ISO time in the file', async () => {
+    const categoryId = (db
+      .prepare('SELECT id FROM categories WHERE store_id = 1 ORDER BY id LIMIT 1')
+      .get() as { id: number }).id;
+    db.prepare(
+      `INSERT INTO inventory (item_name, quantity, category_id, status, upc, store_id)
+       VALUES ('JSON Export Item', 1, ?, 'Active', 'inv-export-json', 1)`
+    ).run(categoryId);
+
+    const res = await request
+      .get('/api/inventory/export')
+      .set('Cookie', adminCookie)
+      .query({ format: 'json' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.exported_at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.000Z$/);
+    const item = res.body.items.find((row: any) => row.upc === 'inv-export-json');
+    expect(item).toMatchObject({ sync_status: 'exported', last_exported_at: res.body.exported_at });
+    expect(
+      db.prepare('SELECT sync_status FROM inventory WHERE upc = ?').get('inv-export-json')
+    ).toEqual({ sync_status: 'exported' });
+  });
 
   it('defaults to XLSX export and sanitizes sheet names', async () => {
     const categoryInfo = db
@@ -194,7 +226,8 @@ describe('inventory listing and export', () => {
 
     expect(workbook.worksheets).toHaveLength(1);
     expect(workbook.worksheets[0].name).toBe('Very Long Category  Name 123456');
-    expect(workbook.worksheets[0].getRow(1).getCell(13).value).toBe('sku');
+    expect(workbook.worksheets[0].getRow(1).getCell(7).value).toBe('brand');
+    expect(workbook.worksheets[0].getRow(1).getCell(14).value).toBe('sku');
     expect(workbook.worksheets[0].getRow(2).getCell(6).value).toBe('XLSX Export Item');
   });
 });
@@ -204,87 +237,6 @@ describe('inventory batch routes', () => {
     const res = await request.delete('/api/inventory/999999').set('Cookie', adminCookie);
 
     expect(res.status).toBe(404);
-  });
-
-  it('adds new items and updates existing quantities in batch mode', async () => {
-    const categoryId = (db
-      .prepare('SELECT id FROM categories WHERE store_id = 1 ORDER BY id LIMIT 1')
-      .get() as { id: number } | undefined)!.id;
-
-    db.prepare(
-      `
-      INSERT INTO inventory (item_name, quantity, category_id, status, upc, store_id)
-      VALUES (?, ?, ?, 'Active', ?, 1)
-    `
-    ).run('Existing Item', 3, categoryId, 'batch-upc-1');
-
-    const res = await request
-      .post('/api/inventory/batch')
-      .set('Cookie', adminCookie)
-      .send({
-        items: [
-          { upc: 'batch-upc-1', quantity: 2, description: 'Existing Item' },
-          { upc: 'batch-upc-2', quantity: 5, description: 'New Batch Item', tag_names: 'cold' },
-          { quantity: 9, description: 'Missing UPC row' },
-        ],
-      });
-
-    expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ added: 1, updated: 1 });
-    expect(
-      (db.prepare('SELECT quantity FROM inventory WHERE upc = ?').get('batch-upc-1') as any)
-        .quantity
-    ).toBe(5);
-    expect(
-      (db.prepare('SELECT item_name FROM inventory WHERE upc = ?').get('batch-upc-2') as any)
-        .item_name
-    ).toBe('New Batch Item');
-    expect(
-      (db.prepare("SELECT COUNT(*) AS count FROM logs WHERE action = 'BATCH'").get() as any).count
-    ).toBe(1);
-  });
-
-  it('normalizes invalid and negative quantities in batch mode', async () => {
-    const res = await request
-      .post('/api/inventory/batch')
-      .set('Cookie', adminCookie)
-      .send({
-        items: [
-          { upc: 'batch-invalid-quantity', quantity: 'not-a-number', description: 'Invalid Qty' },
-          { upc: 'batch-negative-quantity', quantity: -5, description: 'Negative Qty' },
-        ],
-      });
-
-    expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ added: 2, updated: 0 });
-    const rows = db
-      .prepare('SELECT upc, quantity FROM inventory WHERE upc IN (?, ?) ORDER BY upc')
-      .all('batch-invalid-quantity', 'batch-negative-quantity') as Array<{
-      upc: string;
-      quantity: number;
-    }>;
-    expect(rows.map(row => row.quantity)).toEqual([1, 1]);
-  });
-
-  it('returns 400 when items is not an array', async () => {
-    const objectBodyRes = await request
-      .post('/api/inventory/batch')
-      .set('Cookie', adminCookie)
-      .send({ items: { upc: 'not-an-array', quantity: 1 } });
-    expect(objectBodyRes.status).toBe(400);
-    expect(objectBodyRes.body.error).toMatch(/array/i);
-
-    const nullBodyRes = await request
-      .post('/api/inventory/batch')
-      .set('Cookie', adminCookie)
-      .send({ items: null });
-    expect(nullBodyRes.status).toBe(400);
-
-    const emptyArrayRes = await request
-      .post('/api/inventory/batch')
-      .set('Cookie', adminCookie)
-      .send({ items: [] });
-    expect(emptyArrayRes.status).toBe(400);
   });
 
   it('rejects invalid status values on POST and PUT /inventory', async () => {
@@ -314,14 +266,6 @@ describe('inventory batch routes', () => {
     expect(badPutRes.status).toBe(400);
   });
 
-  it('requires owner access for batch operations', async () => {
-    const res = await request
-      .post('/api/inventory/batch')
-      .set('Cookie', takerCookie)
-      .send({ items: [{ upc: 'blocked', quantity: 1 }] });
-
-    expect(res.status).toBe(403);
-  });
 });
 
 describe('inventory batch upload parsing', () => {
@@ -426,9 +370,161 @@ describe('inventory batch upload parsing', () => {
       created_at: '2026-01-02T10:00:00.000Z',
     });
   });
+
+  it('detects table headers below Excel title rows on every worksheet', async () => {
+    const workbook = new ExcelJS.Workbook();
+    const beverages = workbook.addWorksheet('Beverages');
+    beverages.addRow(['external_system']);
+    const inventoryHeaders = [
+      'item_name',
+      'description',
+      'quantity',
+      'upc',
+      'number',
+      'sale_price',
+      'unit',
+      'category',
+      'status',
+      'tax_percent',
+      'tag_names',
+      'image',
+      'external_system',
+      'external_store_id',
+      'external_category_id',
+      'external_item_id',
+      'external_sku',
+      'sync_status',
+      'last_imported_at',
+    ];
+    beverages.addRow(inventoryHeaders);
+    beverages.addRow(inventoryHeaders.map((header, index) => `${header}-${index + 1}`));
+
+    const snacks = workbook.addWorksheet('Snacks and Candy');
+    snacks.addRow(['Inventory report']);
+    snacks.addRow(['Name', 'Barcode', 'Stock', 'Price']);
+    snacks.addRow(['Chips', 'offset-upc-2', 8, 2.5]);
+
+    const xlsxBuffer = await workbook.xlsx.writeBuffer();
+    const res = await request
+      .post('/api/inventory/batch-upload')
+      .set('Cookie', adminCookie)
+      .attach('file', Buffer.from(xlsxBuffer), {
+        filename: 'category-workbook.xlsx',
+        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.totalRows).toBe(2);
+    expect(res.body.sheets).toHaveLength(2);
+    expect(res.body.sheets[0]).toMatchObject({
+      name: 'Beverages',
+      headers: inventoryHeaders,
+      headerRowNumber: 2,
+      sourceColumnCount: 19,
+      rowCount: 1,
+    });
+    expect(res.body.sheets[1]).toMatchObject({
+      name: 'Snacks and Candy',
+      headers: ['Name', 'Barcode', 'Stock', 'Price'],
+      headerRowNumber: 2,
+      sourceColumnCount: 4,
+      rowCount: 1,
+    });
+  });
 });
 
 describe('inventory batch confirm', () => {
+  it('requires an external system with external item IDs and matches on both', async () => {
+    const withoutSystem = await request
+      .post('/api/inventory/batch-confirm')
+      .set('Cookie', adminCookie)
+      .send({
+        sheetsData: [
+          {
+            sheetName: 'Platform',
+            mapping: { Name: 'item_name', 'Item ID': 'external_item_id' },
+            rows: [{ Name: 'No System', 'Item ID': 'ext-1' }],
+          },
+        ],
+      });
+    expect(withoutSystem.status).toBe(400);
+    expect(withoutSystem.body.error).toMatch(/External System/);
+
+    const mapping = { Name: 'item_name', 'Item ID': 'external_item_id', System: 'external_system' };
+    const first = await request
+      .post('/api/inventory/batch-confirm')
+      .set('Cookie', adminCookie)
+      .send({
+        sheetsData: [
+          {
+            sheetName: 'Platform',
+            mapping,
+            rows: [
+              { Name: 'Platform A Item', 'Item ID': 'shared-ext-id', System: 'platform-a' },
+              { Name: 'Blank System Item', 'Item ID': 'blank-system-id', System: '' },
+            ],
+          },
+        ],
+      });
+    expect(first.status).toBe(200);
+    expect(first.body.added).toBe(1);
+    expect(first.body.errors).toEqual([
+      '"Blank System Item": External System is required when External Item ID is set',
+    ]);
+
+    // The same ID from a different platform is a different item, not an update.
+    const second = await request
+      .post('/api/inventory/batch-confirm')
+      .set('Cookie', adminCookie)
+      .send({
+        sheetsData: [
+          {
+            sheetName: 'Platform',
+            mapping,
+            rows: [{ Name: 'Platform B Item', 'Item ID': 'shared-ext-id', System: 'platform-b' }],
+          },
+        ],
+      });
+    expect(second.body).toMatchObject({ added: 1, updated: 0 });
+    expect(
+      db
+        .prepare(
+          `SELECT external_system, item_name FROM inventory
+           WHERE external_item_id = 'shared-ext-id' ORDER BY external_system`
+        )
+        .all()
+    ).toEqual([
+      { external_system: 'platform-a', item_name: 'Platform A Item' },
+      { external_system: 'platform-b', item_name: 'Platform B Item' },
+    ]);
+  });
+
+  it('rejects unknown, duplicate, and identifier-free mappings', async () => {
+    const makeRequest = (mapping: Record<string, string>) =>
+      request
+        .post('/api/inventory/batch-confirm')
+        .set('Cookie', adminCookie)
+        .send({
+          sheetsData: [
+            {
+              sheetName: 'Inventory',
+              mapping,
+              rows: [{ Name: 'Invalid mapping', UPC: 'invalid-mapping-upc' }],
+            },
+          ],
+        });
+
+    const unknown = await makeRequest({ UPC: 'not_a_real_field' });
+    const duplicate = await makeRequest({ UPC: 'upc', Barcode: 'upc' });
+    const identifierFree = await makeRequest({ Name: 'item_name' });
+
+    expect(unknown.status).toBe(400);
+    expect(duplicate.status).toBe(400);
+    expect(duplicate.body.error).toMatch(/more than one column/i);
+    expect(identifierFree.status).toBe(400);
+    expect(identifierFree.body.error).toMatch(/must map UPC/i);
+  });
+
   it('uses mapped row categories for single-sheet imports', async () => {
     const res = await request
       .post('/api/inventory/batch-confirm')
@@ -437,6 +533,7 @@ describe('inventory batch confirm', () => {
         sheetsData: [
           {
             sheetName: 'Inventory',
+            categoryName: 'Unused Fallback',
             mapping: {
               Name: 'item_name',
               UPC: 'upc',
@@ -478,7 +575,7 @@ describe('inventory batch confirm', () => {
     ).toBe(0);
   });
 
-  it('uses sheet names as categories for multi-sheet imports', async () => {
+  it('uses mapped row categories before sheet-name fallbacks for multi-sheet imports', async () => {
     const res = await request
       .post('/api/inventory/batch-confirm')
       .set('Cookie', adminCookie)
@@ -501,6 +598,7 @@ describe('inventory batch confirm', () => {
           },
           {
             sheetName: 'Sheet Department',
+            categoryName: 'Reviewed Department',
             mapping: {
               Name: 'item_name',
               UPC: 'upc',
@@ -529,8 +627,8 @@ describe('inventory batch confirm', () => {
     }>;
 
     expect(importedItems).toEqual([
-      { upc: 'multi-sheet-upc-1', category_name: null },
-      { upc: 'multi-sheet-upc-2', category_name: 'Sheet Department' },
+      { upc: 'multi-sheet-upc-1', category_name: 'Imported Department' },
+      { upc: 'multi-sheet-upc-2', category_name: 'Reviewed Department' },
     ]);
     expect(
       (
@@ -576,6 +674,28 @@ describe('inventory batch confirm', () => {
           .get() as any
       ).count
     ).toBe(0);
+  });
+
+  it('allows a non-generic worksheet category suggestion to be cleared', async () => {
+    const res = await request
+      .post('/api/inventory/batch-confirm')
+      .set('Cookie', adminCookie)
+      .send({
+        sheetsData: [
+          {
+            sheetName: 'Beverages',
+            categoryName: null,
+            mapping: { Name: 'item_name', UPC: 'upc' },
+            rows: [{ Name: 'Explicitly Uncategorized', UPC: 'uncategorized-upc-1' }],
+          },
+        ],
+      });
+
+    expect(res.status).toBe(200);
+    const importedItem = db
+      .prepare('SELECT category_id FROM inventory WHERE upc = ?')
+      .get('uncategorized-upc-1') as any;
+    expect(importedItem.category_id).toBeNull();
   });
 
   it('preserves external item mappings through import updates and export', async () => {
@@ -656,7 +776,7 @@ describe('inventory batch confirm', () => {
       external_sku: 'sku-abc',
       sync_status: 'imported',
     });
-    expect(storedItem.last_imported_at).toBeTruthy();
+    expect(storedItem.last_imported_at).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
 
     const exportRes = await request
       .get('/api/inventory/export')
@@ -672,7 +792,15 @@ describe('inventory batch confirm', () => {
       external_sku: 'sku-abc',
       sync_status: 'exported',
     });
-    expect(exportRes.body.items[0].last_exported_at).toBeTruthy();
+    // Stored as UTC text; the exported file carries ISO 8601 with an explicit Z.
+    expect(exportRes.body.items[0].last_exported_at).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.000Z$/
+    );
+    expect(exportRes.body.items[0].last_imported_at).toMatch(/Z$/);
+    const stored = db
+      .prepare('SELECT last_exported_at FROM inventory WHERE external_item_id = ?')
+      .get('item-abc') as { last_exported_at: string };
+    expect(stored.last_exported_at).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
   });
 
   it('imports, updates, skips blank rows, and normalizes Google image URLs', async () => {

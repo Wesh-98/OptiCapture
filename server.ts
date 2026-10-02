@@ -14,7 +14,6 @@
  * import createApp() without spinning up a port or a Vite dev server.
  */
 import 'dotenv/config';
-import { createServer as createViteServer } from 'vite';
 import http from 'node:http';
 import https from 'node:https';
 import fs from 'node:fs';
@@ -31,7 +30,17 @@ import { getLocalIP, getTunnelUrl } from './src/server/helpers.js';
 import { logError, logInfo, logWarn } from './src/server/logger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const PORT = 3000;
+const isProduction = process.env.NODE_ENV === 'production';
+// Hosting platforms assign the port through PORT; 3000 stays the local default.
+export const PORT = Number.parseInt(process.env.PORT ?? '', 10) || 3000;
+// The public origin phones reach (e.g. https://scan.example.com). Without it the QR link
+// falls back to the tunnel or LAN.
+const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL?.trim().replace(/\/+$/, '') || null;
+if (PUBLIC_BASE_URL && !PUBLIC_BASE_URL.startsWith('https://')) {
+  logWarn('startup', 'PUBLIC_BASE_URL is not HTTPS; phone cameras will not open on it', {
+    publicBaseUrl: PUBLIC_BASE_URL,
+  });
+}
 
 // ── Guard — fail fast if secrets are missing ────────────────────────────────
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -64,8 +73,12 @@ const app = createApp();
 // are set after the Node server is created below. Reading them at request time
 // via (app as any).protocol means the handler always sees the final values.
 app.get('/api/server-info', (_req, res) => {
-  const ip = getLocalIP();
   const protocol = (app as any).protocol || 'http';
+  if (PUBLIC_BASE_URL) {
+    // A deployed server's own address is a private one phones cannot reach; never expose it.
+    return res.json({ ip: null, port: null, protocol: 'https', mobileUrl: PUBLIC_BASE_URL, tunnelUrl: null });
+  }
+  const ip = getLocalIP();
   const lanUrl = `${protocol}://${ip}:${PORT}`;
   const tunnelUrl = getTunnelUrl();
   res.json({
@@ -119,7 +132,16 @@ if (httpsOptions) {
 (app as any).protocol = protocol;
 
 // ── Vite dev middleware or static production build ───────────────────────────
-if (process.env.NODE_ENV !== 'production') {
+if (!isProduction) {
+  // Vite is a dev dependency: load it only here so a production install without dev
+  // packages can start.
+  let createViteServer: typeof import('vite').createServer;
+  try {
+    ({ createServer: createViteServer } = await import('vite'));
+  } catch (err: unknown) {
+    logError('startup', err, 'Vite is not installed. Set NODE_ENV=production to serve the built app.');
+    process.exit(1);
+  }
   const vite = await createViteServer({
     server: {
       middlewareMode: true,
@@ -131,7 +153,8 @@ if (process.env.NODE_ENV !== 'production') {
   });
   app.use(vite.middlewares);
 } else {
-  app.use(express.static('dist'));
+  // Resolve against this file, not the working directory the process was started from.
+  app.use(express.static(path.join(__dirname, 'dist')));
   app.get('*', (_req, res) => {
     res.sendFile(path.join(__dirname, 'dist', 'index.html'));
   });

@@ -1,6 +1,12 @@
 import { useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { confirmImport, uploadFile } from '../components/import/importApi';
+import {
+  applyMappingToMatchingHeaders,
+  getImportMappingIssues,
+  getMappedColumns,
+  setMappingDestination,
+} from '../components/import/mapping';
 import type { DestinationField, ImportState } from '../components/import/types';
 
 //Import wizard - file parse, column mapping and import.
@@ -60,7 +66,7 @@ export function useImportWorkflow() {
     setState(prev => {
       const sheets = prev.sheets.map((sheet, index) =>
         index === prev.activeSheet
-          ? { ...sheet, mapping: { ...sheet.mapping, [header]: destination } }
+          ? { ...sheet, mapping: setMappingDestination(sheet, header, destination) }
           : sheet
       );
 
@@ -75,14 +81,25 @@ export function useImportWorkflow() {
     });
   };
 
+  const setSheetCategoryName = (index: number, categoryName: string) => {
+    setState(prev => {
+      if (index < 0 || index >= prev.sheets.length) return prev;
+      return {
+        ...prev,
+        sheets: prev.sheets.map((sheet, sheetIndex) =>
+          sheetIndex === index ? { ...sheet, categoryName: categoryName || null } : sheet
+        ),
+      };
+    });
+  };
+
   const applyToAllSheets = () => {
     setState(prev => {
-      const sourceMapping = prev.sheets[prev.activeSheet]?.mapping;
-      if (!sourceMapping) return prev;
+      if (!prev.sheets[prev.activeSheet]) return prev;
 
       return {
         ...prev,
-        sheets: prev.sheets.map(sheet => ({ ...sheet, mapping: { ...sourceMapping } })),
+        sheets: applyMappingToMatchingHeaders(prev.sheets, prev.activeSheet),
       };
     });
   };
@@ -103,10 +120,9 @@ export function useImportWorkflow() {
 
   const activeSheet = state.sheets[state.activeSheet] ?? null;
   const isMultiSheet = state.sheets.length > 1;
-  const mappedCount = activeSheet
-    ? Object.values(activeSheet.mapping).filter(value => value !== '__ignore__').length
-    : 0;
+  const mappedCount = activeSheet ? getMappedColumns(activeSheet).length : 0;
   const totalRows = state.sheets.reduce((total, sheet) => total + sheet.rowCount, 0);
+  const mappingIssues = getImportMappingIssues(state.sheets);
 
   return {
     state,
@@ -114,10 +130,13 @@ export function useImportWorkflow() {
     isMultiSheet,
     mappedCount,
     totalRows,
+    mappingIssues,
+    mappingsReady: state.sheets.length > 0 && mappingIssues.length === 0,
     handleFileChange,
     handleFile,
     handleMappingChange,
     setActiveSheet,
+    setSheetCategoryName,
     applyToAllSheets,
     handleConfirm,
     reset,

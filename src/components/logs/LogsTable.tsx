@@ -7,7 +7,7 @@ import {
   Loader2,
   RefreshCw,
 } from 'lucide-react';
-import { cn } from '../../lib/utils';
+import { cn, parseServerTimestamp } from '../../lib/utils';
 import { LOG_ACTION_META, PAGE_SIZE_OPTIONS, type LogEntry, type LogsPageSize } from './types';
 
 interface LogsTableProps {
@@ -26,8 +26,8 @@ interface LogsTableProps {
 }
 
 function formatTimestamp(timestamp: string): string {
-  const date = new Date(timestamp);
-  return Number.isNaN(date.getTime()) ? 'Unknown time' : format(date, 'MMM d, yyyy HH:mm:ss');
+  const date = parseServerTimestamp(timestamp);
+  return date ? format(date, 'MMM d, yyyy HH:mm:ss') : 'Unknown time';
 }
 
 export function LogsTable({
@@ -156,7 +156,7 @@ export function LogsTable({
                 className={cn(
                   'px-3 py-1 text-xs font-semibold rounded-md transition-colors',
                   pageSize === size
-                    ? 'bg-navy-900 text-white'
+                    ? 'bg-theme-subtle text-brand-600'
                     : 'text-slate-500 hover:text-navy-900 hover:bg-slate-100'
                 )}
               >
@@ -171,7 +171,7 @@ export function LogsTable({
               onClick={onPreviousPage}
               disabled={currentPage === 1}
               aria-label="Previous activity log page"
-              className="p-1.5 rounded-lg bg-navy-900 text-white hover:bg-navy-700 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+              className="p-1.5 rounded-lg bg-theme-subtle text-brand-600 hover:bg-slate-200 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
             >
               <ChevronLeft size={16} />
             </button>
@@ -183,7 +183,7 @@ export function LogsTable({
               onClick={onNextPage}
               disabled={currentPage === totalPages}
               aria-label="Next activity log page"
-              className="p-1.5 rounded-lg bg-navy-900 text-white hover:bg-navy-700 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+              className="p-1.5 rounded-lg bg-theme-subtle text-brand-600 hover:bg-slate-200 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
             >
               <ChevronRight size={16} />
             </button>

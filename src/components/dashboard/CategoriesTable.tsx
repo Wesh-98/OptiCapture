@@ -6,6 +6,7 @@ import { iconMap, colorMap } from './types';
 interface Props {
   categories: Category[];
   search: string;
+  statusFilter: '' | 'Active' | 'Inactive';
   isOwner: boolean;
   activeActionMenu: number | null;
   setActiveActionMenu: (id: number | null) => void;
@@ -20,6 +21,7 @@ interface Props {
 export function CategoriesTable({
   categories,
   search,
+  statusFilter,
   isOwner,
   activeActionMenu,
   setActiveActionMenu,
@@ -30,7 +32,11 @@ export function CategoriesTable({
   onCategoryAction,
   onDeleteCategory,
 }: Readonly<Props>) {
-  const filtered = categories.filter(c => c.name.toLowerCase().includes(search.toLowerCase()));
+  const filtered = categories.filter(
+    c =>
+      c.name.toLowerCase().includes(search.toLowerCase()) &&
+      (!statusFilter || c.status === statusFilter)
+  );
 
   return (
     <div className="overflow-x-auto">
@@ -42,19 +48,19 @@ export function CategoriesTable({
           onClick={() => setActiveActionMenu(null)}
         />
       )}
-      <table className="w-full text-left">
-        <thead className="bg-slate-50 border-b border-slate-200">
+      <table className="w-full min-w-[640px] table-fixed text-left">
+        <thead className="bg-theme-canvas border-b border-slate-200">
           <tr>
-            <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+            <th className="px-6 py-4 text-xs font-semibold text-slate-900 uppercase tracking-wider w-[40%]">
               Category
             </th>
-            <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+            <th className="px-6 py-4 text-xs font-semibold text-slate-900 uppercase tracking-wider text-center w-[20%]">
               Status
             </th>
-            <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+            <th className="px-6 py-4 text-xs font-semibold text-slate-900 uppercase tracking-wider text-center w-[20%]">
               Stock Count
             </th>
-            <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">
+            <th className="px-6 py-4 text-xs font-semibold text-slate-900 uppercase tracking-wider text-center w-[20%]">
               Actions
             </th>
           </tr>
@@ -82,7 +88,7 @@ export function CategoriesTable({
                       return (
                         <div
                           className={cn(
-                            'w-10 h-10 rounded-lg flex items-center justify-center overflow-hidden',
+                            'w-10 h-10 shrink-0 rounded-lg flex items-center justify-center overflow-hidden',
                             color.bg,
                             !isImageIcon && color.icon
                           )}
@@ -99,26 +105,26 @@ export function CategoriesTable({
                         </div>
                       );
                     })()}
-                    <span className="font-semibold text-slate-900">{cat.name}</span>
+                    <span className="font-semibold text-slate-900 truncate">{cat.name}</span>
                   </div>
                 </td>
-                <td className="px-6 py-4">
+                <td className="px-6 py-4 text-center">
                   <span
                     className={cn(
-                      'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium',
+                      'inline-flex items-center rounded-md border bg-white px-2.5 py-1 text-xs font-medium',
                       cat.status === 'Active'
-                        ? 'bg-emerald-100 text-emerald-800'
-                        : 'bg-red-100 text-red-700'
+                        ? 'border-emerald-600 text-emerald-700'
+                        : 'border-red-600 text-red-600'
                     )}
                   >
-                    {cat.status}
+                    {cat.status === 'Active' ? 'Active' : 'In-Active'}
                   </span>
                 </td>
-                <td className="px-6 py-4 text-sm text-slate-600 font-mono">
+                <td className="px-6 py-4 text-center text-sm text-slate-600 font-mono">
                   {cat.total_stock || 0}
                 </td>
-                <td className="px-6 py-4 text-right relative">
-                  <div className="inline-flex items-center justify-end gap-1">
+                <td className="px-6 py-4 text-center relative">
+                  <div className="inline-flex items-center justify-center gap-1">
                     <button
                       onClick={() => onViewItems(cat)}
                       className="p-2 hover:bg-slate-200 rounded-full text-slate-400 hover:text-navy-900 transition-colors"
@@ -140,7 +146,7 @@ export function CategoriesTable({
                   {activeActionMenu === cat.id && (
                     <div
                       className={cn(
-                        'absolute right-0 w-52 bg-white rounded-lg shadow-xl border border-slate-100 z-20 py-1 text-left',
+                        'absolute left-1/2 -translate-x-1/2 w-52 bg-white rounded-lg shadow-xl border border-slate-100 z-20 py-1 text-left',
                         dropUp ? 'bottom-full mb-1' : 'top-full mt-1'
                       )}
                     >
@@ -179,7 +185,7 @@ export function CategoriesTable({
                           >
                             {cat.status === 'Active' ? (
                               <>
-                                <EyeOff size={14} /> Set All Inactive
+                                <EyeOff size={14} /> Set All In-Active
                               </>
                             ) : (
                               <>

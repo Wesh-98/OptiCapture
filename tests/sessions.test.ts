@@ -390,6 +390,21 @@ describe('session scanning', () => {
     });
   });
 
+  it('merges EAN-13 and UPC-A scans of the same product into one staged row', async () => {
+    const session = await createSession();
+    for (const upc of ['0036000291452', '036000291452']) {
+      const res = await request
+        .post(`/api/session/${session.sessionId}/scan`)
+        .set('x-device-id', 'device-a')
+        .send({ upc, otp: session.otp, item_name: 'Variant Product' });
+      expect(res.status).toBe(200);
+    }
+    const rows = db
+      .prepare('SELECT upc, quantity FROM session_items WHERE session_id = ?')
+      .all(session.sessionId);
+    expect(rows).toEqual([{ upc: '0036000291452', quantity: 2 }]);
+  });
+
   it('supports manual item names and cached UPC lookups without external requests', async () => {
     const session = await createSession();
 
@@ -733,9 +748,25 @@ describe('session item editing and commit flow', () => {
     expect(commitRes.body).toMatchObject({
       total: 3,
       inserted: 1,
-      skippedExisting: 1,
-      skippedUnknown: 1,
+      verified: 1,
+      skipped: 1,
+      remaining: 1,
       status: 'active',
+    });
+    // The existing catalog item is only recorded as seen: quantity and name are untouched.
+    expect(
+      db
+        .prepare(
+          `SELECT item_name, quantity, last_verified_session_id,
+                  last_verified_at IS NOT NULL AS verified
+           FROM inventory WHERE upc = ?`
+        )
+        .get('commit-existing-1')
+    ).toEqual({
+      item_name: 'Already In Inventory',
+      quantity: 9,
+      last_verified_session_id: session.sessionId,
+      verified: 1,
     });
     expect(
       (
@@ -750,7 +781,89 @@ describe('session item editing and commit flow', () => {
           .prepare('SELECT COUNT(*) AS count FROM session_items WHERE session_id = ?')
           .get(session.sessionId) as any
       ).count
-    ).toBe(2);
+    ).toBe(1);
+  });
+
+  it('keeps unknown items in the session until they are named', async () => {
+    const session = await createSession();
+    const categoryId = (db
+      .prepare('SELECT id FROM categories WHERE store_id = 1 ORDER BY id LIMIT 1')
+      .get() as { id: number } | undefined)!.id;
+    const unknownId = insertSessionItem(session.sessionId, {
+      upc: 'unnamed-unknown-1',
+      product_name: null,
+      lookup_status: 'unknown',
+    });
+
+    // Editing other fields does not confirm a nameless item.
+    const qtyOnly = await request
+      .patch(`/api/session/${session.sessionId}/items/${unknownId}`)
+      .set('Cookie', adminCookie)
+      .send({ quantity: 3 });
+    expect(qtyOnly.status).toBe(200);
+    expect(qtyOnly.body.item.lookup_status).toBe('unknown');
+
+    const blocked = await request
+      .post(`/api/session/${session.sessionId}/commit`)
+      .set('Cookie', adminCookie)
+      .send({ assignments: [{ id: unknownId, category_id: categoryId }] });
+    expect(blocked.body).toMatchObject({ inserted: 0, skipped: 1, status: 'active' });
+    expect(db.prepare('SELECT 1 FROM inventory WHERE upc = ?').get('unnamed-unknown-1')).toBeUndefined();
+
+    const named = await request
+      .patch(`/api/session/${session.sessionId}/items/${unknownId}`)
+      .set('Cookie', adminCookie)
+      .send({ product_name: 'Named Product' });
+    expect(named.body.item.lookup_status).toBe('new_candidate');
+
+    const committed = await request
+      .post(`/api/session/${session.sessionId}/commit`)
+      .set('Cookie', adminCookie)
+      .send({ assignments: [{ id: unknownId, category_id: categoryId }] });
+    expect(committed.body).toMatchObject({ inserted: 1, status: 'completed' });
+    expect(
+      db.prepare('SELECT item_name, quantity FROM inventory WHERE upc = ?').get('unnamed-unknown-1')
+    ).toEqual({ item_name: 'Named Product', quantity: 3 });
+  });
+
+  it('verifies existing items without changing them and completes the session', async () => {
+    const session = await createSession();
+    const categoryId = (db
+      .prepare('SELECT id FROM categories WHERE store_id = 1 ORDER BY id LIMIT 1')
+      .get() as { id: number } | undefined)!.id;
+    db.prepare(
+      `INSERT INTO inventory (item_name, quantity, category_id, status, upc, store_id, sale_price)
+       VALUES ('Shelf Item', 4, ?, 'Active', '012345678905', 1, 2.5)`
+    ).run(categoryId);
+    // Scanned as EAN-13 (leading zero) for a UPC-A catalog entry: the same item.
+    const stagedId = insertSessionItem(session.sessionId, {
+      upc: '0012345678905',
+      product_name: 'Different Name',
+      quantity: 7,
+      lookup_status: 'existing',
+      exists_in_inventory: 1,
+    });
+
+    const patchRes = await request
+      .patch(`/api/session/${session.sessionId}/items/${stagedId}`)
+      .set('Cookie', adminCookie)
+      .send({ product_name: 'Renamed During Scan' });
+    expect(patchRes.status).toBe(409);
+
+    const commitRes = await request
+      .post(`/api/session/${session.sessionId}/commit`)
+      .set('Cookie', adminCookie)
+      .send({ verifyIds: [stagedId] });
+    expect(commitRes.status).toBe(200);
+    expect(commitRes.body).toMatchObject({ inserted: 0, verified: 1, skipped: 0, status: 'completed' });
+    expect(
+      db
+        .prepare(
+          `SELECT item_name, quantity, sale_price, last_verified_by IS NOT NULL AS by_set
+           FROM inventory WHERE upc = '012345678905'`
+        )
+        .get()
+    ).toEqual({ item_name: 'Shelf Item', quantity: 4, sale_price: 2.5, by_set: 1 });
   });
 
   it('completes and deletes sessions only when the remaining state allows it', async () => {

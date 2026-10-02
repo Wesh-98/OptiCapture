@@ -1,5 +1,5 @@
 import express from 'express';
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import jwt from 'jsonwebtoken';
 import { OAuth2Client } from 'google-auth-library';
 import { db } from './db.js';
@@ -40,18 +40,46 @@ export const apiLimiter = isTest
       standardHeaders: true,
       legacyHeaders: false,
       message: { error: 'Too many requests, please try again later.' },
+      skip: req => isOtpScanRequest(req),
     });
 
-// Unauthenticated scan endpoints: stricter limit to prevent OTP brute-force across sessions
-export const scanLimiter = isTest
-  ? noop
-  : rateLimit({
-      windowMs: 60 * 1000,
-      max: 60,
-      standardHeaders: true,
-      legacyHeaders: false,
-      message: { error: 'Too many scan requests. Please wait a moment.' },
-    });
+// The OTP scan endpoints (phone scan + phone sync) are limited per session and per device,
+// not per IP: every phone on a store's Wi-Fi shares one public IP, and each phone syncs
+// every 3 s on top of its scans. OTP guessing is already capped at 5 attempts per session;
+// a generous per-IP backstop stops one client spraying random session IDs.
+export function buildScanLimiters(
+  limits = { perDevice: 150, perSession: 600, perIp: 1200, windowMs: 60 * 1000 }
+): express.RequestHandler[] {
+  const sessionKey = (req: express.Request) => String(req.params.id ?? '').slice(0, 64);
+  const deviceKey = (req: express.Request) => {
+    const header = req.headers['x-device-id'];
+    const fromQuery = typeof req.query.device_id === 'string' ? req.query.device_id : '';
+    const device = (typeof header === 'string' ? header : fromQuery).slice(0, 128);
+    return device || `ip:${ipKeyGenerator(req.ip ?? '')}`;
+  };
+  const message = { error: 'Too many scan requests. Please wait a moment.' };
+  const common = { windowMs: limits.windowMs, standardHeaders: true, legacyHeaders: false, message };
+  return [
+    rateLimit({ ...common, max: limits.perIp }),
+    rateLimit({ ...common, max: limits.perSession, keyGenerator: req => `session:${sessionKey(req)}` }),
+    rateLimit({
+      ...common,
+      max: limits.perDevice,
+      keyGenerator: req => `device:${sessionKey(req)}:${deviceKey(req)}`,
+    }),
+  ];
+}
+
+export const scanLimiter: express.RequestHandler[] = isTest ? [noop] : buildScanLimiters();
+
+// The phone endpoints carry their own limits above; keep them out of the per-IP API budget,
+// which a store's phones would otherwise exhaust together.
+export function isOtpScanRequest(req: express.Request): boolean {
+  return (
+    (req.method === 'POST' && /^\/session\/[^/]+\/scan$/.test(req.path)) ||
+    (req.method === 'GET' && /^\/session\/[^/]+\/items$/.test(req.path))
+  );
+}
 
 function isPasswordResetAllowedRequest(req: express.Request): boolean {
   if (req.baseUrl !== '/api/auth') {
@@ -135,6 +163,15 @@ export const authenticateToken = (
       }
 
       if (isSuperadmin) {
+        // Superadmins manage stores through /api/admin and have no store of their own, so
+        // store-scoped routes would run their queries against a missing store_id.
+        if (
+          req.baseUrl !== '/api/admin' &&
+          !isStoreContextOptionalRequest(req) &&
+          !isPasswordResetAllowedRequest(req)
+        ) {
+          return res.status(403).json({ error: 'Superadmin accounts have no store context' });
+        }
         (req as AuthRequest).user = {
           id: dbUser.id,
           username: dbUser.username,
@@ -217,6 +254,17 @@ export const authenticateToken = (
     }
   );
 };
+
+// Express 4 ignores the promise an async handler returns, so a thrown error (a database
+// failure, a bad upload) never reaches the global error handler and the request hangs until
+// the client times out. Wrap every async handler so rejections are passed to next().
+export function asyncRoute<Req extends express.Request = express.Request>(
+  handler: (req: Req, res: express.Response, next: express.NextFunction) => Promise<unknown>
+): express.RequestHandler {
+  return (req, res, next) => {
+    handler(req as Req, res, next).catch(next);
+  };
+}
 
 // Role guard — only owners and superadmins may manage categories, export, or batch import
 export const requireOwner = (

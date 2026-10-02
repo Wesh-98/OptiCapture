@@ -43,7 +43,9 @@ setInterval(
 // Dummy bcrypt hash used for constant-time comparison when login username is not found.
 // Prevents username enumeration via timing: without this, missing-user requests return in
 // ~0ms while real-user+wrong-password requests take ~100ms (bcrypt cost).
-export const DUMMY_HASH = bcrypt.hashSync('opticapture-timing-sentinel', 10);
+// The cost must match the one used for real passwords (12) or the gap reappears.
+export const BCRYPT_COST = 12;
+export const DUMMY_HASH = bcrypt.hashSync('opticapture-timing-sentinel', BCRYPT_COST);
 
 // Revoked token store: maps JWT string → expiry timestamp (ms).
 // Entries expire lazily on access and are pruned hourly to keep memory bounded.

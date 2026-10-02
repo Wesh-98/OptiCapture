@@ -154,7 +154,7 @@ export function StoreUsersModal({
               className={cn(
                 'rounded-lg px-3 py-2 text-sm font-medium transition-colors',
                 userActionMode === 'create'
-                  ? 'bg-white text-navy-900 shadow-sm'
+                  ? 'bg-white text-brand-600 shadow-sm'
                   : 'text-slate-500 hover:text-slate-700'
               )}
             >
@@ -166,7 +166,7 @@ export function StoreUsersModal({
               className={cn(
                 'rounded-lg px-3 py-2 text-sm font-medium transition-colors',
                 userActionMode === 'existing'
-                  ? 'bg-white text-navy-900 shadow-sm'
+                  ? 'bg-white text-brand-600 shadow-sm'
                   : 'text-slate-500 hover:text-slate-700'
               )}
             >

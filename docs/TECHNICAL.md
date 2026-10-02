@@ -308,7 +308,7 @@ Google OAuth flow:
 | PATCH | `/api/session/:id/items/:itemId` | cookie | Edit staged item |
 | DELETE | `/api/session/:id/items` | cookie | Clear staged items |
 | DELETE | `/api/session/:id/items/:itemId` | cookie | Delete staged item |
-| POST | `/api/session/:id/commit` | owner | Commit selected staged items to inventory |
+| POST | `/api/session/:id/commit` | owner | Add selected new items (`assignments`) and mark selected existing items as seen (`verifyIds`) |
 
 ### Logs
 
@@ -362,7 +362,7 @@ Desktop polls:
 
 Owner reviews selected items
   -> POST /api/session/:id/commit
-  <- inserted/skipped counts
+  <- inserted/verified/skipped counts and session status
 ```
 
 Session behavior:
@@ -401,18 +401,28 @@ Upload:
 - accepts XLSX, CSV, and JSON
 - uses `multer` memory storage
 - limits files to 20 MB
-- returns sheets, headers, preview rows, full rows, row counts, and initial mappings
+- returns sheets, headers, preview rows, full rows, and row counts
+- scans the first 100 Excel rows for the strongest table-header candidate, allowing title or metadata rows above the table
+- returns the detected header-row number and worksheet used-column count so parsing mismatches cannot pass silently
 
 Client mapping:
 
 - auto-detects common headers
-- supports applying mappings across sheets
+- shows the available destinations, current mappings, sample values, and a destination-labelled preview
+- shows the workbook filename plus every worksheet name, row count, header row, worksheet column count, detected column names, and mapping readiness
+- shows both an unmodified five-row source preview and a destination-labelled mapped preview
+- requires every sheet to map at least one supported inventory identifier
+- prevents duplicate destination mappings
+- applies mappings to case-insensitive matching headers across sheets without adding nonexistent columns
 - includes external mapping fields
+- suggests categories from meaningful worksheet names and lets the user edit or clear each suggestion
+- allows row-level category mapping for single- and multi-sheet files; mapped values take priority over the reviewed worksheet fallback
 
 Confirm:
 
 - uses a larger JSON body limit for mapped row payloads
 - processes rows in a transaction
+- rejects unknown, duplicate, or identifier-free mappings
 - creates missing categories
 - updates by external item ID, UPC, item number, or external SKU where possible
 - preserves omitted values on updates and round-trips descriptions, categories, images, pricing, tax, tags, status, and external IDs

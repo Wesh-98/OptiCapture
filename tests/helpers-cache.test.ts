@@ -21,9 +21,35 @@ import {
   generateOTP,
   generateStoreCode,
   lookupProductByUpc,
+  parseSqliteUtc,
   saveBase64Image,
+  toIsoUtc,
+  toSqliteUtc,
   upcVariants,
 } from '../src/server/helpers.js';
+import { parseServerTimestamp } from '../src/lib/utils.js';
+
+describe('timestamp format helpers', () => {
+  it('stores UTC in the CURRENT_TIMESTAMP text form', () => {
+    expect(toSqliteUtc(new Date('2026-10-01T12:34:56.789Z'))).toBe('2026-10-01 12:34:56');
+  });
+
+  it('reads stored values as UTC, not local time', () => {
+    const expected = Date.parse('2026-10-01T12:34:56Z');
+    expect(parseSqliteUtc('2026-10-01 12:34:56')).toBe(expected);
+    expect(parseSqliteUtc('2026-10-01T12:34:56.000Z')).toBe(expected);
+    expect(parseSqliteUtc('2026-10-01T15:34:56+03:00')).toBe(expected);
+    expect(parseSqliteUtc('not a date')).toBeNaN();
+    expect(parseServerTimestamp('2026-10-01 12:34:56')?.getTime()).toBe(expected);
+    expect(parseServerTimestamp('not a date')).toBeNull();
+  });
+
+  it('serializes outgoing file timestamps as ISO 8601 UTC with Z', () => {
+    expect(toIsoUtc('2026-10-01 12:34:56')).toBe('2026-10-01T12:34:56.000Z');
+    expect(toIsoUtc(null)).toBeNull();
+    expect(toIsoUtc('')).toBe('');
+  });
+});
 
 const TINY_PNG =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4////fwAJ+wP+bkJszwAAAABJRU5ErkJggg==';
