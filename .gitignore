@@ -29,3 +29,6 @@ FCMG.txt
 17082876300.txt
 *.docx
 OptiCapture — Project Oveview.pdf
+
+# Local database backups (npm run db:backup)
+backups/

@@ -147,6 +147,30 @@ export function generateStoreCode(): string {
   return code;
 }
 
+// Stored timestamps are UTC in SQLite's text form 'YYYY-MM-DD HH:MM:SS', the same
+// value CURRENT_TIMESTAMP and datetime('now') produce, so they compare correctly
+// with SQL date functions and sort as text.
+export function toSqliteUtc(date: Date = new Date()): string {
+  return date.toISOString().slice(0, 19).replace('T', ' ');
+}
+
+// Parse a stored UTC timestamp to epoch milliseconds (NaN when invalid). Values
+// without a zone suffix are UTC; Date.parse alone would read them as local time.
+export function parseSqliteUtc(value: string): number {
+  const trimmed = value.trim();
+  const normalized = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(trimmed)
+    ? trimmed
+    : `${trimmed.replace(' ', 'T')}Z`;
+  return Date.parse(normalized);
+}
+
+// Files leaving OptiCapture carry ISO 8601 UTC with an explicit 'Z'.
+export function toIsoUtc(value: unknown): unknown {
+  if (typeof value !== 'string' || !value.trim()) return value;
+  const ms = parseSqliteUtc(value);
+  return Number.isNaN(ms) ? value : new Date(ms).toISOString();
+}
+
 // UPC/EAN barcodes sometimes arrive with or without a leading zero.
 // EAN-13 = 13 digits; UPC-A = 12 digits (EAN-13 with leading 0 dropped).
 // Try both variants so a scan of "012345678905" also matches "12345678905".
@@ -157,6 +181,45 @@ export function upcVariants(upc: string): string[] {
     if (upc.length === 12) variants.push('0' + upc);
   }
   return variants;
+}
+
+function gs1CheckDigitValid(digits: string): boolean {
+  // Weights alternate 3,1,3,... starting from the digit just left of the check digit.
+  let sum = 0;
+  for (let i = digits.length - 2, weight = 3; i >= 0; i--, weight = 4 - weight) {
+    sum += Number(digits[i]) * weight;
+  }
+  return (10 - (sum % 10)) % 10 === Number(digits.at(-1));
+}
+
+// UPC-E (8 digits: number system 0/1, six compressed digits, check digit) to UPC-A.
+function expandUpcE(code: string): string | null {
+  if (!/^[01]\d{7}$/.test(code)) return null;
+  const [ns, d1, d2, d3, d4, d5, d6, check] = code;
+  let body: string;
+  if ('012'.includes(d6)) body = `${d1}${d2}${d6}0000${d3}${d4}${d5}`;
+  else if (d6 === '3') body = `${d1}${d2}${d3}00000${d4}${d5}`;
+  else if (d6 === '4') body = `${d1}${d2}${d3}${d4}00000${d5}`;
+  else body = `${d1}${d2}${d3}${d4}${d5}0000${d6}`;
+  return `${ns}${body}${check}`;
+}
+
+/**
+ * Check-digit validation for retail barcodes (EAN-8/UPC-E, UPC-A, EAN-13, GTIN-14).
+ * Returns null for codes that are not in a GTIN format (store-internal codes, Code 128
+ * text, other lengths) because there is no check digit to verify.
+ */
+export function isValidGtin(code: string): boolean | null {
+  const value = code.trim();
+  if (!/^\d+$/.test(value)) return null;
+  if (value.length === 8) {
+    const upcA = expandUpcE(value);
+    return gs1CheckDigitValid(value) || (upcA !== null && gs1CheckDigitValid(upcA));
+  }
+  if (value.length === 12 || value.length === 13 || value.length === 14) {
+    return gs1CheckDigitValid(value);
+  }
+  return null;
 }
 
 export async function fetchGoUpc(

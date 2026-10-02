@@ -2,7 +2,7 @@ import express from 'express';
 import jwt from 'jsonwebtoken';
 import { randomUUID } from 'node:crypto';
 import { db } from '../db.js';
-import { authenticateToken, requireOwner, scanLimiter } from '../middleware.js';
+import { authenticateToken, requireOwner, scanLimiter, asyncRoute } from '../middleware.js';
 import type { AuthRequest } from '../types.js';
 import { isTokenRevoked, upcCache, upcCacheSet, UPC_CACHE_TTL } from '../cache.js';
 import {
@@ -12,11 +12,17 @@ import {
   normalizeImageUrl,
   saveBase64Image,
   upcVariants,
+  isValidGtin,
 } from '../helpers.js';
 import { SESSION_STATUS } from '../types.js';
 import { logError } from '../logger.js';
 
 export const sessionsRouter = express.Router();
+
+// Scanning extends a session 8 hours at a time, but never past 24 hours from when an
+// authenticated user last started or resumed it (scan_window_started_at).
+const CAPPED_SCAN_EXPIRY = `MIN(datetime('now', '+8 hours'),
+  datetime(COALESCE(scan_window_started_at, created_at), '+24 hours'))`;
 
 function getMergedDeviceId(
   existingDeviceId: string | null,
@@ -146,7 +152,8 @@ sessionsRouter.post('/session/create', authenticateToken, (req: AuthRequest, res
     db.prepare(
       `
       UPDATE scan_sessions
-      SET otp = ?, otp_attempts = 0, expires_at = datetime('now', '+8 hours')
+      SET otp = ?, otp_attempts = 0, expires_at = datetime('now', '+8 hours'),
+          scan_window_started_at = datetime('now')
       WHERE session_id = ?
     `
     ).run(otp, existing.session_id);
@@ -160,7 +167,7 @@ sessionsRouter.post('/session/create', authenticateToken, (req: AuthRequest, res
     // A separate UPDATE could silently fail (was swallowed by a bare catch), leaving
     // the session with no expiry and making it effectively immortal.
     db.prepare(
-      "INSERT INTO scan_sessions (session_id, otp, user_id, store_id, expires_at) VALUES (?, ?, ?, ?, datetime('now', '+8 hours'))"
+      "INSERT INTO scan_sessions (session_id, otp, user_id, store_id, expires_at, scan_window_started_at) VALUES (?, ?, ?, ?, datetime('now', '+8 hours'), datetime('now'))"
     ).run(sessionId, otp, req.user.id, req.user.store_id);
     res.json({ sessionId, otp });
   } catch (err: any) {
@@ -213,9 +220,9 @@ sessionsRouter.patch('/session/:id/status', authenticateToken, (req: AuthRequest
   }
 
   if (status === SESSION_STATUS.ACTIVE) {
-    // Resume: reset expiry
+    // Resume: an authenticated user reopens scanning, so a fresh 24-hour window starts
     db.prepare(
-      "UPDATE scan_sessions SET status = 'active', expires_at = datetime('now', '+8 hours') WHERE session_id = ?"
+      "UPDATE scan_sessions SET status = 'active', expires_at = datetime('now', '+8 hours'), scan_window_started_at = datetime('now') WHERE session_id = ?"
     ).run(sessionId);
   } else {
     // Saving as draft — extend expiry 24 hours from now so the owner can review it later
@@ -367,141 +374,188 @@ sessionsRouter.get('/session/:id', authenticateToken, (req: AuthRequest, res) =>
   });
 });
 
-sessionsRouter.post('/session/:id/scan', scanLimiter, async (req, res) => {
-  const { id } = req.params;
-  const { upc, otp, item_name } = req.body;
-  const rawDeviceId = req.headers['x-device-id'] as string | undefined;
-  // Truncate to prevent oversized device IDs being written to the database on every scan upsert
-  const deviceId = rawDeviceId ? rawDeviceId.slice(0, 128) : null;
+sessionsRouter.post(
+  '/session/:id/scan',
+  scanLimiter,
+  asyncRoute(async (req, res) => {
+    const { id } = req.params;
+    const { upc, otp, item_name } = req.body;
+    const rawDeviceId = req.headers['x-device-id'] as string | undefined;
+    // Truncate to prevent oversized device IDs being written to the database on every scan upsert
+    const deviceId = rawDeviceId ? rawDeviceId.slice(0, 128) : null;
 
-  const cleanUpc = String(upc || '').trim();
-  if (!cleanUpc) {
-    return res.status(400).json({ error: 'UPC is required' });
-  }
-  if (cleanUpc.length > 128) {
-    return res.status(400).json({ error: 'UPC too long' });
-  }
+    const cleanUpc = String(upc || '').trim();
+    if (!cleanUpc) {
+      return res.status(400).json({ error: 'UPC is required' });
+    }
+    if (cleanUpc.length > 128) {
+      return res.status(400).json({ error: 'UPC too long' });
+    }
+    // Optional client-generated ID for this scan. A phone that lost the response resends
+    // with the same ID, and the scan is counted once.
+    const rawScanId = req.body.scan_id;
+    if (
+      rawScanId !== undefined &&
+      rawScanId !== null &&
+      (typeof rawScanId !== 'string' || !/^[A-Za-z0-9_-]{8,64}$/.test(rawScanId))
+    ) {
+      return res.status(400).json({ error: 'Invalid scan ID' });
+    }
+    const scanId: string | null = rawScanId ?? null;
 
-  const session = db
-    .prepare(
-      `SELECT *,
+    const session = db
+      .prepare(
+        `SELECT *,
               CASE WHEN expires_at IS NOT NULL AND datetime(expires_at) <= datetime('now')
                    THEN 1 ELSE 0 END AS is_expired
        FROM scan_sessions
        WHERE session_id = ?`
-    )
-    .get(id) as any;
+      )
+      .get(id) as any;
 
-  if (!session) {
-    return res.status(404).json({ error: 'Session not found or inactive' });
-  }
+    if (!session) {
+      return res.status(404).json({ error: 'Session not found or inactive' });
+    }
 
-  if (session.status === SESSION_STATUS.DRAFT) {
-    return res.status(403).json({ error: 'Session is saved as draft. Resume scanning first.' });
-  }
+    if (session.status === SESSION_STATUS.DRAFT) {
+      return res.status(403).json({ error: 'Session is saved as draft. Resume scanning first.' });
+    }
 
-  if (session.status !== SESSION_STATUS.ACTIVE) {
-    return res.status(404).json({ error: 'Session not found or inactive' });
-  }
+    if (session.status !== SESSION_STATUS.ACTIVE) {
+      return res.status(404).json({ error: 'Session not found or inactive' });
+    }
 
-  // Check session expiry
-  if (session.is_expired) {
-    return res.status(410).json({ error: 'Session has expired. Please start a new session.' });
-  }
+    // Check session expiry
+    if (session.is_expired) {
+      return res.status(410).json({ error: 'Session has expired. Please start a new session.' });
+    }
 
-  // Check OTP attempts
-  if (session.otp_attempts >= 5) {
-    return res
-      .status(429)
-      .json({ error: 'Too many incorrect attempts. Please start a new session.' });
-  }
+    // Check OTP attempts
+    if (session.otp_attempts >= 5) {
+      return res
+        .status(429)
+        .json({ error: 'Too many incorrect attempts. Please start a new session.' });
+    }
 
-  // If OTP doesn't match, increment attempts
-  if (!otp || otp !== session.otp) {
-    db.prepare('UPDATE scan_sessions SET otp_attempts = otp_attempts + 1 WHERE session_id = ?').run(
+    // If OTP doesn't match, increment attempts
+    if (!otp || otp !== session.otp) {
+      db.prepare(
+        'UPDATE scan_sessions SET otp_attempts = otp_attempts + 1 WHERE session_id = ?'
+      ).run(session.session_id);
+      return res.status(401).json({ error: 'Invalid OTP.' });
+    }
+
+    // Reset attempts on success so a user who mistyped a few times and then scanned
+    // correctly doesn't find themselves one wrong guess from permanent lockout.
+    db.prepare('UPDATE scan_sessions SET otp_attempts = 0 WHERE session_id = ?').run(
       session.session_id
     );
-    return res.status(401).json({ error: 'Invalid OTP.' });
-  }
 
-  // Reset attempts on success so a user who mistyped a few times and then scanned
-  // correctly doesn't find themselves one wrong guess from permanent lockout.
-  db.prepare('UPDATE scan_sessions SET otp_attempts = 0 WHERE session_id = ?').run(
-    session.session_id
-  );
-
-  // If a browser session is present, require the authenticated account to still
-  // have access to the store backing this OTP session.
-  const sessionAccessError = getSessionAccessError(req, session.store_id);
-  if (sessionAccessError) {
-    return res.status(sessionAccessError.status).json({ error: sessionAccessError.error });
-  }
-
-  // Try exact UPC first, then leading-zero variant (EAN-13 ↔ UPC-A)
-  const inventoryMatch =
-    upcVariants(cleanUpc)
-      .map(
-        v =>
-          db
-            .prepare(
-              'SELECT id, item_name, image, unit FROM inventory WHERE upc = ? AND store_id = ? LIMIT 1'
-            )
-            .get(v, session.store_id) as any
-      )
-      .find(Boolean) ?? null;
-
-  // --- Resolve product info (cache-first, non-blocking for external lookups) ---
-  let lookupStatus = 'unknown';
-  let productName: string | null = null;
-  let brand: string | null = null;
-  let image: string | null = null;
-  let unit: string | null = null;
-  let source = 'scan_only';
-  let existsInInventory = 0;
-  let needsBackgroundLookup = false;
-
-  if (inventoryMatch) {
-    // Already in this store's inventory — fastest path
-    lookupStatus = 'existing';
-    productName = inventoryMatch.item_name || null;
-    image = inventoryMatch.image || null;
-    unit = inventoryMatch.unit || null;
-    source = 'inventory';
-    existsInInventory = 1;
-  } else if (item_name) {
-    // Taker manually typed a name — cap at 500 chars to match the inventory item_name column limit
-    productName = String(item_name).trim().slice(0, 500) || null;
-    if (productName) lookupStatus = 'new_candidate';
-    source = 'manual';
-  } else {
-    // Check in-memory cache before hitting external APIs — try all UPC variants
-    const cached =
-      upcVariants(cleanUpc)
-        .map(v => upcCache.get(v))
-        .find(c => c && Date.now() - c.ts < UPC_CACHE_TTL) ?? null;
-    if (cached) {
-      lookupStatus = cached.product_name ? 'new_candidate' : 'unknown';
-      productName = cached.product_name;
-      brand = cached.brand;
-      image = cached.image;
-      source = cached.source;
-    } else {
-      // Cache miss — write what we have now, resolve in background
-      needsBackgroundLookup = true;
+    // If a browser session is present, require the authenticated account to still
+    // have access to the store backing this OTP session.
+    const sessionAccessError = getSessionAccessError(req, session.store_id);
+    if (sessionAccessError) {
+      return res.status(sessionAccessError.status).json({ error: sessionAccessError.error });
     }
-  }
 
-  // --- Atomic upsert (respond immediately — no waiting for external API) ---
-  // SQLite serializes all write transactions so the SELECT-then-INSERT/UPDATE is race-free.
-  const upsertScan = db.transaction(() => {
-    const existing = db
-      .prepare('SELECT id, device_id FROM session_items WHERE session_id = ? AND upc = ?')
-      .get(id, cleanUpc) as any;
+    // Try exact UPC first, then leading-zero variant (EAN-13 ↔ UPC-A)
+    const inventoryMatch =
+      upcVariants(cleanUpc)
+        .map(
+          v =>
+            db
+              .prepare(
+                'SELECT id, item_name, image, unit FROM inventory WHERE upc = ? AND store_id = ? LIMIT 1'
+              )
+              .get(v, session.store_id) as any
+        )
+        .find(Boolean) ?? null;
 
-    if (existing) {
-      const mergedDeviceId = getMergedDeviceId(existing.device_id ?? null, deviceId);
-      db.prepare(
-        `
+    // --- Resolve product info (cache-first, non-blocking for external lookups) ---
+    let lookupStatus = 'unknown';
+    let productName: string | null = null;
+    let brand: string | null = null;
+    let image: string | null = null;
+    let unit: string | null = null;
+    let source = 'scan_only';
+    let existsInInventory = 0;
+    let needsBackgroundLookup = false;
+
+    if (inventoryMatch) {
+      // Already in this store's inventory — fastest path
+      lookupStatus = 'existing';
+      productName = inventoryMatch.item_name || null;
+      image = inventoryMatch.image || null;
+      unit = inventoryMatch.unit || null;
+      source = 'inventory';
+      existsInInventory = 1;
+    } else if (isValidGtin(cleanUpc) === false) {
+      // A wrong check digit is almost always a camera misread. Stage it so the scanner
+      // sees it, but flag it: it cannot be committed and is not worth an external lookup.
+      lookupStatus = 'invalid_barcode';
+      productName = item_name ? String(item_name).trim().slice(0, 500) || null : null;
+      source = item_name ? 'manual' : 'scan_only';
+    } else if (item_name) {
+      // Taker manually typed a name — cap at 500 chars to match the inventory item_name column limit
+      productName = String(item_name).trim().slice(0, 500) || null;
+      if (productName) lookupStatus = 'new_candidate';
+      source = 'manual';
+    } else {
+      // Check in-memory cache before hitting external APIs — try all UPC variants
+      const cached =
+        upcVariants(cleanUpc)
+          .map(v => upcCache.get(v))
+          .find(c => c && Date.now() - c.ts < UPC_CACHE_TTL) ?? null;
+      if (cached) {
+        lookupStatus = cached.product_name ? 'new_candidate' : 'unknown';
+        productName = cached.product_name;
+        brand = cached.brand;
+        image = cached.image;
+        source = cached.source;
+      } else {
+        // Cache miss — write what we have now, resolve in background
+        needsBackgroundLookup = true;
+      }
+    }
+
+    // --- Atomic upsert (respond immediately — no waiting for external API) ---
+    // SQLite serializes all write transactions so the SELECT-then-INSERT/UPDATE is race-free.
+    const upsertScan = db.transaction(() => {
+      // Merge leading-zero variants (EAN-13 vs UPC-A) into one staged row, matching
+      // how the inventory lookup above treats them as the same product.
+      const variants = upcVariants(cleanUpc);
+      const existing = db
+        .prepare(
+          `SELECT id, device_id, recent_scan_ids FROM session_items
+         WHERE session_id = ? AND upc IN (${variants.map(() => '?').join(',')})
+         ORDER BY id LIMIT 1`
+        )
+        .get(id, ...variants) as any;
+
+      const readBack = (rowId: number | bigint) =>
+        db
+          .prepare(
+            `
+      SELECT id, session_id, upc, quantity, scanned_at, updated_at, lookup_status, product_name, brand, image, source, exists_in_inventory, unit
+      FROM session_items WHERE id = ?
+    `
+          )
+          .get(rowId);
+
+      // A resend of a scan this row already counted: answer with the row, change nothing.
+      const recentScanIds: string[] = existing?.recent_scan_ids
+        ? String(existing.recent_scan_ids).split(' ')
+        : [];
+      if (existing && scanId && recentScanIds.includes(scanId)) {
+        return { item: readBack(existing.id), duplicate: true };
+      }
+
+      let rowId: number | bigint;
+      if (existing) {
+        rowId = existing.id;
+        const mergedDeviceId = getMergedDeviceId(existing.device_id ?? null, deviceId);
+        db.prepare(
+          `
         UPDATE session_items
         SET quantity = quantity + 1,
             scanned_at = strftime('%Y-%m-%d %H:%M:%f', 'now'),
@@ -516,86 +570,87 @@ sessionsRouter.post('/session/:id/scan', scanLimiter, async (req, res) => {
             image = CASE WHEN source = 'manual' THEN image ELSE COALESCE(?, image) END,
             unit = CASE WHEN source = 'manual' THEN unit ELSE COALESCE(?, unit) END,
             source = CASE WHEN source = 'manual' THEN source ELSE ? END,
-            exists_in_inventory = ?, device_id = ?
+            exists_in_inventory = ?, device_id = ?, recent_scan_ids = ?
         WHERE id = ?
       `
-      ).run(
-        lookupStatus,
-        productName,
-        brand,
-        image,
-        unit,
-        source,
-        existsInInventory,
-        mergedDeviceId,
-        existing.id
-      );
-    } else {
-      db.prepare(
-        `
+        ).run(
+          lookupStatus,
+          productName,
+          brand,
+          image,
+          unit,
+          source,
+          existsInInventory,
+          mergedDeviceId,
+          // Retries arrive within seconds, so the last 20 scan IDs per row are enough.
+          scanId ? [...recentScanIds, scanId].slice(-20).join(' ') : existing.recent_scan_ids,
+          existing.id
+        );
+      } else {
+        rowId = db
+          .prepare(
+            `
         INSERT INTO session_items (
           session_id, upc, quantity, scanned_at, updated_at, lookup_status,
-          product_name, brand, image, source, exists_in_inventory, unit, device_id
+          product_name, brand, image, source, exists_in_inventory, unit, device_id,
+          recent_scan_ids
         )
         VALUES (?, ?, 1, strftime('%Y-%m-%d %H:%M:%f', 'now'),
-                strftime('%Y-%m-%d %H:%M:%f', 'now'), ?, ?, ?, ?, ?, ?, ?, ?)
+                strftime('%Y-%m-%d %H:%M:%f', 'now'), ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `
-      ).run(
-        id,
-        cleanUpc,
-        lookupStatus,
-        productName,
-        brand,
-        image,
-        source,
-        existsInInventory,
-        unit,
-        deviceId
-      );
-    }
+          )
+          .run(
+            id,
+            cleanUpc,
+            lookupStatus,
+            productName,
+            brand,
+            image,
+            source,
+            existsInInventory,
+            unit,
+            deviceId,
+            scanId
+          ).lastInsertRowid;
+      }
 
-    db.prepare(
-      "UPDATE scan_sessions SET expires_at = datetime('now', '+8 hours') WHERE session_id = ?"
-    ).run(id);
+      db.prepare(
+        `UPDATE scan_sessions SET expires_at = ${CAPPED_SCAN_EXPIRY} WHERE session_id = ?`
+      ).run(id);
 
-    return db
-      .prepare(
-        `
-      SELECT id, session_id, upc, quantity, scanned_at, updated_at, lookup_status, product_name, brand, image, source, exists_in_inventory, unit
-      FROM session_items WHERE session_id = ? AND upc = ?
-    `
-      )
-      .get(id, cleanUpc);
-  });
+      // Read back by row id: a scan merged into an existing leading-zero variant keeps that
+      // row's UPC, so looking it up by the scanned UPC would find nothing.
+      return { item: readBack(rowId), duplicate: false };
+    });
 
-  const updatedItem = upsertScan();
+    const { item: updatedItem, duplicate } = upsertScan();
 
-  // Respond immediately — phone is unblocked
-  res.json({ success: true, item: updatedItem });
+    // Respond immediately — phone is unblocked
+    res.json({ success: true, item: updatedItem, duplicate });
 
-  // Background lookup — fires after response is sent, result visible on next poll
-  if (needsBackgroundLookup) {
-    lookupProductByUpc(cleanUpc)
-      .then(result => {
-        const resolvedName = result?.product_name || null;
-        const resolvedBrand = result?.brand || null;
-        const resolvedImage = result?.image || null;
-        const resolvedSource = result?.source || 'scan_only';
-        const resolvedStatus = resolvedName ? 'new_candidate' : 'unknown';
+    // Background lookup — fires after response is sent, result visible on next poll
+    if (needsBackgroundLookup && !duplicate) {
+      lookupProductByUpc(cleanUpc)
+        .then(result => {
+          const resolvedName = result?.product_name || null;
+          const resolvedBrand = result?.brand || null;
+          const resolvedImage = result?.image || null;
+          const resolvedSource = result?.source || 'scan_only';
+          const resolvedStatus = resolvedName ? 'new_candidate' : 'unknown';
 
-        // Update cache regardless of whether we found anything
-        upcCacheSet(cleanUpc, {
-          product_name: resolvedName,
-          brand: resolvedBrand,
-          image: resolvedImage,
-          source: resolvedSource,
-          ts: Date.now(),
-        });
+          // Update cache regardless of whether we found anything
+          upcCacheSet(cleanUpc, {
+            product_name: resolvedName,
+            brand: resolvedBrand,
+            image: resolvedImage,
+            source: resolvedSource,
+            ts: Date.now(),
+          });
 
-        // Only update DB if we actually got something useful
-        if (resolvedName) {
-          db.prepare(
-            `
+          // Only update DB if we actually got something useful
+          if (resolvedName) {
+            db.prepare(
+              `
           UPDATE session_items
           SET updated_at = CASE
                 WHEN julianday(updated_at) >= julianday('now')
@@ -606,29 +661,30 @@ sessionsRouter.post('/session/:id/scan', scanLimiter, async (req, res) => {
               brand = COALESCE(?, brand), image = COALESCE(?, image), source = ?
           WHERE session_id = ? AND upc = ? AND source != 'manual'
         `
-          ).run(
-            resolvedStatus,
-            resolvedName,
-            resolvedBrand,
-            resolvedImage,
-            resolvedSource,
-            id,
-            cleanUpc
-          );
-        }
-      })
-      .catch(() => {
-        // External API failed — cache as unknown so we don't retry until TTL expires
-        upcCacheSet(cleanUpc, {
-          product_name: null,
-          brand: null,
-          image: null,
-          source: 'scan_only',
-          ts: Date.now(),
+            ).run(
+              resolvedStatus,
+              resolvedName,
+              resolvedBrand,
+              resolvedImage,
+              resolvedSource,
+              id,
+              cleanUpc
+            );
+          }
+        })
+        .catch(() => {
+          // External API failed — cache as unknown so we don't retry until TTL expires
+          upcCacheSet(cleanUpc, {
+            product_name: null,
+            brand: null,
+            image: null,
+            source: 'scan_only',
+            ts: Date.now(),
+          });
         });
-      });
-  }
-});
+    }
+  })
+);
 
 sessionsRouter.patch('/session/:id/items/:itemId', authenticateToken, (req: AuthRequest, res) => {
   const { id, itemId } = req.params;
@@ -638,6 +694,22 @@ sessionsRouter.patch('/session/:id/items/:itemId', authenticateToken, (req: Auth
     .prepare('SELECT * FROM scan_sessions WHERE session_id = ? AND store_id = ?')
     .get(id, req.user.store_id) as any;
   if (!session) return res.status(403).json({ error: 'Forbidden' });
+
+  // Existing catalog items are only verified by a commit, never changed by it, so
+  // edits made here would be discarded. They are edited from the inventory instead.
+  const stagedItem = db
+    .prepare(
+      'SELECT exists_in_inventory, product_name, upc FROM session_items WHERE id = ? AND session_id = ?'
+    )
+    .get(itemId, id) as
+    | { exists_in_inventory: number; product_name: string | null; upc: string | null }
+    | undefined;
+  if (!stagedItem) return res.status(404).json({ error: 'Session item not found' });
+  if (stagedItem.exists_in_inventory === 1) {
+    return res.status(409).json({
+      error: 'This item is already in your inventory. Edit it from the dashboard instead.',
+    });
+  }
 
   // Clamp quantity: coerce to int, default 1, min 1, max 1_000_000
   const sanitizedQty = Math.max(1, Math.min(Number.parseInt(String(quantity), 10) || 1, 1_000_000));
@@ -650,6 +722,9 @@ sessionsRouter.patch('/session/:id/items/:itemId', authenticateToken, (req: Auth
   // overwritten unconditionally, so a partial PATCH silently erased the fields it
   // did not mention.
   const sanitizedProductName = product_name ? String(product_name).slice(0, 500) : null;
+  const resultingName = (
+    product_name !== undefined ? sanitizedProductName : stagedItem.product_name
+  )?.trim();
   const sanitizedBrand = brand ? String(brand).slice(0, 200) : null;
   const sanitizedTagNames = tag_names ? String(tag_names).slice(0, 1000) : null;
   const sanitizedUnit = unit ? String(unit).slice(0, 50) : null;
@@ -658,6 +733,9 @@ sessionsRouter.patch('/session/:id/items/:itemId', authenticateToken, (req: Auth
     return res.status(400).json({ error: 'UPC must be 128 characters or fewer' });
   }
   const sanitizedUpc = sanitizedUpcRaw || null;
+  // A misread barcode stays flagged until the UPC itself is corrected; naming it is not enough.
+  const resultingUpc = sanitizedUpc ?? stagedItem.upc ?? '';
+  const barcodeInvalid = isValidGtin(resultingUpc) === false;
   // Coerce sale_price to a non-negative finite number — raw strings like "9.99abc"
   // would otherwise be stored as text and silently evaluate to 0 at commit time.
   const rawPrice = sale_price != null ? Number.parseFloat(String(sale_price)) : NaN;
@@ -674,7 +752,9 @@ sessionsRouter.patch('/session/:id/items/:itemId', authenticateToken, (req: Auth
     // Build the SET list from the keys the client actually sent so an omitted
     // field keeps its stored value instead of being nulled out.
     const assignments: string[] = [
-      "lookup_status = 'new_candidate'",
+      // An edited item becomes a confirmed new item only once it has a name;
+      // a nameless one stays unknown and cannot be committed.
+      `lookup_status = '${barcodeInvalid ? 'invalid_barcode' : resultingName ? 'new_candidate' : 'unknown'}'`,
       "source = 'manual'",
       `updated_at = CASE
         WHEN julianday(updated_at) >= julianday('now')
@@ -770,25 +850,29 @@ sessionsRouter.post(
   requireOwner,
   (req: AuthRequest, res) => {
     const { id } = req.params;
-    // assignments: per-item [{id, category_id}] — new format
+    // assignments: per-item [{id, category_id}] for new items — new format
     // selectedIds + category_id — legacy fallback (single category for all)
-    const { assignments, selectedIds, category_id } = req.body as {
+    // verifyIds: existing catalog items to record as seen on the shelf
+    const { assignments, selectedIds, category_id, verifyIds } = req.body as {
       assignments?: Array<{ id: number; category_id: number }>;
       selectedIds?: number[];
       category_id?: number;
+      verifyIds?: number[];
     };
     const user = req.user;
 
     // Build a normalised id→category_id map
-    let assignmentMap: Map<number, number>;
+    let assignmentMap = new Map<number, number>();
     if (assignments?.length) {
       assignmentMap = new Map(assignments.map(a => [Number(a.id), Number(a.category_id)]));
     } else if (category_id && selectedIds?.length) {
       assignmentMap = new Map(selectedIds.map(id => [Number(id), Number(category_id)]));
-    } else {
+    }
+    const verifySet = new Set(Array.isArray(verifyIds) ? verifyIds.map(Number) : []);
+    if (assignmentMap.size === 0 && verifySet.size === 0) {
       return res
         .status(400)
-        .json({ error: 'assignments (or selectedIds + category_id) is required' });
+        .json({ error: 'assignments (or selectedIds + category_id) or verifyIds is required' });
     }
 
     // Verify session belongs to this store
@@ -804,53 +888,87 @@ sessionsRouter.post(
     if (uniqueCatIds.some(catId => !Number.isInteger(catId))) {
       return res.status(400).json({ error: 'One or more categories are invalid' });
     }
-    const validCats = db
-      .prepare(
-        `SELECT id, name FROM categories WHERE store_id = ? AND id IN (${uniqueCatIds.map(() => '?').join(',')})`
-      )
-      .all(user.store_id, ...uniqueCatIds) as any[];
+    const validCats = uniqueCatIds.length
+      ? (db
+          .prepare(
+            `SELECT id, name FROM categories WHERE store_id = ? AND id IN (${uniqueCatIds.map(() => '?').join(',')})`
+          )
+          .all(user.store_id, ...uniqueCatIds) as any[])
+      : [];
     if (validCats.length !== uniqueCatIds.length) {
       return res.status(400).json({ error: 'One or more categories are invalid' });
     }
     const catNameMap = new Map(validCats.map((c: any) => [c.id, c.name]));
 
-    // Load only the items that are in the assignment map
+    // Load only the items the request names
     const allItems = db
       .prepare('SELECT * FROM session_items WHERE session_id = ?')
       .all(id) as any[];
-    const items = allItems.filter((item: any) => assignmentMap.has(item.id));
+    const items = allItems.filter(
+      (item: any) => assignmentMap.has(item.id) || verifySet.has(item.id)
+    );
 
     if (items.length === 0) return res.json({ message: 'No items to commit' });
 
     const insertInventory = db.prepare(`
-    INSERT INTO inventory (item_name, upc, quantity, category_id, status, image, sale_price, unit, tag_names, store_id)
-    VALUES (?, ?, ?, ?, 'Active', ?, ?, ?, ?, ?)
+    INSERT INTO inventory (item_name, brand, upc, quantity, category_id, status, image, sale_price,
+                           unit, tag_names, store_id, last_verified_at, last_verified_by,
+                           last_verified_session_id)
+    VALUES (?, ?, ?, ?, ?, 'Active', ?, ?, ?, ?, ?, datetime('now'), ?, ?)
+  `);
+    const markVerified = db.prepare(`
+    UPDATE inventory
+    SET last_verified_at = datetime('now'), last_verified_by = ?, last_verified_session_id = ?
+    WHERE id = ? AND store_id = ?
   `);
     const checkInventory = db.prepare('SELECT id FROM inventory WHERE upc = ? AND store_id = ?');
+    // Match the scan route: a barcode with or without its leading zero is the same item.
+    const findInventoryId = (upc: string | null): number | null => {
+      if (!upc) return null;
+      for (const variant of upcVariants(upc)) {
+        const row = checkInventory.get(variant, user.store_id) as { id: number } | undefined;
+        if (row) return row.id;
+      }
+      return null;
+    };
     const deleteSessionItem = db.prepare('DELETE FROM session_items WHERE id = ?');
 
+    // Existence is decided here, not from the staged flags: an item already in the
+    // catalog is only recorded as seen (its details and quantity are never changed);
+    // a new item is added with its scanned quantity. Anything else stays staged.
     const transaction = db.transaction((sessionItems: any[]) => {
       let inserted = 0;
-      let skippedExisting = 0;
-      let skippedUnknown = 0;
+      let verified = 0;
+      let skipped = 0;
       const byCategory: Record<number, number> = {};
 
       for (const item of sessionItems) {
-        if (checkInventory.get(item.upc, user.store_id)) {
-          skippedExisting++;
+        const inventoryId = findInventoryId(item.upc);
+        if (inventoryId !== null) {
+          markVerified.run(user.id, id, inventoryId, user.store_id);
+          deleteSessionItem.run(item.id);
+          verified++;
           continue;
         }
-        if (item.lookup_status !== 'new_candidate') {
-          skippedUnknown++;
+        // New items need a confirmed name and a barcode whose check digit is right;
+        // anything else stays in the session.
+        if (
+          !assignmentMap.has(item.id) ||
+          item.lookup_status !== 'new_candidate' ||
+          !item.product_name?.trim() ||
+          isValidGtin(item.upc ?? '') === false
+        ) {
+          skipped++;
           continue;
         }
 
         const catId = assignmentMap.get(item.id)!;
-        const qty = Math.max(0, Math.min(Number.parseFloat(item.quantity) || 0, 1_000_000));
+        const qty = Math.max(0, Math.min(Math.trunc(Number(item.quantity)) || 0, 1_000_000));
         const price =
           item.sale_price != null ? Math.max(0, Number.parseFloat(item.sale_price) || 0) : null;
         insertInventory.run(
-          item.product_name || 'Unknown Scanned Item',
+          item.product_name.trim(),
+          item.brand?.trim() || null,
           item.upc,
           qty,
           catId,
@@ -858,14 +976,16 @@ sessionsRouter.post(
           price,
           item.unit || null,
           item.tag_names || null,
-          user.store_id
+          user.store_id,
+          user.id,
+          id
         );
         deleteSessionItem.run(item.id);
         byCategory[catId] = (byCategory[catId] ?? 0) + 1;
         inserted++;
       }
 
-      // Only complete the session if every item was either committed or skipped
+      // The session completes once every staged item has been added, verified, or removed
       const remaining = db
         .prepare('SELECT COUNT(*) as n FROM session_items WHERE session_id = ?')
         .get(id) as any;
@@ -873,7 +993,14 @@ sessionsRouter.post(
       if (remaining.n === 0) {
         db.prepare("UPDATE scan_sessions SET status = 'completed' WHERE session_id = ?").run(id);
       }
-      return { inserted, skippedExisting, skippedUnknown, byCategory, status: nextStatus };
+      return {
+        inserted,
+        verified,
+        skipped,
+        remaining: remaining.n,
+        byCategory,
+        status: nextStatus,
+      };
     });
 
     try {
@@ -883,7 +1010,7 @@ sessionsRouter.post(
         .join(', ');
       db.prepare('INSERT INTO logs (action, details, user_id, store_id) VALUES (?, ?, ?, ?)').run(
         'BATCH',
-        `Committed session ${id} | inserted=${result.inserted} skippedExisting=${result.skippedExisting} skippedUnknown=${result.skippedUnknown} | ${catSummary}`,
+        `Committed session ${id} | inserted=${result.inserted} verified=${result.verified} skipped=${result.skipped} | ${catSummary}`,
         user.id,
         user.store_id
       );
@@ -891,8 +1018,9 @@ sessionsRouter.post(
         success: true,
         total: items.length,
         inserted: result.inserted,
-        skippedExisting: result.skippedExisting,
-        skippedUnknown: result.skippedUnknown,
+        verified: result.verified,
+        skipped: result.skipped,
+        remaining: result.remaining,
         status: result.status,
       });
     } catch (err: any) {
