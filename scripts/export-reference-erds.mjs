@@ -2,6 +2,8 @@ import Database from 'better-sqlite3';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
+const byName = (a, b) => a.localeCompare(b);
+
 const root = new URL('../docs/', import.meta.url);
 const TEAL = '#287f87';
 const TEAL_DARK = '#245f64';
@@ -177,8 +179,8 @@ function integrationQuick() {
     { title: 'Count snapshot', tables: ['count_commits','count_commit_lines','count_line_contributors'] },
     { title: 'Export & review', tables: ['count_exports','reconciliation_runs','reconciliation_lines','count_export_lines'] },
   ];
-  const seen = columns.flatMap(column => column.tables).sort();
-  if (JSON.stringify(seen) !== JSON.stringify(integratedNames)) throw new Error('Quick integration ERD is missing tables');
+  const seen = columns.flatMap(column => column.tables).sort(byName);
+  if (JSON.stringify(seen) !== JSON.stringify([...integratedNames].sort(byName))) throw new Error('Quick integration ERD is missing tables');
   const parentsByTable = new Map(integratedNames.map(name => [name,
     [...new Set(integratedFks.filter(key => key.child === name).map(key => key.parent))]]));
   const cardWidth = 245, cardHeight = 122, cardTop = 175, rowStep = 145;
@@ -252,8 +254,8 @@ function integrationDetailed() {
     ['integration_sources','store_external_mappings','external_user_identities','sso_store_grants','sso_launch_receipts'],
     ['catalog_imports','catalog_import_rows','count_exports','count_export_lines','reconciliation_runs','reconciliation_lines'],
   ];
-  const seen = groups.flat().sort();
-  if (JSON.stringify(seen) !== JSON.stringify(integratedNames)) throw new Error('Detailed integration ERD is missing tables');
+  const seen = groups.flat().sort(byName);
+  if (JSON.stringify(seen) !== JSON.stringify([...integratedNames].sort(byName))) throw new Error('Detailed integration ERD is missing tables');
   const cards = [];
   const cardWidth = 530;
   const xs = [52, 615, 1178, 1741, 2304];
