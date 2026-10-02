@@ -526,6 +526,75 @@ runMigration(
   false
 );
 
+// Timestamps are stored as UTC 'YYYY-MM-DD HH:MM:SS' (the CURRENT_TIMESTAMP form);
+// session_items keeps milliseconds for its sync cursor. Import/export and lockout
+// writes previously stored JavaScript ISO strings, which sort and compare differently.
+runMigration(18, () => {
+  const columns: Array<[table: string, column: string, format: string]> = [
+    ['stores', 'created_at', '%Y-%m-%d %H:%M:%S'],
+    ['inventory', 'created_at', '%Y-%m-%d %H:%M:%S'],
+    ['inventory', 'updated_at', '%Y-%m-%d %H:%M:%S'],
+    ['inventory', 'last_imported_at', '%Y-%m-%d %H:%M:%S'],
+    ['inventory', 'last_exported_at', '%Y-%m-%d %H:%M:%S'],
+    ['logs', 'timestamp', '%Y-%m-%d %H:%M:%S'],
+    ['scan_sessions', 'created_at', '%Y-%m-%d %H:%M:%S'],
+    ['scan_sessions', 'expires_at', '%Y-%m-%d %H:%M:%S'],
+    ['users', 'locked_until', '%Y-%m-%d %H:%M:%S'],
+    ['session_items', 'scanned_at', '%Y-%m-%d %H:%M:%f'],
+    ['session_items', 'updated_at', '%Y-%m-%d %H:%M:%f'],
+  ];
+  for (const [table, column, format] of columns) {
+    db.prepare(
+      `UPDATE ${table} SET ${column} = strftime('${format}', ${column})
+       WHERE ${column} GLOB '*T*' AND strftime('${format}', ${column}) IS NOT NULL`
+    ).run();
+  }
+});
+
+// Committing a scan session records that each catalog item was seen on the shelf.
+// The user and session are plain associations (no FK), like logs.user_id, so
+// deleting a user or an uncommitted session is never blocked by verification history.
+runMigration(19, () => {
+  const cols = new Set(
+    (db.prepare('PRAGMA table_info(inventory)').all() as any[]).map((c: any) => c.name)
+  );
+  if (!cols.has('last_verified_at')) db.exec('ALTER TABLE inventory ADD COLUMN last_verified_at TEXT');
+  if (!cols.has('last_verified_by')) db.exec('ALTER TABLE inventory ADD COLUMN last_verified_by INTEGER');
+  if (!cols.has('last_verified_session_id'))
+    db.exec('ALTER TABLE inventory ADD COLUMN last_verified_session_id TEXT');
+});
+
+// A scan session's OTP stays usable for at most 24 hours from when an authenticated user
+// last started or resumed the session. Every scan extends expires_at, so without this anchor
+// a leaked OTP would keep working for as long as someone kept scanning with it.
+runMigration(20, () => {
+  const cols = new Set(
+    (db.prepare('PRAGMA table_info(scan_sessions)').all() as any[]).map((c: any) => c.name)
+  );
+  if (!cols.has('scan_window_started_at')) {
+    db.exec('ALTER TABLE scan_sessions ADD COLUMN scan_window_started_at TEXT');
+  }
+  db.exec('UPDATE scan_sessions SET scan_window_started_at = created_at WHERE scan_window_started_at IS NULL');
+});
+
+// Brand found by the scan lookup is kept on the catalog item when a session commits, so it
+// can travel with the item to the external platform.
+runMigration(21, () => {
+  const cols = new Set(
+    (db.prepare('PRAGMA table_info(inventory)').all() as any[]).map((c: any) => c.name)
+  );
+  if (!cols.has('brand')) db.exec('ALTER TABLE inventory ADD COLUMN brand TEXT');
+});
+
+// Phones send an ID with each scan; the last few per staged row are kept so a scan resent
+// after a lost response is not counted twice. Space-separated, newest last.
+runMigration(22, () => {
+  const cols = new Set(
+    (db.prepare('PRAGMA table_info(session_items)').all() as any[]).map((c: any) => c.name)
+  );
+  if (!cols.has('recent_scan_ids')) db.exec('ALTER TABLE session_items ADD COLUMN recent_scan_ids TEXT');
+});
+
 db.prepare(
   `
   CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oauth

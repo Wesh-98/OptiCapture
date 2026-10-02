@@ -22,7 +22,7 @@ export function SignupBrandPanel() {
   return (
     <div className="hidden lg:flex lg:w-2/5 flex-col justify-between p-12 bg-navy-900">
       <div>
-        <h1 className="text-4xl font-bold text-white tracking-tight">OptiCapture</h1>
+        <h1 className="text-4xl font-bold text-white tracking-tight">Inventory Portal</h1>
         <p className="text-slate-400 mt-2 text-lg">Smart inventory for modern stores</p>
       </div>
 
@@ -30,7 +30,7 @@ export function SignupBrandPanel() {
         {features.map(({ description, icon: Icon, title }) => (
           <div key={title} className="flex items-start gap-4">
             <div className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 bg-navy-700">
-              <Icon size={20} className="text-blue-400" />
+              <Icon size={20} className="text-brand-400" />
             </div>
             <div>
               <p className="font-semibold text-white">{title}</p>
@@ -41,7 +41,7 @@ export function SignupBrandPanel() {
       </div>
 
       <p className="text-slate-600 text-sm">
-        {`(c) ${new Date().getFullYear()} OptiCapture. All rights reserved.`}
+        {`(c) ${new Date().getFullYear()} Inventory Portal. All rights reserved.`}
       </p>
     </div>
   );

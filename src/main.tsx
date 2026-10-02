@@ -1,6 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
+import DevToolbar from './components/DevToolbar.tsx';
 import { installApiFetchInterceptor } from './lib/apiFetch.ts';
 import './index.css';
 
@@ -11,5 +12,6 @@ installApiFetchInterceptor();
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <App />
+    <DevToolbar />
   </StrictMode>
 );

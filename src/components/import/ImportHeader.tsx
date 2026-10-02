@@ -33,7 +33,7 @@ export function ImportHeader({ step }: Readonly<Props>) {
                 className={cn(
                   'flex items-center gap-1.5 rounded-full px-3 py-1.5 font-medium transition-colors',
                   isActive
-                    ? 'bg-navy-900 text-white'
+                    ? 'bg-theme-subtle text-brand-600 ring-1 ring-theme-border'
                     : isComplete
                       ? 'bg-emerald-100 text-emerald-700'
                       : 'bg-slate-100 text-slate-500'

@@ -3,13 +3,41 @@ import multer from 'multer';
 import ExcelJS from 'exceljs';
 import Papa from 'papaparse';
 import { db } from '../db.js';
-import { authenticateToken, requireOwner, requireOwnerOrTaker } from '../middleware.js';
+import { authenticateToken, requireOwner, requireOwnerOrTaker, asyncRoute } from '../middleware.js';
 import { upcCache } from '../cache.js';
-import { saveBase64Image, normalizeImageUrl, UnsupportedImageTypeError } from '../helpers.js';
+import {
+  saveBase64Image,
+  normalizeImageUrl,
+  toIsoUtc,
+  toSqliteUtc,
+  UnsupportedImageTypeError,
+} from '../helpers.js';
 import type { AuthRequest } from '../types.js';
 import { logError } from '../logger.js';
 
 export const inventoryRouter = express.Router();
+
+const IMPORT_DESTINATION_FIELDS = new Set([
+  '__ignore__',
+  'item_name',
+  'quantity',
+  'upc',
+  'number',
+  'sale_price',
+  'unit',
+  'category',
+  'status',
+  'tax_percent',
+  'tag_names',
+  'description',
+  'image',
+  'external_system',
+  'external_store_id',
+  'external_category_id',
+  'external_item_id',
+  'external_sku',
+]);
+const IMPORT_IDENTIFIER_FIELDS = new Set(['upc', 'number', 'external_item_id', 'external_sku']);
 
 // Multer — memory storage for file uploads (xlsx/csv import)
 const upload = multer({
@@ -58,12 +86,124 @@ function readImportedString(value: unknown): string {
   return typeof normalized === 'string' ? normalized.trim() : String(normalized).trim();
 }
 
-function parseBoundedNonNegativeNumber(value: unknown, fallback: number | null): number | null {
+const IMPORT_HEADER_HINTS = new Set([
+  'item_name',
+  'item name',
+  'name',
+  'product name',
+  'description',
+  'quantity',
+  'qty',
+  'stock',
+  'upc',
+  'barcode',
+  'number',
+  'sku',
+  'item number',
+  'sale_price',
+  'sale price',
+  'price',
+  'unit',
+  'category',
+  'status',
+  'tax_percent',
+  'tax',
+  'tag_names',
+  'tags',
+  'image',
+  'image url',
+  'external_system',
+  'external system',
+  'external_store_id',
+  'external category id',
+  'external_category_id',
+  'external_item_id',
+  'external item id',
+  'external_sku',
+  'external sku',
+]);
+
+function detectWorksheetHeader(ws: ExcelJS.Worksheet): {
+  rowNumber: number;
+  columns: Array<{ columnNumber: number; header: string }>;
+  sourceColumnCount: number;
+} {
+  const lastCandidateRow = Math.min(Math.max(ws.rowCount, 1), 100);
+  let bestRowNumber = 1;
+  let bestScore = -1;
+  let sourceColumnCount = 0;
+
+  ws.eachRow(row => {
+    const values = (row.values as unknown[]).slice(1);
+    for (let index = values.length - 1; index >= 0; index--) {
+      if (readImportedString(values[index])) {
+        sourceColumnCount = Math.max(sourceColumnCount, index + 1);
+        break;
+      }
+    }
+  });
+
+  for (let rowNumber = 1; rowNumber <= lastCandidateRow; rowNumber++) {
+    const row = ws.getRow(rowNumber);
+    const values = (row.values as unknown[]).slice(1);
+    const labels = values.map(readImportedString);
+    const nonEmptyCount = labels.filter(Boolean).length;
+    if (nonEmptyCount === 0) continue;
+
+    const recognizedCount = labels.filter(label =>
+      IMPORT_HEADER_HINTS.has(label.toLocaleLowerCase())
+    ).length;
+    const occupiedWidth = values.length;
+    const score = occupiedWidth * 10 + nonEmptyCount + recognizedCount * 3;
+    if (score > bestScore) {
+      bestScore = score;
+      bestRowNumber = rowNumber;
+    }
+  }
+
+  const headerValues = (ws.getRow(bestRowNumber).values as unknown[]).slice(1);
+  const usedHeaders = new Map<string, number>();
+  const columns = headerValues.flatMap((value, index) => {
+    const baseHeader = readImportedString(value);
+    if (!baseHeader) return [];
+
+    const normalizedHeader = baseHeader.toLocaleLowerCase();
+    const occurrence = (usedHeaders.get(normalizedHeader) ?? 0) + 1;
+    usedHeaders.set(normalizedHeader, occurrence);
+    return [
+      {
+        columnNumber: index + 1,
+        header: occurrence === 1 ? baseHeader : `${baseHeader} (${occurrence})`,
+      },
+    ];
+  });
+
+  return { rowNumber: bestRowNumber, columns, sourceColumnCount };
+}
+
+// Spreadsheet numbers arrive as text such as "$3.99", "1,200" or "8.25%". Strip that
+// formatting, then either return a clean number (null when the cell is empty) or say why the
+// value was rejected, so the row is reported instead of silently saved without it.
+export function parseImportNumber(
+  value: unknown,
+  label: string,
+  options: { integer?: boolean; max?: number } = {}
+): { value: number | null; error?: string } {
   const text = readImportedString(value);
-  if (!text) return fallback;
-  const parsed = Number(text);
-  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
-  return Math.min(parsed, 1_000_000);
+  if (!text) return { value: null };
+  const cleaned = text.replace(/^[$£€¥]\s*/, '').replace(/(?<=\d),(?=\d{3}\b)/g, '').replace(/\s*%$/, '');
+  const parsed = Number(cleaned);
+  const max = options.max ?? 1_000_000;
+  if (!cleaned || !Number.isFinite(parsed) || parsed < 0) {
+    return { value: null, error: `${label} "${text}" is not a valid non-negative number` };
+  }
+  if (options.integer && !Number.isInteger(parsed)) {
+    return { value: null, error: `${label} "${text}" must be a whole number` };
+  }
+  if (parsed > max) {
+    return { value: null, error: `${label} "${text}" is larger than ${max.toLocaleString('en-US')}` };
+  }
+  return { value: parsed };
 }
 
 function parseInventoryNumber(
@@ -103,9 +243,7 @@ function validateInventoryStrings(values: {
     tag_names: 'Tags',
     image: 'Image',
   };
-  for (const [field, value] of Object.entries(values) as Array<
-    [keyof typeof values, unknown]
-  >) {
+  for (const [field, value] of Object.entries(values) as Array<[keyof typeof values, unknown]>) {
     if (value !== undefined && value !== null && typeof value !== 'string') {
       return `${labels[field]} must be a string`;
     }
@@ -150,7 +288,7 @@ function isCategoryInStore(categoryId: unknown, storeId: number | undefined): bo
 }
 
 inventoryRouter.get('/inventory', authenticateToken, (req: AuthRequest, res) => {
-  const { category_id, q, page: pageParam, limit: limitParam } = req.query;
+  const { category_id, q, status, page: pageParam, limit: limitParam } = req.query;
   const storeId = req.user.store_id;
 
   // Build WHERE conditions separately so we can reuse for COUNT + data queries
@@ -160,6 +298,14 @@ inventoryRouter.get('/inventory', authenticateToken, (req: AuthRequest, res) => 
   if (category_id) {
     conditions.push('i.category_id = ?');
     params.push(category_id);
+  }
+
+  if (status) {
+    if (status !== 'Active' && status !== 'Inactive') {
+      return res.status(400).json({ error: 'status must be Active or Inactive' });
+    }
+    conditions.push('i.status = ?');
+    params.push(status);
   }
 
   if (q) {
@@ -179,10 +325,7 @@ inventoryRouter.get('/inventory', authenticateToken, (req: AuthRequest, res) => 
 
   const parsedPage = Number.parseInt(String(pageParam ?? ''), 10);
   const pageNum = Number.isFinite(parsedPage) && parsedPage >= 1 ? parsedPage : 1;
-  const safeLimit = Math.min(
-    Math.max(Number.parseInt(String(limitParam ?? ''), 10) || 50, 1),
-    500
-  );
+  const safeLimit = Math.min(Math.max(Number.parseInt(String(limitParam ?? ''), 10) || 50, 1), 500);
   const offset = (pageNum - 1) * safeLimit;
   const { total } = db.prepare(`SELECT COUNT(*) as total ${from}`).get(...params) as {
     total: number;
@@ -194,29 +337,53 @@ inventoryRouter.get('/inventory', authenticateToken, (req: AuthRequest, res) => 
 });
 
 // Export inventory — XLSX, CSV, JSON, PDF
+inventoryRouter.get('/inventory/ids', authenticateToken, (req: AuthRequest, res) => {
+  const categoryId = Number(req.query.category_id);
+  const storeId = req.user.store_id;
+  if (!Number.isInteger(categoryId)) {
+    return res.status(400).json({ error: 'Invalid category ID' });
+  }
+
+  const category = db
+    .prepare('SELECT 1 FROM categories WHERE id = ? AND store_id = ?')
+    .get(categoryId, storeId);
+  if (!category) return res.status(404).json({ error: 'Category not found' });
+
+  const rows = db
+    .prepare('SELECT id FROM inventory WHERE category_id = ? AND store_id = ? ORDER BY id')
+    .all(categoryId, storeId) as Array<{ id: number }>;
+  res.json({ ids: rows.map(row => row.id) });
+});
+
 inventoryRouter.get(
   '/inventory/export',
   authenticateToken,
   requireOwner,
-  async (req: AuthRequest, res) => {
+  asyncRoute<AuthRequest>(async (req: AuthRequest, res) => {
     const fmt = ['xlsx', 'csv', 'json', 'pdf'].includes(req.query.format as string)
       ? (req.query.format as string)
       : 'xlsx';
 
-    const exportTimestamp = new Date().toISOString();
-    db.prepare(
+    // Only data files can be re-imported elsewhere, so only they mark items as
+    // exported, and only once the file has been built (a PDF is a report).
+    const marksExported = fmt !== 'pdf';
+    const exportTimestamp = toSqliteUtc();
+    const markExported = () => {
+      if (!marksExported) return;
+      db.prepare(
+        `
+        UPDATE inventory
+        SET last_exported_at = ?, sync_status = 'exported'
+        WHERE store_id = ?
       `
-      UPDATE inventory
-      SET last_exported_at = ?, sync_status = 'exported'
-      WHERE store_id = ?
-    `
-    ).run(exportTimestamp, req.user.store_id);
+      ).run(exportTimestamp, req.user.store_id);
+    };
 
     const rows = db
       .prepare(
         `
     SELECT i.external_system, i.external_store_id, i.external_category_id,
-           i.external_item_id, i.external_sku, i.item_name, i.description,
+           i.external_item_id, i.external_sku, i.item_name, i.brand, i.description,
            i.quantity, i.unit, i.sale_price, i.tax_percent, i.upc, i.number, i.image,
            i.tag_names, i.status, i.sync_status, i.last_imported_at,
            i.last_exported_at, c.name AS category, i.created_at
@@ -226,7 +393,15 @@ inventoryRouter.get(
     ORDER BY c.name, i.item_name
   `
       )
-      .all(req.user.store_id) as any[];
+      .all(req.user.store_id)
+      .map((row: any) => ({
+        ...row,
+        // The file reflects the state this export records.
+        sync_status: marksExported ? 'exported' : row.sync_status,
+        created_at: toIsoUtc(row.created_at),
+        last_imported_at: toIsoUtc(row.last_imported_at),
+        last_exported_at: toIsoUtc(marksExported ? exportTimestamp : row.last_exported_at),
+      })) as any[];
 
     db.prepare('INSERT INTO logs (action, details, user_id, store_id) VALUES (?, ?, ?, ?)').run(
       'EXPORT',
@@ -244,6 +419,7 @@ inventoryRouter.get(
       { key: 'external_item_id', label: 'external_item_id' },
       { key: 'external_sku', label: 'external_sku' },
       { key: 'item_name', label: 'item_name' },
+      { key: 'brand', label: 'brand' },
       { key: 'description', label: 'description' },
       { key: 'quantity', label: 'quantity' },
       { key: 'unit', label: 'unit' },
@@ -285,27 +461,34 @@ inventoryRouter.get(
         const escaped = /^[=+\-@\t\r]/.test(raw) ? `'${raw}` : raw;
         return `"${escaped.replaceAll('"', '""')}"`;
       };
+      // One header row and data rows only: the category is already a column, and divider
+      // rows would break any system that imports this file.
       const lines: string[] = [EXPORT_COLUMNS.map(column => csvCell(column.label)).join(',')];
-      for (const [cat, items] of grouped) {
-        lines.push(`"### ${cat}"`);
+      for (const items of grouped.values()) {
         for (const r of items)
           lines.push(EXPORT_COLUMNS.map(column => csvCell(r[column.key])).join(','));
       }
+      const body = lines.join('\n');
+      markExported();
       res.setHeader('Content-Type', 'text/csv');
       res.setHeader('Content-Disposition', `attachment; filename="${filename}.csv"`);
-      return res.send(lines.join('\n'));
+      return res.send(body);
     }
 
     if (fmt === 'json') {
+      const body = JSON.stringify(
+        {
+          exported_at: toIsoUtc(exportTimestamp),
+          total: rows.length,
+          items: rows.map(serializeExportRow),
+        },
+        null,
+        2
+      );
+      markExported();
       res.setHeader('Content-Type', 'application/json');
       res.setHeader('Content-Disposition', `attachment; filename="${filename}.json"`);
-      return res.send(
-        JSON.stringify(
-          { exported_at: exportTimestamp, total: rows.length, items: rows.map(serializeExportRow) },
-          null,
-          2
-        )
-      );
+      return res.send(body);
     }
 
     if (fmt === 'pdf') {
@@ -324,7 +507,7 @@ inventoryRouter.get(
         });
       doc.moveDown(1.5);
       for (const [cat, items] of grouped) {
-        doc.fontSize(12).font('Helvetica-Bold').fillColor('#0a192f').text(cat);
+        doc.fontSize(12).font('Helvetica-Bold').fillColor('#214c51').text(cat);
         doc.moveDown(0.3);
         for (const item of items) {
           doc
@@ -359,13 +542,14 @@ inventoryRouter.get(
       for (const r of items) ws.addRow(EXPORT_COLUMNS.map(column => r[column.key] ?? ''));
     }
     const buf = await wb.xlsx.writeBuffer();
+    markExported();
     res.setHeader(
       'Content-Type',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     );
     res.setHeader('Content-Disposition', `attachment; filename="${filename}.xlsx"`);
     res.send(Buffer.from(buf));
-  }
+  })
 );
 
 inventoryRouter.post(
@@ -414,11 +598,16 @@ inventoryRouter.post(
     if (!isCategoryInStore(category_id, user.store_id))
       return res.status(400).json({ error: 'Invalid category' });
 
+    const itemName = item_name.trim();
+    const cleanUpc = typeof upc === 'string' ? upc.trim() : '';
     const existing = db
-      .prepare('SELECT id FROM inventory WHERE item_name = ? AND store_id = ?')
-      .get(item_name, user.store_id);
+      .prepare('SELECT id FROM inventory WHERE LOWER(TRIM(item_name)) = LOWER(?) AND store_id = ?')
+      .get(itemName, user.store_id);
     if (existing) {
       return res.status(409).json({ error: 'Item with this name already exists' });
+    }
+    if (cleanUpc && db.prepare('SELECT 1 FROM inventory WHERE upc = ? AND store_id = ?').get(cleanUpc, user.store_id)) {
+      return res.status(409).json({ error: 'An item with that UPC already exists' });
     }
 
     try {
@@ -433,7 +622,7 @@ inventoryRouter.post(
       `
           )
           .run(
-            item_name,
+            itemName,
             quantityValue.value,
             category_id,
             status ?? 'Active',
@@ -443,12 +632,12 @@ inventoryRouter.post(
             taxValue.value,
             description,
             tag_names,
-            upc || null,
+            cleanUpc || null,
             user.store_id
           );
         db.prepare('INSERT INTO logs (action, details, user_id, store_id) VALUES (?, ?, ?, ?)').run(
           'CREATE',
-          `Added item "${item_name}"`,
+          `Added item "${itemName}"`,
           user.id,
           user.store_id
         );
@@ -459,6 +648,10 @@ inventoryRouter.post(
     } catch (err: any) {
       if (err instanceof UnsupportedImageTypeError) {
         return res.status(400).json({ error: err.message });
+      }
+      // A concurrent insert can still hit the unique (upc, store_id) or item-number index.
+      if (err.message?.includes('UNIQUE')) {
+        return res.status(409).json({ error: 'An item with that UPC or number already exists' });
       }
       logError('inventory:create', err);
       res.status(500).json({ error: 'An internal error occurred' });
@@ -532,7 +725,10 @@ inventoryRouter.put(
       if (item_name !== undefined) assign('item_name', item_name.trim());
       if (quantity !== undefined) assign('quantity', quantityValue.value);
       if (category_id !== undefined)
-        assign('category_id', category_id === '' || category_id === null ? null : Number(category_id));
+        assign(
+          'category_id',
+          category_id === '' || category_id === null ? null : Number(category_id)
+        );
       if (status !== undefined) assign('status', status);
       if (unit !== undefined) assign('unit', unit === '' || unit === null ? null : String(unit));
       if (sale_price !== undefined) assign('sale_price', salePriceValue.value);
@@ -621,94 +817,13 @@ inventoryRouter.delete(
   }
 );
 
-// Batch Import
-inventoryRouter.post(
-  '/inventory/batch',
-  authenticateToken,
-  requireOwner,
-  (req: AuthRequest, res) => {
-    const { items } = req.body;
-    const user = req.user;
-
-    // Guard before iterating — a non-array body (object, string, null) would
-    // throw TypeError inside the transaction and return a misleading 500.
-    if (!Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ error: 'items must be a non-empty array' });
-    }
-
-    const results = { added: 0, updated: 0, errors: [] as string[] };
-
-    const defaultCat = db
-      .prepare('SELECT id FROM categories WHERE store_id = ? LIMIT 1')
-      .get(user.store_id) as any;
-    // A store may legitimately have no categories. category_id is nullable, so
-    // never fall back to a category owned by another tenant.
-    const defaultCatId = defaultCat ? defaultCat.id : null;
-
-    const insertStmt = db.prepare(`
-    INSERT INTO inventory (item_name, quantity, upc, number, tag_names, category_id, description, store_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-    const updateStmt = db.prepare(
-      'UPDATE inventory SET quantity = quantity + ?, updated_at = CURRENT_TIMESTAMP WHERE upc = ? AND store_id = ?'
-    );
-    const checkStmt = db.prepare('SELECT * FROM inventory WHERE upc = ? AND store_id = ?');
-
-    const transaction = db.transaction((batchItems: any[]) => {
-      for (const item of batchItems) {
-        try {
-          if (!isRecord(item)) {
-            results.errors.push('Skipped invalid batch row');
-            continue;
-          }
-          if (!item.upc) continue;
-          const quantity = parseBoundedNonNegativeNumber(item.quantity, 1) ?? 1;
-          const existing = checkStmt.get(item.upc, user.store_id);
-          if (existing) {
-            updateStmt.run(quantity, item.upc, user.store_id);
-            results.updated++;
-          } else {
-            insertStmt.run(
-              item.description || 'Unknown Item',
-              quantity,
-              item.upc,
-              item.number || '',
-              item.tag_names || '',
-              defaultCatId,
-              item.description || '',
-              user.store_id
-            );
-            results.added++;
-          }
-        } catch (err: any) {
-          results.errors.push(`Failed to process UPC ${item.upc}: ${err.message}`);
-        }
-      }
-    });
-
-    try {
-      transaction(items);
-      db.prepare('INSERT INTO logs (action, details, user_id, store_id) VALUES (?, ?, ?, ?)').run(
-        'BATCH',
-        `Processed ${items.length} items`,
-        user.id,
-        user.store_id
-      );
-      res.json(results);
-    } catch (err: any) {
-      logError('inventory:batch', err);
-      res.status(500).json({ error: 'An internal error occurred' });
-    }
-  }
-);
-
 // Batch Upload — parse ALL sheets, return headers + preview + full rows per sheet
 inventoryRouter.post(
   '/inventory/batch-upload',
   authenticateToken,
   requireOwner,
   upload.single('file'),
-  async (req: AuthRequest, res) => {
+  asyncRoute<AuthRequest>(async (req: AuthRequest, res) => {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
     // After receiving the uploaded file, check MIME type
@@ -737,10 +852,13 @@ inventoryRouter.post(
           return res.status(400).json({ error: 'JSON items must be an array of objects' });
         }
         if (rows.length === 0) return res.status(400).json({ error: 'JSON file has no items' });
+        const headers = [...new Set(rows.flatMap(row => Object.keys(row)))];
         const sheets = [
           {
             name: 'Inventory',
-            headers: Object.keys(rows[0]),
+            headers,
+            headerRowNumber: 1,
+            sourceColumnCount: headers.length,
             preview: rows.slice(0, 5),
             rows,
             rowCount: rows.length,
@@ -763,10 +881,13 @@ inventoryRouter.post(
         if (errors.length && data.length === 0)
           return res.status(400).json({ error: 'Could not parse CSV file.' });
         const rows = data as Record<string, any>[];
+        const headers = [...new Set(rows.flatMap(row => Object.keys(row)))];
         const sheets = [
           {
             name: 'Sheet1',
-            headers: rows.length > 0 ? Object.keys(rows[0]) : [],
+            headers,
+            headerRowNumber: 1,
+            sourceColumnCount: headers.length,
             preview: rows.slice(0, 5),
             rows,
             rowCount: rows.length,
@@ -779,20 +900,24 @@ inventoryRouter.post(
       await workbook.xlsx.load(req.file.buffer);
       const sheets = workbook.worksheets
         .map(ws => {
-          const headerRow = (ws.getRow(1).values as any[]).slice(1).map(readImportedString); // exceljs rows are 1-indexed; slice off leading undefined
+          const detectedHeader = detectWorksheetHeader(ws);
+          const headerRow = detectedHeader.columns.map(column => column.header);
           const rows: Record<string, any>[] = [];
           ws.eachRow((row, rowNumber) => {
-            if (rowNumber === 1) return;
-            const vals = (row.values as any[]).slice(1);
+            if (rowNumber <= detectedHeader.rowNumber) return;
             const obj: Record<string, any> = {};
-            headerRow.forEach((header, i: number) => {
-              obj[header] = normalizeImportedCellValue(vals[i]);
+            detectedHeader.columns.forEach(column => {
+              obj[column.header] = normalizeImportedCellValue(
+                row.getCell(column.columnNumber).value
+              );
             });
-            rows.push(obj);
+            if (Object.values(obj).some(value => readImportedString(value))) rows.push(obj);
           });
           return {
             name: ws.name,
             headers: headerRow,
+            headerRowNumber: detectedHeader.rowNumber,
+            sourceColumnCount: detectedHeader.sourceColumnCount,
             preview: rows.slice(0, 5),
             rows,
             rowCount: rows.length,
@@ -810,11 +935,11 @@ inventoryRouter.post(
         .status(400)
         .json({ error: 'Could not parse file. Ensure it is a valid XLSX, CSV, or JSON.' });
     }
-  }
+  })
 );
 
 // Batch Confirm — full sync with per-sheet column mapping
-// Accepts JSON body: { sheetsData: [{ sheetName, rows, mapping }] }
+// Accepts JSON body: { sheetsData: [{ sheetName, categoryName, rows, mapping }] }
 // M-3: Only this route needs large payloads (full sheet rows)
 inventoryRouter.post(
   '/inventory/batch-confirm',
@@ -824,6 +949,7 @@ inventoryRouter.post(
     const { sheetsData } = req.body as {
       sheetsData: {
         sheetName: string;
+        categoryName?: string | null;
         rows: Record<string, any>[];
         mapping: Record<string, string>;
       }[];
@@ -835,12 +961,43 @@ inventoryRouter.post(
         sheet =>
           !isRecord(sheet) ||
           typeof sheet.sheetName !== 'string' ||
+          (sheet.categoryName !== undefined &&
+            sheet.categoryName !== null &&
+            (typeof sheet.categoryName !== 'string' || sheet.categoryName.length > 120)) ||
           !Array.isArray(sheet.rows) ||
           !isRecord(sheet.mapping) ||
+          Object.values(sheet.mapping).some(
+            destination =>
+              typeof destination !== 'string' || !IMPORT_DESTINATION_FIELDS.has(destination)
+          ) ||
           sheet.rows.some(row => !isRecord(row))
       )
     ) {
       return res.status(400).json({ error: 'Invalid sheets data' });
+    }
+
+    for (const sheet of sheetsData) {
+      const destinations = Object.values(sheet.mapping).filter(
+        destination => destination !== '__ignore__'
+      );
+      const duplicateDestination = destinations.find(
+        (destination, index) => destinations.indexOf(destination) !== index
+      );
+      if (duplicateDestination) {
+        return res.status(400).json({
+          error: `Sheet "${sheet.sheetName}" maps more than one column to ${duplicateDestination}.`,
+        });
+      }
+      if (!destinations.some(destination => IMPORT_IDENTIFIER_FIELDS.has(destination))) {
+        return res.status(400).json({
+          error: `Sheet "${sheet.sheetName}" must map UPC, SKU / Item Number, External Item ID, or External SKU.`,
+        });
+      }
+      if (destinations.includes('external_item_id') && !destinations.includes('external_system')) {
+        return res.status(400).json({
+          error: `Sheet "${sheet.sheetName}" maps External Item ID but not External System. Map the column that names the source platform, or unmap External Item ID.`,
+        });
+      }
     }
 
     const user = req.user;
@@ -954,8 +1111,9 @@ inventoryRouter.post(
       if (!trimmed) return null;
       const cacheKey = trimmed.toLowerCase();
       if (categoryIdCache.has(cacheKey)) return categoryIdCache.get(cacheKey) ?? null;
+      // Case-insensitive, so "snacks" in a file reuses the store's "Snacks" category.
       const existing = db
-        .prepare('SELECT id FROM categories WHERE name = ? AND store_id = ?')
+        .prepare('SELECT id FROM categories WHERE LOWER(TRIM(name)) = LOWER(?) AND store_id = ? ORDER BY id LIMIT 1')
         .get(trimmed, user.store_id) as any;
       if (existing) {
         categoryIdCache.set(cacheKey, existing.id);
@@ -977,7 +1135,7 @@ inventoryRouter.post(
       SELECT id FROM inventory
       WHERE external_item_id = ?
         AND store_id = ?
-        AND (? = '' OR external_system = ? OR external_system IS NULL)
+        AND external_system = ?
     `
     );
     const checkUpc = db.prepare('SELECT id FROM inventory WHERE upc = ? AND store_id = ?');
@@ -1019,13 +1177,14 @@ inventoryRouter.post(
     WHERE id = ? AND store_id = ?
   `);
 
-    const isMultiSheetImport = sheetsData.length > 1;
-
     const transaction = db.transaction(() => {
       for (const sheet of sheetsData) {
-        const sheetCatId = !isGenericImportSheetName(sheet.sheetName)
-          ? getCategoryId(sheet.sheetName)
-          : null;
+        const fallbackCategoryName = Object.hasOwn(sheet, 'categoryName')
+          ? readImportedString(sheet.categoryName)
+          : !isGenericImportSheetName(sheet.sheetName)
+            ? sheet.sheetName
+            : '';
+        const sheetCatId = fallbackCategoryName ? getCategoryId(fallbackCategoryName) : null;
 
         for (const [rowIdx, row] of sheet.rows.entries()) {
           const item: Record<string, any> = {};
@@ -1057,34 +1216,44 @@ inventoryRouter.post(
             continue;
           }
 
+          // An external item ID is only an identity together with its source system;
+          // without one it could merge with another platform's item of the same ID.
+          if (externalItemId && !externalSystem) {
+            results.errors.push(
+              `"${itemName || upc || number || externalItemId}": External System is required when External Item ID is set`
+            );
+            continue;
+          }
+
+          const rowLabel = itemName || upc || number || externalItemId || externalSku;
+          const qtyResult = parseImportNumber(item.quantity, 'Quantity', { integer: true });
+          const priceResult = parseImportNumber(item.sale_price, 'Sale price');
+          const taxResult = parseImportNumber(item.tax_percent, 'Tax percent', { max: 100 });
+          const numberError = qtyResult.error ?? priceResult.error ?? taxResult.error;
+          if (numberError) {
+            results.errors.push(`"${rowLabel}": ${numberError}`);
+            continue;
+          }
+
           try {
-            const quantityText = readImportedString(item.quantity);
-            const qty = quantityText
-              ? parseBoundedNonNegativeNumber(item.quantity, null)
-              : null;
-            const salePrice = parseBoundedNonNegativeNumber(item.sale_price, null);
-            const taxPct = parseBoundedNonNegativeNumber(item.tax_percent, null);
+            const qty = qtyResult.value;
+            const salePrice = priceResult.value;
+            const taxPct = taxResult.value;
             const statusText = readImportedString(item.status);
             const status = statusText ? normalizeInventoryStatus(statusText) : null;
             const desc = readImportedString(item.description);
             const unit = readImportedString(item.unit);
             const tags = readImportedString(item.tag_names);
             const rowCategory = readImportedString(item.category);
-            const catId =
-              isMultiSheetImport || !rowCategory ? sheetCatId : getCategoryId(rowCategory);
+            const catId = rowCategory ? getCategoryId(rowCategory) : sheetCatId;
             const rawImage = readImportedString(item.image);
             const normalizedImage = rawImage ? normalizeImageUrl(rawImage) : null;
             const image = normalizedImage ? saveBase64Image(normalizedImage) : null;
-            const importedAt = new Date().toISOString();
+            const importedAt = toSqliteUtc();
 
             const existing: any =
               (externalItemId
-                ? checkExternalItem.get(
-                    externalItemId,
-                    user.store_id,
-                    externalSystem,
-                    externalSystem
-                  )
+                ? checkExternalItem.get(externalItemId, user.store_id, externalSystem)
                 : null) ??
               (upc ? checkUpc.get(upc, user.store_id) : null) ??
               (number ? checkNum.get(number, user.store_id) : null) ??
@@ -1113,10 +1282,16 @@ inventoryRouter.post(
               );
               results.updated++;
             } else {
+              // A new item needs a real name; a placeholder would reach the catalog as if
+              // it were one. Quantity stays empty rather than inventing stock.
+              if (!itemName) {
+                results.errors.push(`"${rowLabel}": Item name is required for a new item`);
+                continue;
+              }
               insertStmt.run(
-                itemName || 'Unknown',
+                itemName,
                 desc,
-                qty ?? 50,
+                qty,
                 unit,
                 salePrice,
                 taxPct,

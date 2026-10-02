@@ -36,10 +36,10 @@ export function MobileScanCameraPanel({
 
       <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
         <div className="w-3/4 h-28 relative">
-          <div className="absolute -top-1 -left-1 w-6 h-6 border-t-2 border-l-2 border-emerald-400" />
-          <div className="absolute -top-1 -right-1 w-6 h-6 border-t-2 border-r-2 border-emerald-400" />
-          <div className="absolute -bottom-1 -left-1 w-6 h-6 border-b-2 border-l-2 border-emerald-400" />
-          <div className="absolute -bottom-1 -right-1 w-6 h-6 border-b-2 border-r-2 border-emerald-400" />
+          <div className="absolute -top-1 -left-1 w-6 h-6 border-t-2 border-l-2 border-brand-400" />
+          <div className="absolute -top-1 -right-1 w-6 h-6 border-t-2 border-r-2 border-brand-400" />
+          <div className="absolute -bottom-1 -left-1 w-6 h-6 border-b-2 border-l-2 border-brand-400" />
+          <div className="absolute -bottom-1 -right-1 w-6 h-6 border-b-2 border-r-2 border-brand-400" />
           <div className="absolute inset-x-4 top-1/2 -translate-y-1/2 h-0.5 bg-red-400/80 shadow-[0_0_8px_rgba(248,113,113,0.8)] animate-pulse" />
         </div>
       </div>

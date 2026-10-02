@@ -11,11 +11,15 @@ interface Props {
   currentPage: number;
   confirmDeleteItemId: number | null;
   deletingItemId: number | null;
+  selectedItemIds: ReadonlySet<number>;
+  selectingAll: boolean;
   onPageSizeChange: (size: 50 | 100 | 200) => void;
   onPageChange: (page: number) => void;
   onConfirmDelete: (id: number | null) => void;
   onDelete: (id: number) => void;
   onEdit: (item: InventoryItem) => void;
+  onToggleItem: (id: number) => void;
+  onToggleSelectAll: () => void;
 }
 
 export function ItemsTable({
@@ -27,17 +31,22 @@ export function ItemsTable({
   currentPage,
   confirmDeleteItemId,
   deletingItemId,
+  selectedItemIds,
+  selectingAll,
   onPageSizeChange,
   onPageChange,
   onConfirmDelete,
   onDelete,
   onEdit,
+  onToggleItem,
+  onToggleSelectAll,
 }: Readonly<Props>) {
   // Items arrive pre-paginated from the server; filter locally only for toolbar search
   const pagedItems = search
     ? items.filter(i => i.item_name.toLowerCase().includes(search.toLowerCase()))
     : items;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const allSelected = total > 0 && selectedItemIds.size === total;
 
   return (
     <>
@@ -45,11 +54,17 @@ export function ItemsTable({
         <table className="w-full text-left">
           <thead className="bg-slate-50 border-b border-slate-200">
             <tr>
-              <th className="px-6 py-4 w-10">
-                <input
-                  type="checkbox"
-                  className="rounded border-slate-300 text-navy-900 focus:ring-navy-700"
-                />
+              <th className="px-6 py-4 whitespace-nowrap">
+                <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    disabled={selectingAll || total === 0}
+                    onChange={onToggleSelectAll}
+                    className="rounded border-slate-300 text-brand-600 focus:ring-brand-400"
+                  />
+                  {selectingAll ? 'Selecting...' : 'Select All'}
+                </label>
               </th>
               <th className="px-6 py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">
                 Item
@@ -78,7 +93,10 @@ export function ItemsTable({
                 <td className="px-6 py-4">
                   <input
                     type="checkbox"
-                    className="rounded border-slate-300 text-navy-900 focus:ring-navy-700"
+                    checked={selectedItemIds.has(item.id)}
+                    onChange={() => onToggleItem(item.id)}
+                    aria-label={`Select ${item.item_name}`}
+                    className="rounded border-slate-300 text-brand-600 focus:ring-brand-400"
                   />
                 </td>
                 <td className="px-6 py-4">
@@ -106,17 +124,25 @@ export function ItemsTable({
                 <td className="px-6 py-4 text-sm font-mono font-medium text-navy-900">
                   {item.quantity}
                 </td>
-                <td className="px-6 py-4 text-sm text-slate-600">{item.category_name}</td>
+                <td className="px-6 py-4">
+                  {item.category_name ? (
+                    <span className="inline-flex items-center rounded-md border border-brand-500 bg-white px-2.5 py-1 text-xs font-medium text-brand-600">
+                      {item.category_name}
+                    </span>
+                  ) : (
+                    <span className="text-sm text-slate-400">—</span>
+                  )}
+                </td>
                 <td className="px-6 py-4">
                   <span
                     className={cn(
-                      'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium',
+                      'inline-flex items-center rounded-md border bg-white px-2.5 py-1 text-xs font-medium',
                       item.status === 'Active'
-                        ? 'bg-emerald-100 text-emerald-800'
-                        : 'bg-slate-100 text-slate-600'
+                        ? 'border-emerald-600 text-emerald-700'
+                        : 'border-red-600 text-red-600'
                     )}
                   >
-                    {item.status}
+                    {item.status === 'Active' ? 'Active' : 'In-Active'}
                   </span>
                 </td>
                 <td className="px-6 py-4 text-sm text-right font-mono text-slate-700">
@@ -188,7 +214,7 @@ export function ItemsTable({
                 className={cn(
                   'px-3 py-1 text-xs font-semibold rounded-md transition-colors',
                   pageSize === size
-                    ? 'bg-navy-900 text-white'
+                    ? 'bg-theme-subtle text-brand-600'
                     : 'text-slate-500 hover:text-navy-900 hover:bg-slate-100'
                 )}
               >
@@ -200,7 +226,7 @@ export function ItemsTable({
             <button
               onClick={() => onPageChange(Math.max(1, currentPage - 1))}
               disabled={currentPage === 1}
-              className="p-1.5 rounded-lg bg-navy-900 text-white hover:bg-navy-700 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+              className="p-1.5 rounded-lg bg-theme-subtle text-brand-600 hover:bg-slate-200 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
             >
               <ChevronLeft size={16} />
             </button>
@@ -210,7 +236,7 @@ export function ItemsTable({
             <button
               onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
               disabled={currentPage === totalPages}
-              className="p-1.5 rounded-lg bg-navy-900 text-white hover:bg-navy-700 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+              className="p-1.5 rounded-lg bg-theme-subtle text-brand-600 hover:bg-slate-200 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
             >
               <ChevronRight size={16} />
             </button>

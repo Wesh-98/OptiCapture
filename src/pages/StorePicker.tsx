@@ -41,7 +41,7 @@ export default function StorePicker() {
         <div className="grid w-full gap-6 lg:grid-cols-[1.1fr_0.9fr]">
           <div className="rounded-3xl bg-white/8 p-8 text-white backdrop-blur">
             <div className="mb-10">
-              <p className="text-sm font-semibold uppercase tracking-[0.24em] text-blue-300">
+              <p className="text-sm font-semibold uppercase tracking-[0.24em] text-brand-400">
                 Choose Store
               </p>
               <h1 className="mt-3 text-4xl font-bold tracking-tight">

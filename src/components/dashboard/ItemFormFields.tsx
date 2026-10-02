@@ -113,7 +113,7 @@ export function ItemFormFields({
         <input
           id="dash-item-qty"
           type="number"
-          value={data.quantity}
+          value={data.quantity ?? ''}
           onChange={e => onChange(prev => ({ ...prev, quantity: parseInt(e.target.value) || 0 }))}
           className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-navy-700 focus:border-transparent"
           required
@@ -147,7 +147,7 @@ export function ItemFormFields({
           required
         >
           <option value="Active">Active</option>
-          <option value="Inactive">Inactive</option>
+          <option value="Inactive">In-Active</option>
         </select>
       </div>
 

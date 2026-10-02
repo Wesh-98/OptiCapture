@@ -238,7 +238,7 @@ describe('POST /api/auth/login — account lockout', () => {
 
   it('locked_until is set in the database after lockout', async () => {
     const user = db.prepare("SELECT locked_until FROM users WHERE username = 'taker'").get() as any;
-    expect(user.locked_until).not.toBeNull();
+    expect(user.locked_until).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
   });
 });
 

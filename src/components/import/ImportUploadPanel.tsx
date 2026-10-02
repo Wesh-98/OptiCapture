@@ -3,9 +3,7 @@ import { AlertTriangle, Loader2, Upload } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { DEST_FIELDS } from './types';
 
-const ACCEPTED_FIELDS = DEST_FIELDS.filter(
-  field => field.value !== '__ignore__' && field.value !== 'category'
-);
+const ACCEPTED_FIELDS = DEST_FIELDS.filter(field => field.value !== '__ignore__');
 
 interface Props {
   isParsing: boolean;
@@ -38,7 +36,7 @@ export function ImportUploadPanel({
           isParsing
             ? 'cursor-not-allowed border-slate-200 bg-slate-50'
             : isDragging
-              ? 'border-blue-500 bg-blue-50'
+              ? 'border-brand-400 bg-theme-subtle'
               : 'border-slate-300 bg-slate-50 hover:bg-slate-100'
         )}
         onDragEnter={event => {
@@ -52,7 +50,7 @@ export function ImportUploadPanel({
         <div className="flex flex-col items-center justify-center px-6 pt-5 pb-6 text-center">
           {isParsing ? (
             <>
-              <Loader2 className="mb-4 h-12 w-12 animate-spin text-navy-700" />
+              <Loader2 className="mb-4 h-12 w-12 animate-spin text-brand-600" />
               <p className="text-sm font-medium text-slate-500">Parsing file...</p>
             </>
           ) : (
@@ -86,7 +84,7 @@ export function ImportUploadPanel({
         </div>
       )}
 
-      <div className="mt-6 rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm text-blue-800">
+      <div className="mt-6 rounded-xl border border-theme-border bg-theme-subtle p-4 text-sm text-brand-600">
         <p className="mb-2 font-bold">Accepted columns (any order, auto-detected):</p>
         <div className="grid grid-cols-2 gap-1 font-mono text-xs opacity-80 md:grid-cols-3">
           {ACCEPTED_FIELDS.map(field => (
@@ -94,7 +92,8 @@ export function ImportUploadPanel({
           ))}
         </div>
         <p className="mt-2 opacity-70">
-          At least UPC or SKU required per row. Multi-sheet: sheet name used as category.
+          Each row needs UPC, SKU / Item Number, External Item ID, or External SKU. For multi-sheet
+          files, a mapped Category value takes priority and the sheet name is the fallback.
         </p>
       </div>
     </div>

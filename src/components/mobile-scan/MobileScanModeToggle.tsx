@@ -14,7 +14,7 @@ export function MobileScanModeToggle({ inputMode, onChange }: MobileScanModeTogg
         onClick={() => onChange('camera')}
         aria-pressed={inputMode === 'camera'}
         className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-semibold transition-colors ${
-          inputMode === 'camera' ? 'bg-emerald-600 text-white' : 'text-slate-500'
+          inputMode === 'camera' ? 'bg-white text-brand-600 shadow-sm' : 'text-slate-500'
         }`}
       >
         <Camera size={16} />
@@ -26,7 +26,7 @@ export function MobileScanModeToggle({ inputMode, onChange }: MobileScanModeTogg
         onClick={() => onChange('manual')}
         aria-pressed={inputMode === 'manual'}
         className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-semibold transition-colors ${
-          inputMode === 'manual' ? 'bg-emerald-600 text-white' : 'text-slate-500'
+          inputMode === 'manual' ? 'bg-white text-brand-600 shadow-sm' : 'text-slate-500'
         }`}
       >
         <Keyboard size={16} />

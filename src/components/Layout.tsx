@@ -103,28 +103,26 @@ export default function Layout({ children }: Readonly<{ children: React.ReactNod
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row">
+    <div className="min-h-screen bg-theme-canvas flex flex-col md:flex-row">
       {/* Desktop Sidebar */}
       <aside
         className={cn(
-          'hidden md:flex flex-col bg-navy-900 text-slate-400 border-r border-navy-800 transition-all duration-300 relative',
+          'hidden md:flex flex-col bg-white text-theme-muted border-r border-theme-border transition-all duration-300 relative',
           isSidebarCollapsed ? 'w-20' : 'w-64'
         )}
       >
-        <div className="p-4 border-b border-navy-800 flex items-center justify-center h-16">
-          <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center text-navy-900 font-bold text-xl shadow-lg">
-            OC
-          </div>
+        <div className="p-4 border-b border-theme-border flex items-center justify-center h-16">
+          <img src="/logo.svg" alt="Inventory Portal logo" className="w-10 h-10 shrink-0 object-contain" />
           {!isSidebarCollapsed && (
             <div className="ml-3 overflow-hidden whitespace-nowrap">
-              <h1 className="text-lg font-bold text-white tracking-tight">OptiCapture</h1>
+              <h1 className="text-lg font-bold text-theme-text tracking-tight">Inventory Portal</h1>
             </div>
           )}
         </div>
 
         <button
           onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-          className="absolute -right-3.5 top-20 bg-navy-700 text-white p-1.5 rounded-full shadow-lg border-2 border-navy-800 hover:bg-navy-600 transition-all duration-200 z-10"
+          className="absolute -right-3.5 top-20 bg-white text-brand-600 p-1.5 rounded-full shadow-md border-2 border-theme-border hover:bg-theme-subtle transition-all duration-200 z-10"
           title={isSidebarCollapsed ? 'Expand menu' : 'Collapse menu'}
         >
           <ChevronRight
@@ -144,35 +142,37 @@ export default function Layout({ children }: Readonly<{ children: React.ReactNod
                 className={cn(
                   'flex items-center gap-3 px-3 py-3 rounded-lg transition-all duration-200 group relative',
                   isActive
-                    ? 'bg-navy-800 text-white shadow-lg shadow-navy-900/50'
-                    : 'hover:bg-navy-800/50 hover:text-slate-200',
+                    ? 'bg-theme-subtle text-brand-600 shadow-sm'
+                    : 'hover:bg-theme-subtle hover:text-theme-text',
                   isSidebarCollapsed ? 'justify-center' : ''
                 )}
                 title={isSidebarCollapsed ? item.label : undefined}
               >
                 <Icon
                   size={24}
-                  className={cn(isActive ? 'text-white' : 'text-slate-400 group-hover:text-white')}
+                  className={cn(
+                    isActive ? 'text-brand-600' : 'text-slate-400 group-hover:text-theme-text'
+                  )}
                 />
                 {!isSidebarCollapsed && (
                   <span className="font-medium whitespace-nowrap">{item.label}</span>
                 )}
 
                 {isActive && (
-                  <div className="absolute right-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-slate-400 rounded-l-full" />
+                  <div className="absolute right-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-brand-400 rounded-l-full" />
                 )}
               </Link>
             );
           })}
         </nav>
 
-        <div className="p-4 border-t border-navy-800">
+        <div className="p-4 border-t border-theme-border">
           <div className="space-y-2">
             {hasMultipleStores && (
               <button
                 onClick={() => void handleLeaveCurrentStore()}
                 className={cn(
-                  'flex items-center gap-3 text-sm text-slate-300 hover:bg-navy-800 rounded-lg transition-colors p-2',
+                  'flex items-center gap-3 text-sm text-theme-muted hover:bg-theme-subtle hover:text-theme-text rounded-lg transition-colors p-2',
                   isSidebarCollapsed ? 'justify-center' : 'w-full'
                 )}
                 title="Leave Current Store"
@@ -185,7 +185,7 @@ export default function Layout({ children }: Readonly<{ children: React.ReactNod
             <button
               onClick={() => void handleLogout()}
               className={cn(
-                'flex items-center gap-3 text-sm text-red-400 hover:bg-navy-800 rounded-lg transition-colors p-2',
+                'flex items-center gap-3 text-sm text-accent-500 hover:bg-accent-50 rounded-lg transition-colors p-2',
                 isSidebarCollapsed ? 'justify-center' : 'w-full'
               )}
               title={hasMultipleStores ? 'Sign Out Completely' : 'Sign Out'}
@@ -201,28 +201,26 @@ export default function Layout({ children }: Readonly<{ children: React.ReactNod
 
       <div className="flex-1 flex flex-col h-screen overflow-hidden">
         {/* Top Header */}
-        <header className="bg-navy-900 border-b border-navy-800 h-16 flex items-center justify-between px-4 md:px-8 z-20">
+        <header className="bg-white border-b border-theme-border h-16 flex items-center justify-between px-4 md:px-8 z-20">
           <div className="flex items-center gap-4 md:hidden">
-            <div className="w-8 h-8 bg-white rounded-md flex items-center justify-center text-navy-900 font-bold">
-              OC
-            </div>
-            <h1 className="text-lg font-bold text-white">OptiCapture</h1>
+            <img src="/logo.svg" alt="Inventory Portal logo" className="w-8 h-8 shrink-0 object-contain" />
+            <h1 className="text-lg font-bold text-theme-text">Inventory Portal</h1>
           </div>
 
           {hasMultipleStores ? (
             <div ref={storeSwitcherRef} className="relative">
               <button
                 onClick={() => setStoreSwitcherOpen(o => !o)}
-                className="hidden md:flex items-center gap-2 text-white font-medium bg-navy-800 px-4 py-2 rounded-full hover:bg-navy-700 transition-colors"
+                className="hidden md:flex items-center gap-2 text-theme-text font-medium bg-theme-subtle px-4 py-2 rounded-full hover:bg-slate-200 transition-colors"
               >
                 {user.store_logo ? (
                   <img
                     src={user.store_logo}
                     alt={currentStoreLabel}
-                    className="w-7 h-7 rounded-full object-cover border border-navy-700"
+                    className="w-7 h-7 rounded-full object-cover border border-theme-border"
                   />
                 ) : (
-                  <Store size={18} className="text-slate-400" />
+                  <Store size={18} className="text-brand-600" />
                 )}
                 <span>{currentStoreLabel}</span>
                 <ChevronDown
@@ -245,7 +243,7 @@ export default function Layout({ children }: Readonly<{ children: React.ReactNod
                       onClick={() => void handleSwitchStore(store.id)}
                       className={cn(
                         'w-full flex items-center gap-3 px-3 py-2.5 hover:bg-slate-50 transition-colors text-left',
-                        store.id === resolvedActiveStoreId && 'bg-slate-50'
+                        store.id === resolvedActiveStoreId && 'bg-theme-subtle text-brand-600'
                       )}
                     >
                       {store.logo ? (
@@ -255,7 +253,7 @@ export default function Layout({ children }: Readonly<{ children: React.ReactNod
                           className="w-8 h-8 rounded-lg object-cover border border-slate-200 flex-shrink-0"
                         />
                       ) : (
-                        <div className="w-8 h-8 rounded-lg bg-navy-100 flex items-center justify-center text-navy-700 font-bold text-sm flex-shrink-0">
+                        <div className="w-8 h-8 rounded-lg bg-theme-subtle flex items-center justify-center text-brand-600 font-bold text-sm flex-shrink-0">
                           {store.name.charAt(0)}
                         </div>
                       )}
@@ -264,7 +262,7 @@ export default function Layout({ children }: Readonly<{ children: React.ReactNod
                         <p className="text-xs text-slate-400 capitalize">{store.role}</p>
                       </div>
                       {store.id === resolvedActiveStoreId && (
-                        <div className="w-2 h-2 rounded-full bg-emerald-500 flex-shrink-0" />
+                        <div className="w-2 h-2 rounded-full bg-brand-400 flex-shrink-0" />
                       )}
                     </button>
                   ))}
@@ -272,15 +270,15 @@ export default function Layout({ children }: Readonly<{ children: React.ReactNod
               )}
             </div>
           ) : (
-            <div className="hidden md:flex items-center gap-2 text-white font-medium bg-navy-800 px-4 py-2 rounded-full">
+            <div className="hidden md:flex items-center gap-2 text-theme-text font-medium bg-theme-subtle px-4 py-2 rounded-full">
               {user.store_logo ? (
                 <img
                   src={user.store_logo}
                   alt={currentStoreLabel}
-                  className="w-7 h-7 rounded-full object-cover border border-navy-700"
+                  className="w-7 h-7 rounded-full object-cover border border-theme-border"
                 />
               ) : (
-                <Store size={18} className="text-slate-400" />
+                <Store size={18} className="text-brand-600" />
               )}
               <span>{currentStoreLabel}</span>
             </div>
@@ -290,17 +288,17 @@ export default function Layout({ children }: Readonly<{ children: React.ReactNod
             <div className="md:hidden">
               <button
                 onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-                className="p-2 text-white"
+                className="p-2 text-theme-text"
               >
                 {isMobileMenuOpen ? <X /> : <Menu />}
               </button>
             </div>
             <div className="hidden md:flex items-center gap-3">
               <div className="text-right">
-                <p className="text-sm font-bold text-white">{user.username}</p>
+                <p className="text-sm font-bold text-theme-text">{user.username}</p>
                 <p className="text-xs text-slate-400 capitalize">{user.role ?? 'user'}</p>
               </div>
-              <div className="w-10 h-10 rounded-full bg-navy-800 flex items-center justify-center text-white font-bold border border-navy-700">
+              <div className="w-10 h-10 rounded-full bg-theme-subtle flex items-center justify-center text-brand-600 font-bold border border-theme-border">
                 {user.username[0].toUpperCase()}
               </div>
             </div>
@@ -314,12 +312,12 @@ export default function Layout({ children }: Readonly<{ children: React.ReactNod
               initial={prefersReducedMotion ? false : { height: 0, opacity: 0 }}
               animate={prefersReducedMotion ? {} : { height: 'auto', opacity: 1 }}
               exit={prefersReducedMotion ? {} : { height: 0, opacity: 0 }}
-              className="md:hidden bg-navy-900 text-slate-300 overflow-hidden absolute top-16 left-0 right-0 z-50 shadow-xl"
+              className="md:hidden bg-white text-theme-muted overflow-hidden absolute top-16 left-0 right-0 z-50 shadow-xl border-b border-theme-border"
             >
               <nav className="p-4 space-y-2">
-                <div className="pb-4 mb-4 border-b border-navy-800">
+                <div className="pb-4 mb-4 border-b border-theme-border">
                   <p className="text-sm text-slate-500 mb-1">Current Store</p>
-                  <div className="flex items-center gap-2 text-white font-medium">
+                  <div className="flex items-center gap-2 text-theme-text font-medium">
                     {user.store_logo ? (
                       <img
                         src={user.store_logo}
@@ -327,13 +325,13 @@ export default function Layout({ children }: Readonly<{ children: React.ReactNod
                         className="w-7 h-7 rounded-full object-cover border border-white"
                       />
                     ) : (
-                      <Store size={18} />
+                      <Store size={18} className="text-brand-600" />
                     )}
                     <span>{currentStoreLabel}</span>
                   </div>
                 </div>
                 {hasMultipleStores && (
-                  <div className="pb-4 mb-4 border-b border-navy-800">
+                  <div className="pb-4 mb-4 border-b border-theme-border">
                     <p className="text-sm text-slate-500 mb-2">Switch Store</p>
                     <div className="space-y-2">
                       {myStores.map(store => (
@@ -347,8 +345,8 @@ export default function Layout({ children }: Readonly<{ children: React.ReactNod
                           className={cn(
                             'w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left',
                             store.id === resolvedActiveStoreId
-                              ? 'bg-navy-800 text-white'
-                              : 'hover:bg-navy-800/50'
+                              ? 'bg-theme-subtle text-brand-600'
+                              : 'hover:bg-theme-subtle hover:text-theme-text'
                           )}
                         >
                           {store.logo ? (
@@ -358,7 +356,7 @@ export default function Layout({ children }: Readonly<{ children: React.ReactNod
                               className="w-8 h-8 rounded-lg object-cover border border-white/20"
                             />
                           ) : (
-                            <div className="w-8 h-8 rounded-lg bg-navy-800 flex items-center justify-center text-white font-bold text-sm">
+                            <div className="w-8 h-8 rounded-lg bg-theme-subtle flex items-center justify-center text-brand-600 font-bold text-sm">
                               {store.name.charAt(0)}
                             </div>
                           )}
@@ -379,8 +377,8 @@ export default function Layout({ children }: Readonly<{ children: React.ReactNod
                     className={cn(
                       'flex items-center gap-3 px-4 py-3 rounded-lg',
                       isNavItemActive(item)
-                        ? 'bg-navy-800 text-white'
-                        : 'hover:bg-navy-800/50'
+                        ? 'bg-theme-subtle text-brand-600'
+                        : 'hover:bg-theme-subtle hover:text-theme-text'
                     )}
                   >
                     <item.icon size={20} />
@@ -390,7 +388,7 @@ export default function Layout({ children }: Readonly<{ children: React.ReactNod
                 {hasMultipleStores && (
                   <button
                     onClick={() => void handleLeaveCurrentStore()}
-                    className="w-full flex items-center gap-3 px-4 py-3 text-slate-200 hover:bg-navy-800/50 rounded-lg mt-4"
+                    className="w-full flex items-center gap-3 px-4 py-3 text-theme-muted hover:bg-theme-subtle hover:text-theme-text rounded-lg mt-4"
                   >
                     <Store size={20} />
                     Leave Current Store
@@ -398,7 +396,7 @@ export default function Layout({ children }: Readonly<{ children: React.ReactNod
                 )}
                 <button
                   onClick={() => void handleLogout()}
-                  className="w-full flex items-center gap-3 px-4 py-3 text-red-400 hover:bg-navy-800/50 rounded-lg mt-4"
+                  className="w-full flex items-center gap-3 px-4 py-3 text-accent-500 hover:bg-accent-50 rounded-lg mt-4"
                 >
                   <LogOut size={20} />
                   {hasMultipleStores ? 'Sign Out Completely' : 'Sign Out'}
@@ -409,7 +407,7 @@ export default function Layout({ children }: Readonly<{ children: React.ReactNod
         </AnimatePresence>
 
         {/* Main Content */}
-        <main className="flex-1 overflow-auto bg-slate-100 p-4 md:p-8">{children}</main>
+        <main className="flex-1 overflow-auto bg-theme-canvas p-4 md:p-8">{children}</main>
       </div>
     </div>
   );

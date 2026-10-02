@@ -235,14 +235,14 @@ export function EditStoreModal({
           <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-slate-200">
             <button
               onClick={onClose}
-              className="px-4 py-2 text-slate-600 hover:text-slate-800 transition-colors text-sm"
+              className="px-4 py-2 border border-accent-500 text-accent-500 hover:bg-accent-50 transition-colors text-sm rounded-lg"
             >
               Cancel
             </button>
             <button
               onClick={onSave}
               disabled={saving || !store.name.trim()}
-              className="px-4 py-2 bg-navy-900 text-white font-medium rounded-lg hover:bg-navy-800 transition-colors text-sm disabled:opacity-50"
+              className="px-4 py-2 bg-brand-600 text-white font-medium rounded-lg hover:bg-brand-700 transition-colors text-sm disabled:opacity-50"
             >
               {saving ? 'Saving...' : 'Save'}
             </button>

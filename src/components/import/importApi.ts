@@ -7,6 +7,7 @@ import type {
   SheetData,
   SkippedRow,
 } from './types';
+import { suggestCategoryName } from './mapping';
 
 const SYNONYMS: Record<AutoDetectField, readonly string[]> = {
   item_name: ['item description', 'product name', 'name', 'title', 'item name', 'description'],
@@ -30,7 +31,6 @@ const SYNONYMS: Record<AutoDetectField, readonly string[]> = {
     'platform item id',
     'platform product id',
     'inventory item id',
-    'product id',
   ],
   external_sku: ['external sku', 'platform sku', 'source sku'],
 };
@@ -157,13 +157,20 @@ function normalizeSheetData(sheet: unknown, index: number): SheetData {
   const headers = normalizeHeaders(sheet.headers);
   const preview = normalizeRecords(sheet.preview);
   const rows = normalizeRecords(sheet.rows);
+  const name =
+    typeof sheet.name === 'string' && sheet.name.trim() ? sheet.name.trim() : `Sheet ${index + 1}`;
 
   return {
-    name:
-      typeof sheet.name === 'string' && sheet.name.trim()
-        ? sheet.name.trim()
-        : `Sheet ${index + 1}`,
+    name,
+    categoryName: suggestCategoryName(name),
     headers,
+    headerRowNumber:
+      typeof sheet.headerRowNumber === 'number' &&
+      Number.isInteger(sheet.headerRowNumber) &&
+      sheet.headerRowNumber >= 1
+        ? sheet.headerRowNumber
+        : null,
+    sourceColumnCount: normalizeRowCount(sheet.sourceColumnCount, headers.length),
     preview,
     rows,
     rowCount: normalizeRowCount(sheet.rowCount, rows.length),
@@ -256,6 +263,7 @@ export async function uploadFile(file: File): Promise<SheetData[]> {
 export async function confirmImport(sheets: readonly SheetData[]): Promise<ImportResult> {
   const sheetsData = sheets.map(sheet => ({
     sheetName: sheet.name,
+    categoryName: sheet.categoryName,
     rows: sheet.rows,
     mapping: sheet.mapping,
   }));
