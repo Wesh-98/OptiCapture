@@ -11,11 +11,13 @@
  *      `nodeServer.listen()`).
  */
 import express from 'express';
+import compression from 'compression';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import path from 'node:path';
 
-import { apiLimiter } from './middleware.js';
+import { db } from './db.js';
+import { apiLimiter, asyncRoute } from './middleware.js';
 import { UPLOADS_DIR } from './helpers.js';
 import { authRouter } from './routes/auth.js';
 import { adminRouter } from './routes/admin.js';
@@ -51,13 +53,23 @@ async function readBodyWithLimit(response: Response, maxBytes: number): Promise<
   return Buffer.concat(chunks.map(chunk => Buffer.from(chunk)), total);
 }
 
+export function parseTrustProxy(value: string | undefined): string | number | boolean {
+  const trimmed = value?.trim();
+  if (!trimmed) return 'loopback, linklocal, uniquelocal';
+  if (/^\d+$/.test(trimmed)) return Number(trimmed);
+  if (trimmed === 'true' || trimmed === 'false') return trimmed === 'true';
+  return trimmed;
+}
+
 export function createApp() {
   const app = express();
 
-  // Trust the first proxy hop — the tunnel (ngrok/cloudflare) in dev,
-  // nginx/Cloudflare in prod. Without this, express-rate-limit throws
-  // ERR_ERL_UNEXPECTED_X_FORWARDED_FOR when the tunnel injects X-Forwarded-For.
-  app.set('trust proxy', 1);
+  // Trust X-Forwarded-For only from proxies on loopback or private networks: the local
+  // tunnel in dev, a load balancer inside the VPC in production. A fixed hop count (the
+  // old `1`) trusted the header from anyone, so a client reaching the app directly could
+  // pick its own IP and sidestep every rate limit. TRUST_PROXY overrides this for other
+  // proxy chains, e.g. "2" for CloudFront in front of an ALB.
+  app.set('trust proxy', parseTrustProxy(process.env.TRUST_PROXY));
 
   // ── Security headers ────────────────────────────────────────────────────────
   const isProd = process.env.NODE_ENV === 'production';
@@ -92,6 +104,22 @@ export function createApp() {
       referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
     })
   );
+
+  // Gzip responses: the phone scan page's scripts shrink by roughly two thirds, which is
+  // most of its load time on store Wi-Fi or mobile data.
+  app.use(compression());
+
+  // Load-balancer health check: unauthenticated, outside the rate limiter, and it fails
+  // when the database cannot answer so an unhealthy instance leaves rotation.
+  app.get('/api/health', (_req, res) => {
+    try {
+      db.prepare('SELECT 1').get();
+      res.json({ status: 'ok' });
+    } catch (error) {
+      logError('health', error, 'Database health check failed');
+      res.status(503).json({ status: 'unavailable' });
+    }
+  });
 
   // Reject excessive API traffic before spending work parsing request bodies.
   app.use('/api', apiLimiter);
@@ -136,7 +164,7 @@ export function createApp() {
   // Fetches Drive thumbnails server-side so the browser never follows a
   // cross-origin redirect. Only alphanumeric Drive file IDs are accepted to
   // prevent SSRF — any other character causes an immediate 400.
-  app.get('/api/drive-image/:fileId', async (req, res) => {
+  app.get('/api/drive-image/:fileId', asyncRoute(async (req, res) => {
     const { fileId } = req.params;
     if (!/^[a-zA-Z0-9_-]+$/.test(fileId)) return res.status(400).end();
 
@@ -179,7 +207,7 @@ export function createApp() {
     } finally {
       clearTimeout(timeout);
     }
-  });
+  }));
 
   // ── API routes ───────────────────────────────────────────────────────────────
   // apiLimiter applies to every /api/* request (2000 req / 15 min per IP).
@@ -208,6 +236,9 @@ export function createApp() {
         method: _req.method,
         path: _req.path,
       });
+      // A response already under way (e.g. a streamed PDF) cannot become a JSON error;
+      // Express's default handler closes the connection instead.
+      if (res.headersSent) return _next(err);
       res.status(500).json({ error: 'An internal error occurred' });
     }
   );

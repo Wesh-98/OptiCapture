@@ -1,7 +1,8 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import { db } from '../db.js';
-import { authenticateToken } from '../middleware.js';
+import { authenticateToken, asyncRoute } from '../middleware.js';
+import { BCRYPT_COST } from '../cache.js';
 import {
   generateTempPassword,
   normalizeUsername,
@@ -109,7 +110,7 @@ adminRouter.post(
   '/stores/:id/users',
   authenticateToken,
   requireSuperadmin,
-  async (req: AuthRequest, res) => {
+  asyncRoute<AuthRequest>(async (req: AuthRequest, res) => {
     const { username, role, mode, email } = req.body ?? {};
     const storeId = Number.parseInt(req.params.id);
     if (Number.isNaN(storeId)) return res.status(400).json({ error: 'Invalid store ID' });
@@ -158,7 +159,7 @@ adminRouter.post(
       // Newly created store users start with a one-time password and must replace it
       // themselves after the first sign-in.
       const tempPassword = generateTempPassword();
-      const passwordHash = await bcrypt.hash(tempPassword, 12);
+      const passwordHash = await bcrypt.hash(tempPassword, BCRYPT_COST);
 
       try {
         const createdAccess = db.transaction(() => {
@@ -259,7 +260,7 @@ adminRouter.post(
       .json(
         createdAccess ?? { id: user.id, username: user.username, email: user.email ?? null, role }
       );
-  }
+  })
 );
 
 // Super admin — revoke a user's access to a store
@@ -366,9 +367,10 @@ adminRouter.put('/stores/:id', authenticateToken, requireSuperadmin, (req: AuthR
     return res.status(403).json({ error: 'The HQ store is managed internally' });
   }
   const { name, street, city, zipcode, state, phone, email, logo } = req.body;
-  const stringFields = { name, street, city, zipcode, state, phone, email, logo };
+  const stringFields = { name, street, city, zipcode, state, phone, email };
   if (
-    Object.values(stringFields).some(value => value !== undefined && typeof value !== 'string')
+    Object.values(stringFields).some(value => value !== undefined && typeof value !== 'string') ||
+    (logo !== undefined && logo !== null && typeof logo !== 'string')
   ) {
     return res.status(400).json({ error: 'Store fields must be strings' });
   }
@@ -395,9 +397,12 @@ adminRouter.put('/stores/:id', authenticateToken, requireSuperadmin, (req: AuthR
     return res.status(400).json({ error: 'Zipcode format: 12345 or 12345-6789' });
   }
   try {
-    const savedLogo = logo ? saveBase64Image(logo) : null;
+    // An omitted logo keeps the current one; null or an empty string clears it.
+    const savedLogo = logo === undefined ? undefined : logo ? saveBase64Image(logo) : null;
     db.prepare(
-      'UPDATE stores SET name = ?, street = ?, city = ?, zipcode = ?, state = ?, phone = ?, email = ?, logo = ? WHERE id = ?'
+      `UPDATE stores SET name = ?, street = ?, city = ?, zipcode = ?, state = ?, phone = ?, email = ?${
+        savedLogo === undefined ? '' : ', logo = ?'
+      } WHERE id = ?`
     ).run(
       name.trim(),
       street || null,
@@ -406,7 +411,7 @@ adminRouter.put('/stores/:id', authenticateToken, requireSuperadmin, (req: AuthR
       state || null,
       phone || null,
       email || null,
-      savedLogo,
+      ...(savedLogo === undefined ? [] : [savedLogo]),
       storeId
     );
     db.prepare('UPDATE users SET store_name = ? WHERE store_id = ?').run(name.trim(), storeId);
@@ -435,7 +440,7 @@ adminRouter.post(
   '/users/:userId/reset-password',
   authenticateToken,
   requireSuperadmin,
-  async (req: AuthRequest, res) => {
+  asyncRoute<AuthRequest>(async (req: AuthRequest, res) => {
     const userId = Number.parseInt(req.params.userId);
     if (Number.isNaN(userId)) return res.status(400).json({ error: 'Invalid user ID' });
 
@@ -445,7 +450,7 @@ adminRouter.post(
     if (!user) return res.status(404).json({ error: 'User not found' });
 
     const tempPassword = generateTempPassword();
-    const hash = await bcrypt.hash(tempPassword, 12);
+    const hash = await bcrypt.hash(tempPassword, BCRYPT_COST);
     db.prepare(
       `
     UPDATE users
@@ -466,5 +471,5 @@ adminRouter.post(
     // Resets also hand back a one-time password and route the user through the same
     // forced password-change flow as a newly created account.
     res.json({ tempPassword, username: user.username });
-  }
+  })
 );

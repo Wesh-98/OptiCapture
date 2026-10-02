@@ -27,6 +27,16 @@ function StatusBadge({ item }: Readonly<{ item: SessionItem }>) {
       </span>
     );
   }
+  if (item.lookup_status === 'invalid_barcode') {
+    return (
+      <span
+        className="px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-700"
+        title="The barcode's check digit is wrong, usually a misread. Rescan it or correct the UPC."
+      >
+        Check barcode
+      </span>
+    );
+  }
   return (
     <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-700">
       Unknown
@@ -165,7 +175,7 @@ export function FeedPanel({
             <div className="relative">
               <button
                 onClick={onOpenDraftPopover}
-                className="px-4 py-2 bg-[#1e3a5f] text-white rounded-xl text-sm font-semibold hover:bg-[#16304f] transition-colors"
+                className="px-4 py-2 bg-theme-text text-white rounded-xl text-sm font-semibold hover:bg-navy-800 transition-colors"
               >
                 Save as Draft
               </button>
@@ -286,10 +296,7 @@ export function FeedPanel({
 
       {/* Committed (read-only) banner */}
       {sessionStatus === 'completed' && (
-        <div
-          className="flex items-center gap-3 px-4 py-3 rounded-xl text-sm mx-4"
-          style={{ background: '#eef2f8', border: '1px solid #b6c8e0', color: '#1e3a5f' }}
-        >
+        <div className="flex items-center gap-3 px-4 py-3 rounded-xl text-sm mx-4 bg-theme-subtle border border-theme-border text-brand-600">
           <span className="text-lg">Done</span>
           <span className="flex-1">
             {sessionLabel ? (
@@ -463,13 +470,17 @@ export function FeedPanel({
                           <StatusBadge item={item} />
                           {sessionStatus !== 'completed' && (
                             <>
-                              <button
-                                onClick={() => onEditItem(item)}
-                                className="p-1 text-slate-400 hover:text-navy-700 hover:bg-slate-100 rounded transition-colors"
-                                title="Edit item"
-                              >
-                                <Pencil size={13} />
-                              </button>
+                              {/* Existing catalog items are only marked as seen on commit;
+                                  their details are edited from the dashboard. */}
+                              {item.exists_in_inventory !== 1 && (
+                                <button
+                                  onClick={() => onEditItem(item)}
+                                  className="p-1 text-slate-400 hover:text-navy-700 hover:bg-slate-100 rounded transition-colors"
+                                  title="Edit item"
+                                >
+                                  <Pencil size={13} />
+                                </button>
+                              )}
                               <button
                                 onClick={() => onDeleteItem(item.id)}
                                 className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"

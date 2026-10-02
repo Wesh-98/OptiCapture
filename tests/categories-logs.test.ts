@@ -65,6 +65,10 @@ describe('categories routes', () => {
 
     const categoriesRes = await request.get('/api/categories').set('Cookie', adminCookie);
     const statsRes = await request.get('/api/dashboard/stats').set('Cookie', adminCookie);
+    const categoryStatsRes = await request
+      .get('/api/dashboard/stats')
+      .set('Cookie', adminCookie)
+      .query({ category_id: seededCategory });
 
     expect(categoriesRes.status).toBe(200);
     expect(categoriesRes.body.some((entry: any) => entry.name === 'Inventory')).toBe(false);
@@ -74,6 +78,12 @@ describe('categories routes', () => {
     expect(statsRes.status).toBe(200);
     expect(statsRes.body).toEqual({
       totalCategories: baselineCategoryCount,
+      totalItems: 2,
+      inStock: 1,
+      outOfStock: 1,
+    });
+    expect(categoryStatsRes.status).toBe(200);
+    expect(categoryStatsRes.body).toMatchObject({
       totalItems: 2,
       inStock: 1,
       outOfStock: 1,
@@ -165,7 +175,7 @@ describe('categories routes', () => {
     expect(validRes.status).toBe(200);
   });
 
-  it('cascades inventory status when a category is marked inactive', async () => {
+  it('cascades inventory status when a category status changes', async () => {
     const categoryName = nextName('Test Category');
     const createRes = await request
       .post('/api/categories')
@@ -191,6 +201,18 @@ describe('categories routes', () => {
       | { status: string }
       | undefined;
     expect(row?.status).toBe('Inactive');
+
+    const activeRes = await request
+      .put(`/api/categories/${categoryId}/status`)
+      .set('Cookie', adminCookie)
+      .send({ status: 'Active' });
+
+    expect(activeRes.status).toBe(200);
+
+    const reactivatedRow = db
+      .prepare('SELECT status FROM inventory WHERE category_id = ?')
+      .get(categoryId) as { status: string } | undefined;
+    expect(reactivatedRow?.status).toBe('Active');
   });
 
   it('deletes category items only when using the dedicated endpoint', async () => {

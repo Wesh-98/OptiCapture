@@ -281,11 +281,23 @@ export function getSubmitScanGuard(
   return null;
 }
 
+// One ID per physical scan. Retries reuse it so the server counts the scan once even when
+// the first response was lost.
+export function newScanId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+export const SCAN_RETRY_DELAYS_MS = [600, 1200];
+
 export function buildSubmitScanRequest(
   sessionId: string,
   otp: string | null,
   upc: string,
-  itemName?: string
+  itemName?: string,
+  scanId?: string
 ): {
   url: string;
   init: FetchInit;
@@ -296,9 +308,27 @@ export function buildSubmitScanRequest(
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json', 'X-Device-Id': getDeviceId() },
-      body: JSON.stringify({ upc, otp, item_name: itemName || undefined }),
+      body: JSON.stringify({ upc, otp, item_name: itemName || undefined, scan_id: scanId }),
     },
   };
+}
+
+// Network failures (no response) are retried with the same request; an HTTP error is an
+// answer from the server and is returned as is.
+export async function fetchWithScanRetry(
+  url: string,
+  init: FetchInit,
+  delaysMs: readonly number[] = SCAN_RETRY_DELAYS_MS,
+  doFetch: (url: string, init: FetchInit) => Promise<Response> = (u, i) => fetch(u, i)
+): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await doFetch(url, init);
+    } catch (error) {
+      if (attempt >= delaysMs.length) throw error;
+      await new Promise(resolve => globalThis.setTimeout(resolve, delaysMs[attempt]));
+    }
+  }
 }
 
 export function evaluateCameraIdleProgress(
@@ -425,8 +455,8 @@ export function useMobileScan({ sessionId, otp }: UseMobileScanOptions) {
           return false;
         }
 
-        const request = buildSubmitScanRequest(activeSessionId, otp, upc, itemName);
-        const res = await fetch(request.url, request.init);
+        const request = buildSubmitScanRequest(activeSessionId, otp, upc, itemName, newScanId());
+        const res = await fetchWithScanRetry(request.url, request.init);
 
         const raw = await res.text();
         const payload = parseScanResponsePayload(raw);

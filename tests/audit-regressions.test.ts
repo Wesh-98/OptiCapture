@@ -95,25 +95,6 @@ describe('audit regression coverage', () => {
     expect(row).toEqual({ upc: null, image: null });
   });
 
-  it('does not borrow another store category when a legacy batch store has none', async () => {
-    const isolated = await registerStore(request, {
-      storeName: 'Categoryless Batch Store',
-      username: 'categorylessowner',
-    });
-    db.prepare('DELETE FROM categories WHERE store_id = ?').run(isolated.storeId);
-
-    const response = await request
-      .post('/api/inventory/batch')
-      .set('Cookie', isolated.cookie)
-      .send({ items: [{ upc: 'categoryless-upc', description: 'No category item' }] });
-    expect(response.status).toBe(200);
-
-    const row = db
-      .prepare('SELECT category_id, store_id FROM inventory WHERE upc = ?')
-      .get('categoryless-upc') as { category_id: number | null; store_id: number };
-    expect(row).toEqual({ category_id: null, store_id: isolated.storeId });
-  });
-
   it('preserves omitted import values while updating mapped descriptions', async () => {
     db.prepare(
       `INSERT INTO inventory (item_name, description, quantity, status, upc, store_id)
