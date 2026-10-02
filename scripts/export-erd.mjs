@@ -2,6 +2,8 @@ import Database from 'better-sqlite3';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
+const byName = (a, b) => a.localeCompare(b);
+
 const schemaPath = fileURLToPath(new URL('../docs/database-schema.sql', import.meta.url));
 const outputPath = fileURLToPath(new URL('../docs/opticapture-erd.svg', import.meta.url));
 const TEAL = '#287f87';
@@ -18,8 +20,8 @@ const schemaTables = db
   .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
   .all()
   .map(row => row.name)
-  .sort();
-const layoutTables = layout.flat().sort();
+  .sort(byName);
+const layoutTables = layout.flat().sort(byName);
 if (JSON.stringify(schemaTables) !== JSON.stringify(layoutTables)) {
   throw new Error('ERD layout must include every schema table exactly once');
 }
@@ -83,8 +85,8 @@ const edges = [
 ];
 const actualEdges = layout.flat().flatMap(child =>
   db.pragma(`foreign_key_list(${child})`).map(key => `${key.table}/${child}/${key.from}`)
-).sort();
-const drawnEdges = edges.map(edge => edge.join('/')).sort();
+).sort(byName);
+const drawnEdges = edges.map(edge => edge.join('/')).sort(byName);
 if (JSON.stringify(actualEdges) !== JSON.stringify(drawnEdges)) {
   throw new Error('ERD connections do not match the schema foreign keys');
 }

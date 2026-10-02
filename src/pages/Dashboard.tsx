@@ -66,8 +66,8 @@ export default function Dashboard() {
 
   // Initial fetch
   useEffect(() => {
-    cats.fetchCategories();
-    fetchActiveSessions();
+    void cats.fetchCategories();
+    void fetchActiveSessions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

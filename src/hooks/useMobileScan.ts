@@ -284,10 +284,12 @@ export function getSubmitScanGuard(
 // One ID per physical scan. Retries reuse it so the server counts the scan once even when
 // the first response was lost.
 export function newScanId(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+  if (typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
   }
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+  // randomUUID needs a secure context; getRandomValues does not.
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
 }
 
 export const SCAN_RETRY_DELAYS_MS = [600, 1200];
