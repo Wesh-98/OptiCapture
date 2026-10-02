@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { ChevronDown, X } from 'lucide-react';
+import { parseServerDate } from '../../lib/utils';
 import type { ActiveSession } from './types';
 
 interface SessionCardProps {
@@ -14,7 +15,7 @@ function SessionCard({ session: s, onDelete, now }: Readonly<SessionCardProps>) 
   const isCompleted = s.status === 'completed';
   const itemWord = s.item_count === 1 ? 'item' : 'items';
   const lastActivity = s.last_scan_at || s.created_at;
-  const diffMs = now - new Date(lastActivity).getTime();
+  const diffMs = now - parseServerDate(lastActivity).getTime();
   const diffMin = Math.floor(diffMs / 60000);
   const isToday = diffMs < 24 * 60 * 60 * 1000;
   const timeAgo =
@@ -25,7 +26,7 @@ function SessionCard({ session: s, onDelete, now }: Readonly<SessionCardProps>) 
         : `${Math.floor(diffMin / 1440)}d ago`;
 
   const cardClass = isCompleted
-    ? 'bg-[#eef2f8] border border-[#b6c8e0] border-l-[#1e3a5f]'
+    ? 'bg-theme-subtle border border-theme-border border-l-brand-400'
     : !isToday
       ? 'bg-slate-50 border border-slate-200 border-l-slate-400 opacity-75'
       : isActive
@@ -33,19 +34,19 @@ function SessionCard({ session: s, onDelete, now }: Readonly<SessionCardProps>) 
         : 'bg-amber-50/60 border border-amber-200 border-l-amber-500';
 
   const dotClass = isCompleted
-    ? 'bg-[#1e3a5f]'
+    ? 'bg-brand-400'
     : isActive
       ? 'bg-emerald-500 animate-pulse'
       : 'bg-amber-400';
   const labelClass = isCompleted
-    ? 'text-[#1e3a5f]'
+    ? 'text-brand-600'
     : isActive
       ? 'text-emerald-800'
       : 'text-amber-800';
   const statusText = isCompleted ? 'Committed' : isActive ? 'Scanning' : 'Draft';
   const btnLabel = isCompleted ? 'View' : isActive ? 'Open' : 'Review';
   const btnClass = isCompleted
-    ? 'bg-[#1e3a5f] text-white hover:bg-[#16304f]'
+    ? 'bg-theme-text text-white hover:bg-navy-800'
     : !isToday
       ? 'bg-slate-500 text-white hover:bg-slate-600'
       : isActive
@@ -112,7 +113,7 @@ export function SessionsSection({
     <div className="border border-slate-200 rounded-xl bg-white overflow-hidden">
       <div className="flex items-center justify-between px-4 py-3">
         <button onClick={onToggle} className="flex items-center gap-2 flex-1">
-          <span className="text-sm font-semibold" style={{ color: '#1e3a5f' }}>
+          <span className="text-sm font-semibold text-brand-600">
             Scan Sessions
           </span>
           <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">
@@ -125,7 +126,7 @@ export function SessionsSection({
         </button>
         <button
           onClick={onNewScan}
-          className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-[#1e3a5f] text-white hover:bg-[#16304f] transition-colors shrink-0"
+          className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-theme-text text-white hover:bg-navy-800 transition-colors shrink-0"
         >
           + New Scan
         </button>

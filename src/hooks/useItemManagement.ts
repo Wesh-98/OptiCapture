@@ -6,6 +6,7 @@ import { readFileAsDataUrl } from '../lib/imageUpload';
 export function useItemManagement(
   viewMode: 'categories' | 'items',
   selectedCategoryId: number | null,
+  selectedStatus: '' | 'Active' | 'Inactive',
   onStatsChange: () => void,
   addToast: (type: 'success' | 'error' | 'warning', message: string) => void
 ) {
@@ -21,7 +22,12 @@ export function useItemManagement(
   const [exportFormat, setExportFormat] = useState<'xlsx' | 'csv' | 'json' | 'pdf'>('xlsx');
   const [exporting, setExporting] = useState(false);
 
-  const fetchItems = async (categoryId: number | null, page = 1, limit = 50) => {
+  const fetchItems = async (
+    categoryId: number | null,
+    page = 1,
+    limit = 50,
+    status = selectedStatus
+  ) => {
     const params = new URLSearchParams({
       page: String(page),
       limit: String(limit),
@@ -29,6 +35,10 @@ export function useItemManagement(
 
     if (categoryId !== null) {
       params.set('category_id', String(categoryId));
+    }
+
+    if (status) {
+      params.set('status', status);
     }
 
     const res = await fetch(`/api/inventory?${params.toString()}`, { credentials: 'include' });

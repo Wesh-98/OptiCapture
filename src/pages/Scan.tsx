@@ -98,7 +98,7 @@ export default function Scan() {
           disabled={
             session.sessionLoading || session.isRefreshing || session.uiStatus === 'committing'
           }
-          className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+          className="flex items-center gap-2 px-4 py-2 bg-brand-600 border border-brand-600 rounded-lg text-white hover:bg-brand-700 hover:border-brand-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
         >
           {session.isRefreshing ? (
             <Loader2 size={16} className="animate-spin" />

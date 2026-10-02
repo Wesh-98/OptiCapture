@@ -1,12 +1,45 @@
 @import 'tailwindcss';
 
 @theme {
-  --color-navy-900: #0a192f;
-  --color-navy-800: #112240;
-  --color-navy-700: #233554;
-  --color-slate-300: #8892b0;
-  --color-slate-400: #a8b2d1;
-  --color-slate-500: #6b7a9f;
+  /* Legacy navy utilities now resolve to the reference site's neutral surfaces. */
+  --color-navy-50: #fafafa;
+  --color-navy-100: #f4f4f4;
+  --color-navy-200: #eeeeee;
+  --color-navy-300: #d9d9d9;
+  --color-navy-400: #acacac;
+  --color-navy-500: #999999;
+  --color-navy-600: #7a7a7a;
+  --color-navy-700: #666666;
+  --color-navy-800: #333333;
+  --color-navy-900: #212121;
+  --color-navy-950: #171717;
+
+  /* Teal is intentionally an accent: selected text, focus, and prominent icons. */
+  --color-brand-50: #f1fbfc;
+  --color-brand-100: #d9f4f6;
+  --color-brand-200: #b7e9ed;
+  --color-brand-400: #58c6ce;
+  --color-brand-500: #45b8c1;
+  --color-brand-600: #287f87;
+  --color-brand-700: #245f64;
+
+  --color-accent-50: #fff5f4;
+  --color-accent-100: #fde3e1;
+  --color-accent-400: #d45b53;
+  --color-accent-500: #c54038;
+  --color-accent-600: #b2362e;
+  --color-accent-700: #922f29;
+
+  --color-theme-canvas: #f4f4f4;
+  --color-theme-surface: #ffffff;
+  --color-theme-subtle: #fafafa;
+  --color-theme-border: #d9d9d9;
+  --color-theme-text: #333333;
+  --color-theme-muted: #7a7a7a;
+
+  --color-slate-300: #acacac;
+  --color-slate-400: #999999;
+  --color-slate-500: #7a7a7a;
 }
 
 @layer base {
@@ -26,7 +59,7 @@
   }
 
   body {
-    background-color: #f8fafc;
+    background-color: #f4f4f4;
     font-family:
       -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell',
       'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;

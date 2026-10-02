@@ -49,15 +49,15 @@ export function ExportModal({
             <button
               key={f.id}
               onClick={() => onFormatChange(f.id)}
-              className={`p-3 rounded-xl border text-left transition-colors ${exportFormat === f.id ? 'bg-navy-900 border-navy-900' : 'border-slate-200 hover:bg-slate-50'}`}
+              className={`p-3 rounded-xl border text-left transition-colors ${exportFormat === f.id ? 'bg-theme-subtle border-brand-400' : 'border-slate-200 hover:bg-slate-50'}`}
             >
               <p
-                className={`text-sm font-semibold ${exportFormat === f.id ? 'text-white' : 'text-slate-800'}`}
+                className={`text-sm font-semibold ${exportFormat === f.id ? 'text-brand-600' : 'text-slate-800'}`}
               >
                 {f.label}
               </p>
               <p
-                className={`text-xs mt-0.5 ${exportFormat === f.id ? 'text-slate-300' : 'text-slate-400'}`}
+                className={`text-xs mt-0.5 ${exportFormat === f.id ? 'text-theme-muted' : 'text-slate-400'}`}
               >
                 {f.desc}
               </p>
@@ -67,14 +67,14 @@ export function ExportModal({
         <div className="flex gap-2">
           <button
             onClick={onClose}
-            className="flex-1 px-4 py-2 rounded-lg border border-slate-300 text-sm text-slate-600 hover:bg-slate-50 transition-colors"
+            className="flex-1 px-4 py-2 rounded-lg border border-accent-500 text-sm text-accent-500 hover:bg-accent-50 transition-colors"
           >
             Cancel
           </button>
           <button
             onClick={onExport}
             disabled={exporting}
-            className="flex-1 px-4 py-2 rounded-lg bg-navy-900 text-white text-sm font-medium hover:bg-navy-800 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
+            className="flex-1 px-4 py-2 rounded-lg bg-brand-600 text-white text-sm font-medium hover:bg-brand-700 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
           >
             {exporting ? (
               <>

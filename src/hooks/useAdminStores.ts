@@ -7,6 +7,7 @@ import {
   validateZipcode,
 } from '../components/superadmin/types';
 import { isSupportedUploadImageType, SUPPORTED_UPLOAD_IMAGE_ERROR } from '../lib/imageUpload';
+import { parseServerDate } from '../lib/utils';
 
 const MAX_LOGO_BYTES = 2 * 1024 * 1024; // 2 MB
 
@@ -203,7 +204,8 @@ export function useAdminStores() {
       return true;
     })
     .sort((a, b) => {
-      const diff = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+      const diff =
+        parseServerDate(a.created_at).getTime() - parseServerDate(b.created_at).getTime();
       return joinedSort === 'newest' ? -diff : diff;
     });
 

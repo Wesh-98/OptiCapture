@@ -61,7 +61,7 @@ export function StoreInfoCard({
     <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
       <div className="flex items-center gap-3 mb-5">
         <div className="w-9 h-9 rounded-lg bg-navy-50 flex items-center justify-center">
-          <Store size={18} className="text-navy-700" />
+          <Store size={18} className="text-brand-600" />
         </div>
         <div>
           <h2 className="text-base font-bold text-navy-900">Store Information</h2>

@@ -1,0 +1,629 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1936" height="2883" viewBox="0 0 1936 2883" role="img" aria-labelledby="title desc">
+<title id="title">OptiCapture database entity relationship diagram</title>
+<desc id="desc">Complete current SQLite schema with column types, nullability, defaults, keys, indexes, seven enforced relationships, and four app-level associations.</desc>
+<defs>
+  <marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M 0 0 L 9 4.5 L 0 9 Z" fill="#c54038"/></marker>
+  <style><![CDATA[
+    text { font-family: Inter, Segoe UI, Arial, sans-serif; }
+    .title { font-size: 33px; font-weight: 750; fill: #212121; }
+    .subtitle { font-size: 14px; fill: #666666; }
+    .table { font-size: 20px; font-weight: 700; fill: #ffffff; }
+    .count { font-size: 12px; fill: #d9f4f6; }
+    .field { font-size: 14px; font-weight: 600; fill: #333333; }
+    .type { font-size: 12px; fill: #555555; }
+    .badge { font-size: 11px; font-weight: 700; fill: #287f87; }
+    .detail { font-size: 11.5px; fill: #666666; }
+    .section { font-size: 12px; font-weight: 700; fill: #245f64; }
+    .index { font-size: 11.5px; fill: #333333; }
+    .note { font-size: 12.5px; fill: #333333; }
+    .note-title { font-size: 16px; font-weight: 700; fill: #a63d37; }
+  ]]></style>
+</defs>
+<rect width="1936" height="2883" fill="#f8fbfb"/>
+<text x="56" y="60" class="title">OptiCapture database ERD</text>
+<text x="56" y="88" class="subtitle">Current SQLite schema · 9 tables · 15 named indexes · 7 enforced foreign keys</text>
+<text x="1880" y="60" class="subtitle" text-anchor="end">Red arrow: 1 → many, pointing to the FK table</text>
+<text x="1880" y="86" class="subtitle" text-anchor="end">NULLABLE / NOT NULL reflect SQLite column declarations</text>
+<rect x="56" y="111" width="1824" height="1" fill="#d9e8e9"/>
+<path d="M 631 277.5 H 656 V 433.5 H 680" fill="none" stroke="#c54038" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M 343.5 180 V 142 H 1279 V 969 H 967.5 V 1001" fill="none" stroke="#c54038" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M 343.5 837 V 941" fill="none" stroke="#c54038" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M 56 277.5 H 28 V 1475 H 56" fill="none" stroke="#c54038" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M 967.5 897 V 1001" fill="none" stroke="#c54038" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M 343.5 1306 V 1410" fill="none" stroke="#c54038" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M 1591.5 721 V 825" fill="none" stroke="#c54038" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<g id="table-stores">
+<rect x="56" y="180" width="575" height="657" rx="12" fill="#ffffff" stroke="#b7e9ed" stroke-width="1.5"/>
+<path d="M 68 180 H 619 Q 631 180 631 192 V 230 H 56 V 192 Q 56 180 68 180" fill="#287f87"/>
+<text x="74" y="212" class="table">stores</text>
+<text x="613" y="211" text-anchor="end" class="count">13 columns</text>
+<rect x="57" y="230" width="573" height="28" fill="#e9f7f8"/>
+<text x="72" y="249" class="section">COLUMN</text>
+<text x="361" y="249" class="section">TYPE</text>
+<text x="461" y="249" class="section">NULL?</text>
+<text x="615" y="249" text-anchor="end" class="section">KEY</text>
+<text x="72" y="275" class="field">id</text>
+<text x="361" y="275" class="type">INTEGER</text>
+<text x="461" y="275" class="type">NOT NULL</text>
+<text x="615" y="275" class="badge" text-anchor="end">PK</text>
+<text x="72" y="291" class="detail">default: none</text>
+<rect x="57" y="297" width="573" height="39" fill="#f5fbfb"/>
+<text x="72" y="314" class="field">name</text>
+<text x="361" y="314" class="type">TEXT</text>
+<text x="461" y="314" class="type">NOT NULL</text>
+<text x="72" y="330" class="detail">default: none</text>
+<text x="72" y="353" class="field">created_at</text>
+<text x="361" y="353" class="type">DATETIME</text>
+<text x="461" y="353" class="type">NULLABLE</text>
+<text x="72" y="369" class="detail">default: CURRENT_TIMESTAMP</text>
+<rect x="57" y="375" width="573" height="39" fill="#f5fbfb"/>
+<text x="72" y="392" class="field">street</text>
+<text x="361" y="392" class="type">TEXT</text>
+<text x="461" y="392" class="type">NULLABLE</text>
+<text x="72" y="408" class="detail">default: none</text>
+<text x="72" y="431" class="field">zipcode</text>
+<text x="361" y="431" class="type">TEXT</text>
+<text x="461" y="431" class="type">NULLABLE</text>
+<text x="72" y="447" class="detail">default: none</text>
+<rect x="57" y="453" width="573" height="39" fill="#f5fbfb"/>
+<text x="72" y="470" class="field">state</text>
+<text x="361" y="470" class="type">TEXT</text>
+<text x="461" y="470" class="type">NULLABLE</text>
+<text x="72" y="486" class="detail">default: none</text>
+<text x="72" y="509" class="field">logo</text>
+<text x="361" y="509" class="type">TEXT</text>
+<text x="461" y="509" class="type">NULLABLE</text>
+<text x="72" y="525" class="detail">default: none</text>
+<rect x="57" y="531" width="573" height="39" fill="#f5fbfb"/>
+<text x="72" y="548" class="field">address</text>
+<text x="361" y="548" class="type">TEXT</text>
+<text x="461" y="548" class="type">NULLABLE</text>
+<text x="72" y="564" class="detail">default: &apos;&apos;</text>
+<text x="72" y="587" class="field">phone</text>
+<text x="361" y="587" class="type">TEXT</text>
+<text x="461" y="587" class="type">NULLABLE</text>
+<text x="72" y="603" class="detail">default: &apos;&apos;</text>
+<rect x="57" y="609" width="573" height="39" fill="#f5fbfb"/>
+<text x="72" y="626" class="field">email</text>
+<text x="361" y="626" class="type">TEXT</text>
+<text x="461" y="626" class="type">NULLABLE</text>
+<text x="72" y="642" class="detail">default: &apos;&apos;</text>
+<text x="72" y="665" class="field">status</text>
+<text x="361" y="665" class="type">TEXT</text>
+<text x="461" y="665" class="type">NULLABLE</text>
+<text x="72" y="681" class="detail">default: &apos;active&apos;</text>
+<rect x="57" y="687" width="573" height="39" fill="#f5fbfb"/>
+<text x="72" y="704" class="field">store_code</text>
+<text x="361" y="704" class="type">TEXT</text>
+<text x="461" y="704" class="type">NULLABLE</text>
+<text x="72" y="720" class="detail">default: NULL</text>
+<text x="72" y="743" class="field">city</text>
+<text x="361" y="743" class="type">TEXT</text>
+<text x="461" y="743" class="type">NULLABLE</text>
+<text x="72" y="759" class="detail">default: &apos;&apos;</text>
+<rect x="57" y="765" width="573" height="31" fill="#e9f7f8"/>
+<text x="72" y="786" class="section">INDEXES AND UNIQUE CONSTRAINTS</text>
+<text x="72" y="816" class="index">UNIQUE idx_stores_code (store_code)</text>
+</g>
+<g id="table-categories">
+<rect x="56" y="941" width="575" height="365" rx="12" fill="#ffffff" stroke="#b7e9ed" stroke-width="1.5"/>
+<path d="M 68 941 H 619 Q 631 941 631 953 V 991 H 56 V 953 Q 56 941 68 941" fill="#287f87"/>
+<text x="74" y="973" class="table">categories</text>
+<text x="613" y="972" text-anchor="end" class="count">5 columns</text>
+<rect x="57" y="991" width="573" height="28" fill="#e9f7f8"/>
+<text x="72" y="1010" class="section">COLUMN</text>
+<text x="361" y="1010" class="section">TYPE</text>
+<text x="461" y="1010" class="section">NULL?</text>
+<text x="615" y="1010" text-anchor="end" class="section">KEY</text>
+<text x="72" y="1036" class="field">id</text>
+<text x="361" y="1036" class="type">INTEGER</text>
+<text x="461" y="1036" class="type">NOT NULL</text>
+<text x="615" y="1036" class="badge" text-anchor="end">PK</text>
+<text x="72" y="1052" class="detail">default: none</text>
+<rect x="57" y="1058" width="573" height="39" fill="#f5fbfb"/>
+<text x="72" y="1075" class="field">name</text>
+<text x="361" y="1075" class="type">TEXT</text>
+<text x="461" y="1075" class="type">NOT NULL</text>
+<text x="72" y="1091" class="detail">default: none</text>
+<text x="72" y="1114" class="field">status</text>
+<text x="361" y="1114" class="type">TEXT</text>
+<text x="461" y="1114" class="type">NULLABLE</text>
+<text x="72" y="1130" class="detail">default: &apos;Active&apos;</text>
+<rect x="57" y="1136" width="573" height="39" fill="#f5fbfb"/>
+<text x="72" y="1153" class="field">icon</text>
+<text x="361" y="1153" class="type">TEXT</text>
+<text x="461" y="1153" class="type">NULLABLE</text>
+<text x="72" y="1169" class="detail">default: none</text>
+<text x="72" y="1192" class="field">store_id</text>
+<text x="361" y="1192" class="type">INTEGER</text>
+<text x="461" y="1192" class="type">NOT NULL</text>
+<text x="615" y="1192" class="badge" text-anchor="end">FK</text>
+<text x="72" y="1208" class="detail">references stores.id  ·  default: 1</text>
+<rect x="57" y="1214" width="573" height="31" fill="#e9f7f8"/>
+<text x="72" y="1235" class="section">INDEXES AND UNIQUE CONSTRAINTS</text>
+<text x="72" y="1265" class="index">INDEX idx_categories_store (store_id)</text>
+<text x="72" y="1285" class="index">UNIQUE (name, store_id)</text>
+</g>
+<g id="table-inventory">
+<rect x="56" y="1410" width="575" height="1363" rx="12" fill="#ffffff" stroke="#b7e9ed" stroke-width="1.5"/>
+<path d="M 68 1410 H 619 Q 631 1410 631 1422 V 1460 H 56 V 1422 Q 56 1410 68 1410" fill="#287f87"/>
+<text x="74" y="1442" class="table">inventory</text>
+<text x="613" y="1441" text-anchor="end" class="count">27 columns</text>
+<rect x="57" y="1460" width="573" height="28" fill="#e9f7f8"/>
+<text x="72" y="1479" class="section">COLUMN</text>
+<text x="361" y="1479" class="section">TYPE</text>
+<text x="461" y="1479" class="section">NULL?</text>
+<text x="615" y="1479" text-anchor="end" class="section">KEY</text>
+<text x="72" y="1505" class="field">id</text>
+<text x="361" y="1505" class="type">INTEGER</text>
+<text x="461" y="1505" class="type">NOT NULL</text>
+<text x="615" y="1505" class="badge" text-anchor="end">PK</text>
+<text x="72" y="1521" class="detail">default: none</text>
+<rect x="57" y="1527" width="573" height="39" fill="#f5fbfb"/>
+<text x="72" y="1544" class="field">item_name</text>
+<text x="361" y="1544" class="type">TEXT</text>
+<text x="461" y="1544" class="type">NULLABLE</text>
+<text x="72" y="1560" class="detail">default: none</text>
+<text x="72" y="1583" class="field">description</text>
+<text x="361" y="1583" class="type">TEXT</text>
+<text x="461" y="1583" class="type">NULLABLE</text>
+<text x="72" y="1599" class="detail">default: none</text>
+<rect x="57" y="1605" width="573" height="39" fill="#f5fbfb"/>
+<text x="72" y="1622" class="field">quantity</text>
+<text x="361" y="1622" class="type">INTEGER</text>
+<text x="461" y="1622" class="type">NULLABLE</text>
+<text x="72" y="1638" class="detail">default: none</text>
+<text x="72" y="1661" class="field">unit</text>
+<text x="361" y="1661" class="type">TEXT</text>
+<text x="461" y="1661" class="type">NULLABLE</text>
+<text x="72" y="1677" class="detail">default: none</text>
+<rect x="57" y="1683" width="573" height="39" fill="#f5fbfb"/>
+<text x="72" y="1700" class="field">category_id</text>
+<text x="361" y="1700" class="type">INTEGER</text>
+<text x="461" y="1700" class="type">NULLABLE</text>
+<text x="615" y="1700" class="badge" text-anchor="end">FK</text>
+<text x="72" y="1716" class="detail">references categories.id  ·  default: none</text>
+<text x="72" y="1739" class="field">status</text>
+<text x="361" y="1739" class="type">TEXT</text>
+<text x="461" y="1739" class="type">NULLABLE</text>
+<text x="72" y="1755" class="detail">default: &apos;Active&apos;</text>
+<rect x="57" y="1761" width="573" height="39" fill="#f5fbfb"/>
+<text x="72" y="1778" class="field">sale_price</text>
+<text x="361" y="1778" class="type">REAL</text>
+<text x="461" y="1778" class="type">NULLABLE</text>
+<text x="72" y="1794" class="detail">default: none</text>
+<text x="72" y="1817" class="field">tax_percent</text>
+<text x="361" y="1817" class="type">REAL</text>
+<text x="461" y="1817" class="type">NULLABLE</text>
+<text x="72" y="1833" class="detail">default: none</text>
+<rect x="57" y="1839" width="573" height="39" fill="#f5fbfb"/>
+<text x="72" y="1856" class="field">image</text>
+<text x="361" y="1856" class="type">TEXT</text>
+<text x="461" y="1856" class="type">NULLABLE</text>
+<text x="72" y="1872" class="detail">default: none</text>
+<text x="72" y="1895" class="field">upc</text>
+<text x="361" y="1895" class="type">TEXT</text>
+<text x="461" y="1895" class="type">NULLABLE</text>
+<text x="72" y="1911" class="detail">default: none</text>
+<rect x="57" y="1917" width="573" height="39" fill="#f5fbfb"/>
+<text x="72" y="1934" class="field">number</text>
+<text x="361" y="1934" class="type">TEXT</text>
+<text x="461" y="1934" class="type">NULLABLE</text>
+<text x="72" y="1950" class="detail">default: none</text>
+<text x="72" y="1973" class="field">tag_names</text>
+<text x="361" y="1973" class="type">TEXT</text>
+<text x="461" y="1973" class="type">NULLABLE</text>
+<text x="72" y="1989" class="detail">default: none</text>
+<rect x="57" y="1995" width="573" height="39" fill="#f5fbfb"/>
+<text x="72" y="2012" class="field">store_id</text>
+<text x="361" y="2012" class="type">INTEGER</text>
+<text x="461" y="2012" class="type">NOT NULL</text>
+<text x="615" y="2012" class="badge" text-anchor="end">FK</text>
+<text x="72" y="2028" class="detail">references stores.id  ·  default: 1</text>
+<text x="72" y="2051" class="field">created_at</text>
+<text x="361" y="2051" class="type">DATETIME</text>
+<text x="461" y="2051" class="type">NULLABLE</text>
+<text x="72" y="2067" class="detail">default: CURRENT_TIMESTAMP</text>
+<rect x="57" y="2073" width="573" height="39" fill="#f5fbfb"/>
+<text x="72" y="2090" class="field">updated_at</text>
+<text x="361" y="2090" class="type">DATETIME</text>
+<text x="461" y="2090" class="type">NULLABLE</text>
+<text x="72" y="2106" class="detail">default: CURRENT_TIMESTAMP</text>
+<text x="72" y="2129" class="field">external_system</text>
+<text x="361" y="2129" class="type">TEXT</text>
+<text x="461" y="2129" class="type">NULLABLE</text>
+<text x="72" y="2145" class="detail">default: none</text>
+<rect x="57" y="2151" width="573" height="39" fill="#f5fbfb"/>
+<text x="72" y="2168" class="field">external_store_id</text>
+<text x="361" y="2168" class="type">TEXT</text>
+<text x="461" y="2168" class="type">NULLABLE</text>
+<text x="72" y="2184" class="detail">default: none</text>
+<text x="72" y="2207" class="field">external_category_id</text>
+<text x="361" y="2207" class="type">TEXT</text>
+<text x="461" y="2207" class="type">NULLABLE</text>
+<text x="72" y="2223" class="detail">default: none</text>
+<rect x="57" y="2229" width="573" height="39" fill="#f5fbfb"/>
+<text x="72" y="2246" class="field">external_item_id</text>
+<text x="361" y="2246" class="type">TEXT</text>
+<text x="461" y="2246" class="type">NULLABLE</text>
+<text x="72" y="2262" class="detail">default: none</text>
+<text x="72" y="2285" class="field">external_sku</text>
+<text x="361" y="2285" class="type">TEXT</text>
+<text x="461" y="2285" class="type">NULLABLE</text>
+<text x="72" y="2301" class="detail">default: none</text>
+<rect x="57" y="2307" width="573" height="39" fill="#f5fbfb"/>
+<text x="72" y="2324" class="field">last_imported_at</text>
+<text x="361" y="2324" class="type">TEXT</text>
+<text x="461" y="2324" class="type">NULLABLE</text>
+<text x="72" y="2340" class="detail">default: none</text>
+<text x="72" y="2363" class="field">last_exported_at</text>
+<text x="361" y="2363" class="type">TEXT</text>
+<text x="461" y="2363" class="type">NULLABLE</text>
+<text x="72" y="2379" class="detail">default: none</text>
+<rect x="57" y="2385" width="573" height="39" fill="#f5fbfb"/>
+<text x="72" y="2402" class="field">sync_status</text>
+<text x="361" y="2402" class="type">TEXT</text>
+<text x="461" y="2402" class="type">NULLABLE</text>
+<text x="72" y="2418" class="detail">default: none</text>
+<text x="72" y="2441" class="field">last_verified_at</text>
+<text x="361" y="2441" class="type">TEXT</text>
+<text x="461" y="2441" class="type">NULLABLE</text>
+<text x="72" y="2457" class="detail">default: none</text>
+<rect x="57" y="2463" width="573" height="39" fill="#f5fbfb"/>
+<text x="72" y="2480" class="field">last_verified_by</text>
+<text x="361" y="2480" class="type">INTEGER</text>
+<text x="461" y="2480" class="type">NULLABLE</text>
+<text x="72" y="2496" class="detail">default: none</text>
+<text x="72" y="2519" class="field">last_verified_session_id</text>
+<text x="361" y="2519" class="type">TEXT</text>
+<text x="461" y="2519" class="type">NULLABLE</text>
+<text x="72" y="2535" class="detail">default: none</text>
+<rect x="57" y="2541" width="573" height="31" fill="#e9f7f8"/>
+<text x="72" y="2562" class="section">INDEXES AND UNIQUE CONSTRAINTS</text>
+<text x="72" y="2592" class="index">INDEX idx_inventory_store_updated (store_id, updated_at DESC)</text>
+<text x="72" y="2612" class="index">UNIQUE idx_inventory_number_store (number, store_id) WHERE number IS NOT</text>
+<text x="72" y="2632" class="index">NULL AND number != &apos;&apos;</text>
+<text x="72" y="2652" class="index">INDEX idx_inventory_name_store (item_name, store_id)</text>
+<text x="72" y="2672" class="index">UNIQUE idx_inventory_external_item_store (external_system,</text>
+<text x="72" y="2692" class="index">external_item_id, store_id) WHERE external_item_id IS NOT NULL AND</text>
+<text x="72" y="2712" class="index">external_item_id != &apos;&apos;</text>
+<text x="72" y="2732" class="index">INDEX idx_inventory_category_store (category_id, store_id)</text>
+<text x="72" y="2752" class="index">UNIQUE (upc, store_id)</text>
+</g>
+<g id="table-users">
+<rect x="680" y="180" width="575" height="717" rx="12" fill="#ffffff" stroke="#b7e9ed" stroke-width="1.5"/>
+<path d="M 692 180 H 1243 Q 1255 180 1255 192 V 230 H 680 V 192 Q 680 180 692 180" fill="#287f87"/>
+<text x="698" y="212" class="table">users</text>
+<text x="1237" y="211" text-anchor="end" class="count">13 columns</text>
+<rect x="681" y="230" width="573" height="28" fill="#e9f7f8"/>
+<text x="696" y="249" class="section">COLUMN</text>
+<text x="985" y="249" class="section">TYPE</text>
+<text x="1085" y="249" class="section">NULL?</text>
+<text x="1239" y="249" text-anchor="end" class="section">KEY</text>
+<text x="696" y="275" class="field">id</text>
+<text x="985" y="275" class="type">INTEGER</text>
+<text x="1085" y="275" class="type">NOT NULL</text>
+<text x="1239" y="275" class="badge" text-anchor="end">PK</text>
+<text x="696" y="291" class="detail">default: none</text>
+<rect x="681" y="297" width="573" height="39" fill="#f5fbfb"/>
+<text x="696" y="314" class="field">username</text>
+<text x="985" y="314" class="type">TEXT</text>
+<text x="1085" y="314" class="type">NOT NULL</text>
+<text x="696" y="330" class="detail">default: none</text>
+<text x="696" y="353" class="field">password</text>
+<text x="985" y="353" class="type">TEXT</text>
+<text x="1085" y="353" class="type">NULLABLE</text>
+<text x="696" y="369" class="detail">default: none</text>
+<rect x="681" y="375" width="573" height="39" fill="#f5fbfb"/>
+<text x="696" y="392" class="field">role</text>
+<text x="985" y="392" class="type">TEXT</text>
+<text x="1085" y="392" class="type">NOT NULL</text>
+<text x="696" y="408" class="detail">default: &apos;owner&apos;</text>
+<text x="696" y="431" class="field">store_id</text>
+<text x="985" y="431" class="type">INTEGER</text>
+<text x="1085" y="431" class="type">NULLABLE</text>
+<text x="1239" y="431" class="badge" text-anchor="end">FK</text>
+<text x="696" y="447" class="detail">references stores.id  ·  default: none</text>
+<rect x="681" y="453" width="573" height="39" fill="#f5fbfb"/>
+<text x="696" y="470" class="field">store_name</text>
+<text x="985" y="470" class="type">TEXT</text>
+<text x="1085" y="470" class="type">NULLABLE</text>
+<text x="696" y="486" class="detail">default: none</text>
+<text x="696" y="509" class="field">must_reset_password</text>
+<text x="985" y="509" class="type">INTEGER</text>
+<text x="1085" y="509" class="type">NOT NULL</text>
+<text x="696" y="525" class="detail">default: 0</text>
+<rect x="681" y="531" width="573" height="39" fill="#f5fbfb"/>
+<text x="696" y="548" class="field">email</text>
+<text x="985" y="548" class="type">TEXT</text>
+<text x="1085" y="548" class="type">NULLABLE</text>
+<text x="696" y="564" class="detail">default: none</text>
+<text x="696" y="587" class="field">oauth_provider</text>
+<text x="985" y="587" class="type">TEXT</text>
+<text x="1085" y="587" class="type">NULLABLE</text>
+<text x="696" y="603" class="detail">default: none</text>
+<rect x="681" y="609" width="573" height="39" fill="#f5fbfb"/>
+<text x="696" y="626" class="field">oauth_id</text>
+<text x="985" y="626" class="type">TEXT</text>
+<text x="1085" y="626" class="type">NULLABLE</text>
+<text x="696" y="642" class="detail">default: none</text>
+<text x="696" y="665" class="field">failed_login_attempts</text>
+<text x="985" y="665" class="type">INTEGER</text>
+<text x="1085" y="665" class="type">NULLABLE</text>
+<text x="696" y="681" class="detail">default: 0</text>
+<rect x="681" y="687" width="573" height="39" fill="#f5fbfb"/>
+<text x="696" y="704" class="field">locked_until</text>
+<text x="985" y="704" class="type">DATETIME</text>
+<text x="1085" y="704" class="type">NULLABLE</text>
+<text x="696" y="720" class="detail">default: none</text>
+<text x="696" y="743" class="field">token_version</text>
+<text x="985" y="743" class="type">INTEGER</text>
+<text x="1085" y="743" class="type">NOT NULL</text>
+<text x="696" y="759" class="detail">default: 1</text>
+<rect x="681" y="765" width="573" height="31" fill="#e9f7f8"/>
+<text x="696" y="786" class="section">INDEXES AND UNIQUE CONSTRAINTS</text>
+<text x="696" y="816" class="index">INDEX idx_users_store_id (store_id)</text>
+<text x="696" y="836" class="index">UNIQUE idx_users_oauth (oauth_provider, oauth_id) WHERE oauth_provider IS</text>
+<text x="696" y="856" class="index">NOT NULL</text>
+<text x="696" y="876" class="index">UNIQUE (username, store_id)</text>
+</g>
+<g id="table-user_stores">
+<rect x="680" y="1001" width="575" height="267" rx="12" fill="#ffffff" stroke="#b7e9ed" stroke-width="1.5"/>
+<path d="M 692 1001 H 1243 Q 1255 1001 1255 1013 V 1051 H 680 V 1013 Q 680 1001 692 1001" fill="#287f87"/>
+<text x="698" y="1033" class="table">user_stores</text>
+<text x="1237" y="1032" text-anchor="end" class="count">3 columns</text>
+<rect x="681" y="1051" width="573" height="28" fill="#e9f7f8"/>
+<text x="696" y="1070" class="section">COLUMN</text>
+<text x="985" y="1070" class="section">TYPE</text>
+<text x="1085" y="1070" class="section">NULL?</text>
+<text x="1239" y="1070" text-anchor="end" class="section">KEY</text>
+<text x="696" y="1096" class="field">user_id</text>
+<text x="985" y="1096" class="type">INTEGER</text>
+<text x="1085" y="1096" class="type">NOT NULL</text>
+<text x="1239" y="1096" class="badge" text-anchor="end">PK / FK</text>
+<text x="696" y="1112" class="detail">references users.id  ·  default: none</text>
+<rect x="681" y="1118" width="573" height="39" fill="#f5fbfb"/>
+<text x="696" y="1135" class="field">store_id</text>
+<text x="985" y="1135" class="type">INTEGER</text>
+<text x="1085" y="1135" class="type">NOT NULL</text>
+<text x="1239" y="1135" class="badge" text-anchor="end">PK / FK</text>
+<text x="696" y="1151" class="detail">references stores.id  ·  default: none</text>
+<text x="696" y="1174" class="field">role</text>
+<text x="985" y="1174" class="type">TEXT</text>
+<text x="1085" y="1174" class="type">NOT NULL</text>
+<text x="696" y="1190" class="detail">default: &apos;owner&apos;</text>
+<rect x="681" y="1196" width="573" height="31" fill="#e9f7f8"/>
+<text x="696" y="1217" class="section">INDEXES AND UNIQUE CONSTRAINTS</text>
+<text x="696" y="1247" class="index">PRIMARY KEY (user_id, store_id)</text>
+</g>
+<g id="table-logs">
+<rect x="680" y="1372" width="575" height="384" rx="12" fill="#ffffff" stroke="#b7e9ed" stroke-width="1.5"/>
+<path d="M 692 1372 H 1243 Q 1255 1372 1255 1384 V 1422 H 680 V 1384 Q 680 1372 692 1372" fill="#287f87"/>
+<text x="698" y="1404" class="table">logs</text>
+<text x="1237" y="1403" text-anchor="end" class="count">6 columns</text>
+<rect x="681" y="1422" width="573" height="28" fill="#e9f7f8"/>
+<text x="696" y="1441" class="section">COLUMN</text>
+<text x="985" y="1441" class="section">TYPE</text>
+<text x="1085" y="1441" class="section">NULL?</text>
+<text x="1239" y="1441" text-anchor="end" class="section">KEY</text>
+<text x="696" y="1467" class="field">id</text>
+<text x="985" y="1467" class="type">INTEGER</text>
+<text x="1085" y="1467" class="type">NOT NULL</text>
+<text x="1239" y="1467" class="badge" text-anchor="end">PK</text>
+<text x="696" y="1483" class="detail">default: none</text>
+<rect x="681" y="1489" width="573" height="39" fill="#f5fbfb"/>
+<text x="696" y="1506" class="field">action</text>
+<text x="985" y="1506" class="type">TEXT</text>
+<text x="1085" y="1506" class="type">NULLABLE</text>
+<text x="696" y="1522" class="detail">default: none</text>
+<text x="696" y="1545" class="field">details</text>
+<text x="985" y="1545" class="type">TEXT</text>
+<text x="1085" y="1545" class="type">NULLABLE</text>
+<text x="696" y="1561" class="detail">default: none</text>
+<rect x="681" y="1567" width="573" height="39" fill="#f5fbfb"/>
+<text x="696" y="1584" class="field">user_id</text>
+<text x="985" y="1584" class="type">INTEGER</text>
+<text x="1085" y="1584" class="type">NULLABLE</text>
+<text x="696" y="1600" class="detail">default: none</text>
+<text x="696" y="1623" class="field">store_id</text>
+<text x="985" y="1623" class="type">INTEGER</text>
+<text x="1085" y="1623" class="type">NOT NULL</text>
+<text x="696" y="1639" class="detail">default: 1</text>
+<rect x="681" y="1645" width="573" height="39" fill="#f5fbfb"/>
+<text x="696" y="1662" class="field">timestamp</text>
+<text x="985" y="1662" class="type">DATETIME</text>
+<text x="1085" y="1662" class="type">NULLABLE</text>
+<text x="696" y="1678" class="detail">default: CURRENT_TIMESTAMP</text>
+<rect x="681" y="1684" width="573" height="31" fill="#e9f7f8"/>
+<text x="696" y="1705" class="section">INDEXES AND UNIQUE CONSTRAINTS</text>
+<text x="696" y="1735" class="index">INDEX idx_logs_store_ts (store_id, timestamp DESC)</text>
+</g>
+<g id="table-scan_sessions">
+<rect x="1304" y="180" width="575" height="541" rx="12" fill="#ffffff" stroke="#b7e9ed" stroke-width="1.5"/>
+<path d="M 1316 180 H 1867 Q 1879 180 1879 192 V 230 H 1304 V 192 Q 1304 180 1316 180" fill="#287f87"/>
+<text x="1322" y="212" class="table">scan_sessions</text>
+<text x="1861" y="211" text-anchor="end" class="count">9 columns</text>
+<rect x="1305" y="230" width="573" height="28" fill="#e9f7f8"/>
+<text x="1320" y="249" class="section">COLUMN</text>
+<text x="1609" y="249" class="section">TYPE</text>
+<text x="1709" y="249" class="section">NULL?</text>
+<text x="1863" y="249" text-anchor="end" class="section">KEY</text>
+<text x="1320" y="275" class="field">session_id</text>
+<text x="1609" y="275" class="type">TEXT</text>
+<text x="1709" y="275" class="type">NULLABLE</text>
+<text x="1863" y="275" class="badge" text-anchor="end">PK</text>
+<text x="1320" y="291" class="detail">default: none</text>
+<rect x="1305" y="297" width="573" height="39" fill="#f5fbfb"/>
+<text x="1320" y="314" class="field">otp</text>
+<text x="1609" y="314" class="type">TEXT</text>
+<text x="1709" y="314" class="type">NULLABLE</text>
+<text x="1320" y="330" class="detail">default: none</text>
+<text x="1320" y="353" class="field">user_id</text>
+<text x="1609" y="353" class="type">INTEGER</text>
+<text x="1709" y="353" class="type">NULLABLE</text>
+<text x="1320" y="369" class="detail">default: none</text>
+<rect x="1305" y="375" width="573" height="39" fill="#f5fbfb"/>
+<text x="1320" y="392" class="field">store_id</text>
+<text x="1609" y="392" class="type">INTEGER</text>
+<text x="1709" y="392" class="type">NOT NULL</text>
+<text x="1320" y="408" class="detail">default: 1</text>
+<text x="1320" y="431" class="field">created_at</text>
+<text x="1609" y="431" class="type">DATETIME</text>
+<text x="1709" y="431" class="type">NULLABLE</text>
+<text x="1320" y="447" class="detail">default: CURRENT_TIMESTAMP</text>
+<rect x="1305" y="453" width="573" height="39" fill="#f5fbfb"/>
+<text x="1320" y="470" class="field">status</text>
+<text x="1609" y="470" class="type">TEXT</text>
+<text x="1709" y="470" class="type">NULLABLE</text>
+<text x="1320" y="486" class="detail">default: &apos;active&apos;</text>
+<text x="1320" y="509" class="field">otp_attempts</text>
+<text x="1609" y="509" class="type">INTEGER</text>
+<text x="1709" y="509" class="type">NULLABLE</text>
+<text x="1320" y="525" class="detail">default: 0</text>
+<rect x="1305" y="531" width="573" height="39" fill="#f5fbfb"/>
+<text x="1320" y="548" class="field">expires_at</text>
+<text x="1609" y="548" class="type">TEXT</text>
+<text x="1709" y="548" class="type">NULLABLE</text>
+<text x="1320" y="564" class="detail">default: none</text>
+<text x="1320" y="587" class="field">label</text>
+<text x="1609" y="587" class="type">TEXT</text>
+<text x="1709" y="587" class="type">NULLABLE</text>
+<text x="1320" y="603" class="detail">default: NULL</text>
+<rect x="1305" y="609" width="573" height="31" fill="#e9f7f8"/>
+<text x="1320" y="630" class="section">INDEXES AND UNIQUE CONSTRAINTS</text>
+<text x="1320" y="660" class="index">INDEX idx_scan_sessions_user_store (user_id, store_id, status)</text>
+<text x="1320" y="680" class="index">INDEX idx_scan_sessions_store_status (store_id, status, expires_at)</text>
+<text x="1320" y="700" class="index">PRIMARY KEY (session_id)</text>
+</g>
+<g id="table-session_items">
+<rect x="1304" y="825" width="575" height="834" rx="12" fill="#ffffff" stroke="#b7e9ed" stroke-width="1.5"/>
+<path d="M 1316 825 H 1867 Q 1879 825 1879 837 V 875 H 1304 V 837 Q 1304 825 1316 825" fill="#287f87"/>
+<text x="1322" y="857" class="table">session_items</text>
+<text x="1861" y="856" text-anchor="end" class="count">16 columns</text>
+<rect x="1305" y="875" width="573" height="28" fill="#e9f7f8"/>
+<text x="1320" y="894" class="section">COLUMN</text>
+<text x="1609" y="894" class="section">TYPE</text>
+<text x="1709" y="894" class="section">NULL?</text>
+<text x="1863" y="894" text-anchor="end" class="section">KEY</text>
+<text x="1320" y="920" class="field">id</text>
+<text x="1609" y="920" class="type">INTEGER</text>
+<text x="1709" y="920" class="type">NOT NULL</text>
+<text x="1863" y="920" class="badge" text-anchor="end">PK</text>
+<text x="1320" y="936" class="detail">default: none</text>
+<rect x="1305" y="942" width="573" height="39" fill="#f5fbfb"/>
+<text x="1320" y="959" class="field">session_id</text>
+<text x="1609" y="959" class="type">TEXT</text>
+<text x="1709" y="959" class="type">NULLABLE</text>
+<text x="1863" y="959" class="badge" text-anchor="end">FK</text>
+<text x="1320" y="975" class="detail">references scan_sessions.session_id  ·  default: none</text>
+<text x="1320" y="998" class="field">upc</text>
+<text x="1609" y="998" class="type">TEXT</text>
+<text x="1709" y="998" class="type">NULLABLE</text>
+<text x="1320" y="1014" class="detail">default: none</text>
+<rect x="1305" y="1020" width="573" height="39" fill="#f5fbfb"/>
+<text x="1320" y="1037" class="field">quantity</text>
+<text x="1609" y="1037" class="type">INTEGER</text>
+<text x="1709" y="1037" class="type">NULLABLE</text>
+<text x="1320" y="1053" class="detail">default: 1</text>
+<text x="1320" y="1076" class="field">scanned_at</text>
+<text x="1609" y="1076" class="type">DATETIME</text>
+<text x="1709" y="1076" class="type">NULLABLE</text>
+<text x="1320" y="1092" class="detail">default: CURRENT_TIMESTAMP</text>
+<rect x="1305" y="1098" width="573" height="39" fill="#f5fbfb"/>
+<text x="1320" y="1115" class="field">lookup_status</text>
+<text x="1609" y="1115" class="type">TEXT</text>
+<text x="1709" y="1115" class="type">NULLABLE</text>
+<text x="1320" y="1131" class="detail">default: &apos;unknown&apos;</text>
+<text x="1320" y="1154" class="field">product_name</text>
+<text x="1609" y="1154" class="type">TEXT</text>
+<text x="1709" y="1154" class="type">NULLABLE</text>
+<text x="1320" y="1170" class="detail">default: none</text>
+<rect x="1305" y="1176" width="573" height="39" fill="#f5fbfb"/>
+<text x="1320" y="1193" class="field">brand</text>
+<text x="1609" y="1193" class="type">TEXT</text>
+<text x="1709" y="1193" class="type">NULLABLE</text>
+<text x="1320" y="1209" class="detail">default: none</text>
+<text x="1320" y="1232" class="field">image</text>
+<text x="1609" y="1232" class="type">TEXT</text>
+<text x="1709" y="1232" class="type">NULLABLE</text>
+<text x="1320" y="1248" class="detail">default: none</text>
+<rect x="1305" y="1254" width="573" height="39" fill="#f5fbfb"/>
+<text x="1320" y="1271" class="field">source</text>
+<text x="1609" y="1271" class="type">TEXT</text>
+<text x="1709" y="1271" class="type">NULLABLE</text>
+<text x="1320" y="1287" class="detail">default: &apos;scan_only&apos;</text>
+<text x="1320" y="1310" class="field">exists_in_inventory</text>
+<text x="1609" y="1310" class="type">INTEGER</text>
+<text x="1709" y="1310" class="type">NULLABLE</text>
+<text x="1320" y="1326" class="detail">default: 0</text>
+<rect x="1305" y="1332" width="573" height="39" fill="#f5fbfb"/>
+<text x="1320" y="1349" class="field">tag_names</text>
+<text x="1609" y="1349" class="type">TEXT</text>
+<text x="1709" y="1349" class="type">NULLABLE</text>
+<text x="1320" y="1365" class="detail">default: none</text>
+<text x="1320" y="1388" class="field">sale_price</text>
+<text x="1609" y="1388" class="type">TEXT</text>
+<text x="1709" y="1388" class="type">NULLABLE</text>
+<text x="1320" y="1404" class="detail">default: none</text>
+<rect x="1305" y="1410" width="573" height="39" fill="#f5fbfb"/>
+<text x="1320" y="1427" class="field">unit</text>
+<text x="1609" y="1427" class="type">TEXT</text>
+<text x="1709" y="1427" class="type">NULLABLE</text>
+<text x="1320" y="1443" class="detail">default: none</text>
+<text x="1320" y="1466" class="field">device_id</text>
+<text x="1609" y="1466" class="type">TEXT</text>
+<text x="1709" y="1466" class="type">NULLABLE</text>
+<text x="1320" y="1482" class="detail">default: NULL</text>
+<rect x="1305" y="1488" width="573" height="39" fill="#f5fbfb"/>
+<text x="1320" y="1505" class="field">updated_at</text>
+<text x="1609" y="1505" class="type">TEXT</text>
+<text x="1709" y="1505" class="type">NULLABLE</text>
+<text x="1320" y="1521" class="detail">default: NULL</text>
+<rect x="1305" y="1527" width="573" height="31" fill="#e9f7f8"/>
+<text x="1320" y="1548" class="section">INDEXES AND UNIQUE CONSTRAINTS</text>
+<text x="1320" y="1578" class="index">INDEX idx_session_items_session_updated (session_id, updated_at DESC, id</text>
+<text x="1320" y="1598" class="index">DESC)</text>
+<text x="1320" y="1618" class="index">INDEX idx_session_items_session_upc (session_id, upc)</text>
+<text x="1320" y="1638" class="index">INDEX idx_session_items_session_at (session_id, scanned_at DESC)</text>
+</g>
+<g id="table-schema_migrations">
+<rect x="1304" y="1763" width="575" height="228" rx="12" fill="#ffffff" stroke="#b7e9ed" stroke-width="1.5"/>
+<path d="M 1316 1763 H 1867 Q 1879 1763 1879 1775 V 1813 H 1304 V 1775 Q 1304 1763 1316 1763" fill="#287f87"/>
+<text x="1322" y="1795" class="table">schema_migrations</text>
+<text x="1861" y="1794" text-anchor="end" class="count">2 columns</text>
+<rect x="1305" y="1813" width="573" height="28" fill="#e9f7f8"/>
+<text x="1320" y="1832" class="section">COLUMN</text>
+<text x="1609" y="1832" class="section">TYPE</text>
+<text x="1709" y="1832" class="section">NULL?</text>
+<text x="1863" y="1832" text-anchor="end" class="section">KEY</text>
+<text x="1320" y="1858" class="field">version</text>
+<text x="1609" y="1858" class="type">INTEGER</text>
+<text x="1709" y="1858" class="type">NOT NULL</text>
+<text x="1863" y="1858" class="badge" text-anchor="end">PK</text>
+<text x="1320" y="1874" class="detail">default: none</text>
+<rect x="1305" y="1880" width="573" height="39" fill="#f5fbfb"/>
+<text x="1320" y="1897" class="field">applied_at</text>
+<text x="1609" y="1897" class="type">TEXT</text>
+<text x="1709" y="1897" class="type">NULLABLE</text>
+<text x="1320" y="1913" class="detail">default: datetime(&apos;now&apos;)</text>
+<rect x="1305" y="1919" width="573" height="31" fill="#e9f7f8"/>
+<text x="1320" y="1940" class="section">INDEXES AND UNIQUE CONSTRAINTS</text>
+<text x="1320" y="1970" class="index">No secondary indexes</text>
+</g>
+<rect x="1304" y="2039" width="575" height="414" rx="12" fill="#fff5f4" stroke="#edc9c6"/>
+<text x="1322" y="2070" class="note-title">Relationship details</text>
+<text x="1322" y="2092" class="detail">Each child row points to at most one parent; a parent can have many children.</text>
+<text x="1322" y="2121" class="note">users.store_id → stores.id  (optional)</text>
+<text x="1322" y="2144" class="note">user_stores.store_id → stores.id  (required)</text>
+<text x="1322" y="2167" class="note">categories.store_id → stores.id  (required)</text>
+<text x="1322" y="2190" class="note">inventory.store_id → stores.id  (required)</text>
+<text x="1322" y="2213" class="note">user_stores.user_id → users.id  (required)</text>
+<text x="1322" y="2236" class="note">inventory.category_id → categories.id  (optional)</text>
+<text x="1322" y="2259" class="note">session_items.session_id → scan_sessions.session_id  (optional)</text>
+<text x="1322" y="2303" class="note-title">App associations without FK constraints</text>
+<text x="1322" y="2330" class="note">scan_sessions.user_id → users.id</text>
+<text x="1322" y="2352" class="note">scan_sessions.store_id → stores.id</text>
+<text x="1322" y="2374" class="note">logs.user_id → users.id</text>
+<text x="1322" y="2396" class="note">logs.store_id → stores.id</text>
+<text x="56" y="2845" class="subtitle">PK = primary key · FK = enforced foreign key · All FK delete actions are NO ACTION · Source: docs/database-schema.sql</text>
+</svg>

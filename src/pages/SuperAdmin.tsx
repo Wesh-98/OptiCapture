@@ -31,11 +31,11 @@ export default function SuperAdmin() {
       {/* Top nav */}
       <header className="h-16 flex items-center justify-between px-6 bg-navy-900">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 bg-white rounded-lg flex items-center justify-center font-bold text-base text-navy-900">
-            OC
+          <div className="w-9 h-9 bg-white rounded-lg flex items-center justify-center p-1">
+            <img src="/logo.svg" alt="Inventory Portal logo" className="w-full h-full object-contain" />
           </div>
           <div>
-            <h1 className="text-base font-bold text-white leading-tight">OptiCapture</h1>
+            <h1 className="text-base font-bold text-white leading-tight">Inventory Portal</h1>
             <p className="text-xs text-slate-400 leading-tight">Super Admin</p>
           </div>
         </div>

@@ -215,14 +215,14 @@ export function EditItemModal({
             <div className="p-5 border-t border-slate-200 flex justify-end gap-3">
               <button
                 onClick={onClose}
-                className="px-4 py-2 text-slate-600 font-medium hover:bg-slate-100 rounded-lg transition-colors text-sm"
+                className="px-4 py-2 border border-accent-500 text-accent-500 font-medium hover:bg-accent-50 rounded-lg transition-colors text-sm"
               >
                 Cancel
               </button>
               <button
                 onClick={onSave}
                 disabled={editSaving || !editItem.product_name.trim()}
-                className="px-4 py-2 bg-navy-900 text-white font-medium rounded-lg hover:bg-navy-800 transition-colors text-sm disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2"
+                className="px-4 py-2 bg-brand-600 text-white font-medium rounded-lg hover:bg-brand-700 transition-colors text-sm disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2"
               >
                 {editSaving && <Loader2 size={14} className="animate-spin" />}
                 Save

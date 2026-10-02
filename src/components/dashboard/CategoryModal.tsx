@@ -71,7 +71,7 @@ export function CategoryModal({
                   className={cn(
                     'w-full aspect-square rounded-lg p-1.5 border-2 transition-all flex items-center justify-center',
                     catForm.icon === icon.src
-                      ? 'border-blue-500 bg-blue-50'
+                      ? 'border-brand-400 bg-theme-subtle'
                       : 'border-transparent hover:border-slate-200 hover:bg-slate-50'
                   )}
                 >
@@ -98,7 +98,7 @@ export function CategoryModal({
                       'w-full aspect-square rounded-lg flex items-center justify-center border-2 transition-all',
                       col.bg,
                       catForm.icon === iconName
-                        ? 'border-blue-500 ring-2 ring-blue-200'
+                        ? 'border-brand-400 ring-2 ring-brand-100'
                         : 'border-transparent hover:border-slate-300'
                     )}
                   >
@@ -119,14 +119,14 @@ export function CategoryModal({
         <div className="flex justify-end gap-3 px-6 pb-6">
           <button
             onClick={onClose}
-            className="px-4 py-2 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-100 transition-colors"
+            className="px-4 py-2 rounded-xl border border-accent-500 text-sm font-medium text-accent-500 hover:bg-accent-50 transition-colors"
           >
             Cancel
           </button>
           <button
             onClick={onSave}
             disabled={catSaving}
-            className="px-5 py-2 rounded-xl text-sm font-semibold text-white disabled:opacity-60 transition-colors bg-navy-900"
+            className="px-5 py-2 rounded-xl text-sm font-semibold text-white disabled:opacity-60 transition-colors bg-brand-600 hover:bg-brand-700"
           >
             {catSaving ? 'Saving...' : editingCategory ? 'Save Changes' : 'Add Category'}
           </button>

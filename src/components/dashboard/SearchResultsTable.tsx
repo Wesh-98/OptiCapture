@@ -98,13 +98,13 @@ export function SearchResultsTable({
               <td className="px-6 py-4">
                 <span
                   className={cn(
-                    'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium',
+                    'inline-flex items-center rounded-md border bg-white px-2.5 py-1 text-xs font-medium',
                     item.status === 'Active'
-                      ? 'bg-emerald-100 text-emerald-800'
-                      : 'bg-slate-100 text-slate-600'
+                      ? 'border-emerald-600 text-emerald-700'
+                      : 'border-red-600 text-red-600'
                   )}
                 >
-                  {item.status}
+                  {item.status === 'Active' ? 'Active' : 'In-Active'}
                 </span>
               </td>
               <td className="px-6 py-4 text-sm text-right font-mono text-slate-700">
