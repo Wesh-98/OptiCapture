@@ -12,6 +12,7 @@ import {
   toSqliteUtc,
   firstQueryValue,
   removeUploadedFiles,
+  savedUploadPath,
   upcVariants,
   UnsupportedImageTypeError,
 } from '../helpers.js';
@@ -1199,6 +1200,14 @@ inventoryRouter.post(
         AND external_system = ?
     `
     );
+    // An import may name an existing upload — that is how re-importing an export keeps its
+    // images — but only one this store already references. Without that check a sheet could
+    // point a row at any other tenant's upload, and the cleanup paths below would then treat
+    // it as this store's file to delete.
+    const storeOwnsUpload = db.prepare(
+      'SELECT 1 FROM inventory WHERE store_id = ? AND image = ? LIMIT 1'
+    );
+
     const checkUpc = db.prepare('SELECT id FROM inventory WHERE upc = ? AND store_id = ?');
     // A barcode with or without its leading zero is the same item. The scan commit path has
     // always matched both; this one matched the literal string only, so importing a POS file
@@ -1316,8 +1325,18 @@ inventoryRouter.post(
         const catId = rowCategory ? getCategoryId(rowCategory) : sheetCatId;
         const rawImage = readImportedString(item.image);
         const normalizedImage = rawImage ? normalizeImageUrl(rawImage) : null;
-        const image = normalizedImage ? saveBase64Image(normalizedImage) : null;
-        if (image?.startsWith('/uploads/')) savedImagePaths.push(image);
+        let image = normalizedImage ? saveBase64Image(normalizedImage) : null;
+        // Track only what this import actually wrote, so a rollback cannot delete a file
+        // the sheet merely referenced.
+        const createdUpload = normalizedImage && image ? savedUploadPath(normalizedImage, image) : null;
+        if (createdUpload) {
+          savedImagePaths.push(createdUpload);
+        } else if (image?.startsWith('/uploads/') && !storeOwnsUpload.get(user.store_id, image)) {
+          addError(
+            `"${rowLabel}": image "${image}" is not an upload of this store, so it was left off the item`
+          );
+          image = null;
+        }
         const importedAt = toSqliteUtc();
 
         const existing: any =
@@ -1413,7 +1432,7 @@ inventoryRouter.post(
           commitChunk(chunk);
         } catch (chunkError) {
           // The chunk rolled back, so the images it wrote belong to no row any more.
-          removeUploadedFiles(savedImagePaths.splice(imagesBeforeChunk));
+          await removeUploadedFiles(savedImagePaths.splice(imagesBeforeChunk));
           throw chunkError;
         }
         // Hand the event loop a turn between chunks so health checks and phone scans are

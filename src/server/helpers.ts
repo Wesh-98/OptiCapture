@@ -100,17 +100,37 @@ export function saveBase64Image(base64Data: string): string {
 }
 
 /**
+ * The upload this saveBase64Image call created, or null when it created nothing.
+ *
+ * saveBase64Image returns its input unchanged for anything that is not a data URI, so an
+ * imported spreadsheet cell holding an existing '/uploads/...' path comes back verbatim.
+ * Treating that as a file this import wrote would put somebody else's upload on the
+ * rollback cleanup list, and deleting a path is not recoverable.
+ */
+export function savedUploadPath(input: string, result: string): string | null {
+  if (result === input) return null;
+  return result.startsWith('/uploads/') ? result : null;
+}
+
+/**
  * Deletes files previously returned by saveBase64Image. Used when the work that saved them
  * is rolled back or its owning store is deleted — otherwise every rolled-back import and
- * every deleted store leaves its images on disk forever. Paths are reduced to a basename so
- * a stored value can never escape the uploads directory, and a missing file is not an error.
+ * every deleted store leaves its images on disk forever.
+ *
+ * Callers must pass only paths they own: a '/uploads/...' value stored in a row is not
+ * proof that the row's store owns the file, because an import can write an arbitrary path
+ * into inventory.image. Paths are reduced to a basename so a stored value can never escape
+ * the uploads directory, and a missing file is not an error.
+ *
+ * Unlinking is async so neither a store deletion nor an import rollback blocks the event
+ * loop while it walks a long list.
  */
-export function removeUploadedFiles(paths: Iterable<string>): number {
+export async function removeUploadedFiles(paths: Iterable<string>): Promise<number> {
   let removed = 0;
   for (const value of paths) {
     if (typeof value !== 'string' || !value.startsWith('/uploads/')) continue;
     try {
-      fs.unlinkSync(path.join(UPLOADS_DIR, path.basename(value)));
+      await fs.promises.unlink(path.join(UPLOADS_DIR, path.basename(value)));
       removed++;
     } catch {
       // Already gone, or never written — nothing to clean up.

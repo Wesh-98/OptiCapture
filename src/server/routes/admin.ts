@@ -33,6 +33,25 @@ function isValidEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
+/**
+ * True when any surviving row still names this upload. A '/uploads/...' value in a deleted
+ * store's row is not proof that the store owned the file — an import can write an arbitrary
+ * path into inventory.image — so deleting a store must never unlink a file something else
+ * still points at.
+ */
+function isUploadStillReferenced(uploadPath: string): boolean {
+  return Boolean(
+    db
+      .prepare(
+        `SELECT 1 FROM inventory WHERE image = ?
+         UNION ALL SELECT 1 FROM stores WHERE logo = ?
+         UNION ALL SELECT 1 FROM session_items WHERE image = ?
+         LIMIT 1`
+      )
+      .get(uploadPath, uploadPath, uploadPath)
+  );
+}
+
 function writeAdminLog(details: string, userId: number, storeId: number) {
   db.prepare('INSERT INTO logs (action, details, user_id, store_id) VALUES (?, ?, ?, ?)').run(
     'ADMIN',
@@ -307,7 +326,11 @@ adminRouter.delete(
 );
 
 // Super admin — delete store + all associated data
-adminRouter.delete('/stores/:id', authenticateToken, requireSuperadmin, (req: AuthRequest, res) => {
+adminRouter.delete(
+  '/stores/:id',
+  authenticateToken,
+  requireSuperadmin,
+  asyncRoute<AuthRequest>(async (req: AuthRequest, res) => {
   const storeId = Number(req.params.id);
   if (storeId === HQ_STORE_ID) {
     return res.status(403).json({ error: 'The HQ store is managed internally' });
@@ -367,13 +390,15 @@ adminRouter.delete('/stores/:id', authenticateToken, requireSuperadmin, (req: Au
     db.prepare(`DELETE FROM stores WHERE id = ?`).run(storeId);
   })();
 
-  // Only after the transaction commits — a rollback must not take the files with it.
-  removeUploadedFiles(uploadedImages);
+  // Only after the transaction commits — a rollback must not take the files with it — and
+  // only for files nothing else still references.
+  await removeUploadedFiles(uploadedImages.filter(image => !isUploadStillReferenced(image)));
 
   writeAdminLog(`Deleted store "${store.name}" (${storeId})`, req.user.id, HQ_STORE_ID);
 
   res.json({ ok: true, deleted: store.name });
-});
+  })
+);
 
 // Super admin — edit store details
 adminRouter.put('/stores/:id', authenticateToken, requireSuperadmin, (req: AuthRequest, res) => {
