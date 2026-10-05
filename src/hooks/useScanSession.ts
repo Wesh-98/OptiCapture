@@ -501,6 +501,10 @@ export function useScanSession(
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isBusyRef = useRef(false);
   const pollFailCountRef = useRef(0);
+  // Set when the server answers that this session is over for us (expired, gone, signed
+  // out). Nothing but a different session can change that answer, so neither the interval
+  // nor a return to the tab may poll again until the session itself changes.
+  const pollHaltedRef = useRef(false);
   const lastPollCursorRef = useRef<PollCursor | null>(null);
   const manuallyDeselectedRef = useRef<Set<number>>(new Set());
   const sessionStartTimeRef = useRef<number | null>(null);
@@ -666,6 +670,7 @@ export function useScanSession(
         let failure: ReturnType<typeof getPollFailureOutcome>;
         if (responseOutcome) {
           failure = responseOutcome;
+          if (responseOutcome.shouldStopPolling) pollHaltedRef.current = true;
         } else {
           pollFailCountRef.current += 1;
           failure = getPollFailureOutcome(pollFailCountRef.current);
@@ -692,7 +697,7 @@ export function useScanSession(
 
   const startPolling = useCallback(() => {
     stopPolling();
-    if (!sessionId) return;
+    if (!sessionId || pollHaltedRef.current) return;
     // A hidden tab cannot show the feed, and every poll still counts against the store's
     // per-IP request budget — a handful of forgotten tabs was enough to exhaust it for
     // everyone in the shop. Poll only while this tab is actually visible.
@@ -709,6 +714,7 @@ export function useScanSession(
 
     const handleVisibilityChange = () => {
       if (getSessionActivationAction(sessionId, sessionStatusRef.current) !== 'poll') return;
+      if (pollHaltedRef.current) return;
 
       if (document.visibilityState === 'visible') {
         void fetchSessionItems();
@@ -843,6 +849,8 @@ export function useScanSession(
       return;
     }
 
+    // A new or resumed session starts with a clean slate.
+    pollHaltedRef.current = false;
     lastPollCursorRef.current = null;
     void fetchSessionItems(true);
 

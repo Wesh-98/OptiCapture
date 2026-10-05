@@ -113,14 +113,23 @@ export function savedUploadPath(input: string, result: string): string | null {
 }
 
 /**
+ * The file in UPLOADS_DIR that a stored upload reference resolves to. Every check of
+ * whether a file is still in use must compare by this, the same key the unlink uses:
+ * '/uploads/sub/x.png' and '/uploads/x.png' are different strings but the same file.
+ */
+export function uploadFileName(value: string): string {
+  return path.basename(value.split(/[?#]/)[0]);
+}
+
+/**
  * Deletes files previously returned by saveBase64Image. Used when the work that saved them
  * is rolled back or its owning store is deleted — otherwise every rolled-back import and
  * every deleted store leaves its images on disk forever.
  *
  * Callers must pass only paths they own: a '/uploads/...' value stored in a row is not
  * proof that the row's store owns the file, because an import can write an arbitrary path
- * into inventory.image. Paths are reduced to a basename so a stored value can never escape
- * the uploads directory, and a missing file is not an error.
+ * into inventory.image. Paths are reduced to uploadFileName so a stored value can never
+ * escape the uploads directory, and a missing file is not an error.
  *
  * Unlinking is async so neither a store deletion nor an import rollback blocks the event
  * loop while it walks a long list.
@@ -130,7 +139,7 @@ export async function removeUploadedFiles(paths: Iterable<string>): Promise<numb
   for (const value of paths) {
     if (typeof value !== 'string' || !value.startsWith('/uploads/')) continue;
     try {
-      await fs.promises.unlink(path.join(UPLOADS_DIR, path.basename(value)));
+      await fs.promises.unlink(path.join(UPLOADS_DIR, uploadFileName(value)));
       removed++;
     } catch {
       // Already gone, or never written — nothing to clean up.
