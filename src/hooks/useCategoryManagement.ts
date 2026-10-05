@@ -4,6 +4,11 @@ import type { Category } from '../components/dashboard/types';
 /**
  * Every category action below rewrites or deletes rows in bulk and cannot be undone,
  * so each one is armed first and only runs on a second, explicit confirmation.
+ *
+ * The armed action's lifetime belongs to the row menu (see categoryMenuReducer), which
+ * disarms at dispatch time. These handlers deliberately do not clear it on completion:
+ * a request settling later would otherwise disarm a confirmation the user had just armed
+ * again.
  */
 export type CategoryActionKind = 'activate' | 'deactivate' | 'deleteItems' | 'deleteCategory';
 
@@ -90,8 +95,6 @@ export function useCategoryManagement(
       onStatsChange();
     } catch (error) {
       addToast('error', error instanceof Error ? error.message : 'Failed to delete category');
-    } finally {
-      setPendingCategoryAction(null);
     }
   };
 
@@ -125,8 +128,6 @@ export function useCategoryManagement(
       onStatsChange();
     } catch (error) {
       addToast('error', error instanceof Error ? error.message : 'Category action failed');
-    } finally {
-      setPendingCategoryAction(null);
     }
   };
 

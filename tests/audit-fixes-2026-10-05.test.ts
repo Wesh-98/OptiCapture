@@ -14,7 +14,12 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createTestApp, getStoreCode, login } from './helpers.js';
 import { db } from '../src/server/db.js';
 import { upcCache } from '../src/server/cache.js';
-import { describeCategoryAction } from '../src/components/dashboard/categoryActions.js';
+import {
+  armedActionFor,
+  categoryMenuReducer,
+  describeCategoryAction,
+  type CategoryMenuState,
+} from '../src/components/dashboard/categoryActions.js';
 
 const request = createTestApp();
 
@@ -256,5 +261,69 @@ describe('category action confirmation copy', () => {
     expect(describeCategoryAction('activate', { name: 'Water', item_count: 1 }).detail).toContain(
       '1 item in'
     );
+  });
+});
+
+describe('category row-menu arming lifetime', () => {
+  const armed: CategoryMenuState = {
+    activeActionMenu: 7,
+    pendingCategoryAction: { id: 7, action: 'deleteCategory' },
+  };
+
+  it('disarms when the menu is dismissed by the backdrop', () => {
+    // Otherwise reopening the menu presents the confirmation directly, and a single click
+    // runs a destructive cascade that is supposed to take two.
+    const next = categoryMenuReducer(armed, { type: 'closeMenu' });
+
+    expect(next.pendingCategoryAction).toBeNull();
+    expect(next.activeActionMenu).toBeNull();
+    expect(armedActionFor(next.pendingCategoryAction, 7)).toBeNull();
+  });
+
+  it('disarms the moment a confirmation is dispatched', () => {
+    // The hook clears nothing on completion, so if this did not disarm, reopening the menu
+    // during the request would offer the same confirm button and send a second one.
+    const next = categoryMenuReducer(armed, { type: 'confirm' });
+
+    expect(next.pendingCategoryAction).toBeNull();
+    expect(next.activeActionMenu).toBeNull();
+  });
+
+  it('disarms when the same row toggles its menu shut', () => {
+    const next = categoryMenuReducer(armed, { type: 'toggleMenu', categoryId: 7 });
+
+    expect(next.activeActionMenu).toBeNull();
+    expect(next.pendingCategoryAction).toBeNull();
+  });
+
+  it('disarms when another row opens its menu', () => {
+    const next = categoryMenuReducer(armed, { type: 'toggleMenu', categoryId: 9 });
+
+    expect(next.activeActionMenu).toBe(9);
+    expect(next.pendingCategoryAction).toBeNull();
+  });
+
+  it('keeps the menu open when the confirmation is cancelled', () => {
+    const next = categoryMenuReducer(armed, { type: 'cancelArm' });
+
+    expect(next.activeActionMenu).toBe(7);
+    expect(next.pendingCategoryAction).toBeNull();
+  });
+
+  it('replaces a previous arming rather than stacking', () => {
+    const next = categoryMenuReducer(armed, {
+      type: 'arm',
+      categoryId: 7,
+      action: 'deleteItems',
+    });
+
+    expect(next.pendingCategoryAction).toEqual({ id: 7, action: 'deleteItems' });
+    expect(next.activeActionMenu).toBe(7);
+  });
+
+  it('arms only the row it was armed on', () => {
+    expect(armedActionFor(armed.pendingCategoryAction, 7)).toBe('deleteCategory');
+    expect(armedActionFor(armed.pendingCategoryAction, 8)).toBeNull();
+    expect(armedActionFor(null, 7)).toBeNull();
   });
 });
