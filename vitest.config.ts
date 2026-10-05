@@ -32,13 +32,16 @@ export default defineConfig({
     testTimeout: 30_000,
     hookTimeout: 30_000,
 
-    // Run in Node — no jsdom/browser globals needed for API integration tests.
+    // Node by default — no jsdom/browser globals needed for API integration tests, and
+    // Node starts faster. A file that genuinely needs a DOM opts in for itself with a
+    // `// @vitest-environment jsdom` docblock (see tests/scan-poll-visibility.test.tsx),
+    // so one hook test does not slow the other sixteen files down.
     environment: 'node',
 
     // Coverage using V8's built-in instrumentation (zero-config, no Babel).
-    // Include backend code plus scan-related frontend helpers that are safe to
-    // exercise in the current Node-based test harness. Full interactive hook
-    // and component tests would still need a browser-like environment.
+    // Include backend code plus the scan-related frontend hooks and helpers. Most are
+    // exercised as pure functions under Node; the parts that need a renderer and a real
+    // document are covered by the jsdom opt-in described above.
     coverage: {
       provider: 'v8',
       include: [
