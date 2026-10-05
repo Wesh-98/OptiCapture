@@ -39,7 +39,10 @@ export interface ImportResult {
   added: number;
   updated: number;
   skipped: number;
+  /** Capped sample of failure messages — `errors_total` is the real count. */
   errors: string[];
+  errors_total: number;
+  /** Capped sample of skipped rows — `skipped` is the real count. */
   skipped_rows: SkippedRow[];
 }
 

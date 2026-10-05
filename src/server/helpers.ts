@@ -99,6 +99,26 @@ export function saveBase64Image(base64Data: string): string {
   return `/uploads/${filename}`;
 }
 
+/**
+ * Deletes files previously returned by saveBase64Image. Used when the work that saved them
+ * is rolled back or its owning store is deleted — otherwise every rolled-back import and
+ * every deleted store leaves its images on disk forever. Paths are reduced to a basename so
+ * a stored value can never escape the uploads directory, and a missing file is not an error.
+ */
+export function removeUploadedFiles(paths: Iterable<string>): number {
+  let removed = 0;
+  for (const value of paths) {
+    if (typeof value !== 'string' || !value.startsWith('/uploads/')) continue;
+    try {
+      fs.unlinkSync(path.join(UPLOADS_DIR, path.basename(value)));
+      removed++;
+    } catch {
+      // Already gone, or never written — nothing to clean up.
+    }
+  }
+  return removed;
+}
+
 // Normalize Google Drive sharing URLs to embeddable thumbnail URLs
 export function normalizeImageUrl(url: string): string {
   if (!url.includes('drive.google.com') && !url.includes('docs.google.com')) return url;

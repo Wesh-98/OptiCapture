@@ -6,6 +6,7 @@ import { BCRYPT_COST } from '../cache.js';
 import {
   generateTempPassword,
   normalizeUsername,
+  removeUploadedFiles,
   saveBase64Image,
   UnsupportedImageTypeError,
 } from '../helpers.js';
@@ -314,6 +315,18 @@ adminRouter.delete('/stores/:id', authenticateToken, requireSuperadmin, (req: Au
   const store = db.prepare('SELECT id, name FROM stores WHERE id = ?').get(storeId) as any;
   if (!store) return res.status(404).json({ error: 'Store not found' });
 
+  // Collect the store's own uploaded images before the rows naming them are deleted.
+  // Without this every deleted store left its product images on disk forever.
+  const uploadedImages = (
+    db
+      .prepare(
+        `SELECT image AS path FROM inventory WHERE store_id = ? AND image LIKE '/uploads/%'
+         UNION
+         SELECT logo AS path FROM stores WHERE id = ? AND logo LIKE '/uploads/%'`
+      )
+      .all(storeId, storeId) as Array<{ path: string }>
+  ).map(row => row.path);
+
   db.transaction(() => {
     // Delete in dependency order
     db.prepare(
@@ -353,6 +366,9 @@ adminRouter.delete('/stores/:id', authenticateToken, requireSuperadmin, (req: Au
     db.prepare(`DELETE FROM users WHERE store_id = ?`).run(storeId);
     db.prepare(`DELETE FROM stores WHERE id = ?`).run(storeId);
   })();
+
+  // Only after the transaction commits — a rollback must not take the files with it.
+  removeUploadedFiles(uploadedImages);
 
   writeAdminLog(`Deleted store "${store.name}" (${storeId})`, req.user.id, HQ_STORE_ID);
 

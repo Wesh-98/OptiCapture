@@ -29,13 +29,17 @@ logsRouter.get('/logs', authenticateToken, (req: AuthRequest, res) => {
     return res.status(400).json({ error: 'from must be YYYY-MM-DD' });
   if (to && !ISO_DATE_RE.test(to)) return res.status(400).json({ error: 'to must be YYYY-MM-DD' });
 
+  // Compare as dates rather than as text. Timestamps are stored as 'YYYY-MM-DD HH:MM:SS',
+  // but the upper bound was built as `to + 'T23:59:59'`, which only sorted correctly because
+  // a space happens to precede 'T' in ASCII — and silently excluded any legacy row still
+  // stored in the ISO 'T' form. date() parses both spellings.
   if (from) {
-    conditions.push('logs.timestamp >= ?');
+    conditions.push('date(logs.timestamp) >= date(?)');
     params.push(from);
   }
   if (to) {
-    conditions.push('logs.timestamp <= ?');
-    params.push(to + 'T23:59:59');
+    conditions.push('date(logs.timestamp) <= date(?)');
+    params.push(to);
   }
 
   if (action) {
@@ -77,6 +81,7 @@ logsRouter.get('/logs', authenticateToken, (req: AuthRequest, res) => {
     )
     .all(...params, limit, (page - 1) * limit);
 
-  if (!pageParam) return res.json(logs);
+  // One shape, always. This used to return a bare array when ?page was absent and an
+  // envelope when it was present, so every caller had to handle both.
   res.json({ items: logs, total, store_total: storeTotal, page, limit });
 });

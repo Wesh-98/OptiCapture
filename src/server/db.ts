@@ -263,7 +263,10 @@ db.prepare(
 `
 ).run();
 
-// Seed default categories — always upsert icon so image paths stay current
+// Seed default categories for the demo store. Gated like the demo accounts above: this
+// upsert ran on every boot regardless of environment, so whoever owned store 1 found
+// deleted categories back and renamed icons reverted after each restart. New stores get
+// their own four starter categories at registration time instead.
 const upsertCat = db.prepare(`
   INSERT INTO categories (name, icon, store_id) VALUES (?, ?, ?)
   ON CONFLICT(name, store_id) DO UPDATE SET icon = excluded.icon
@@ -295,7 +298,9 @@ const seedCats: [string, string][] = [
   ['Scratch Tickets', '/icons/scratch-tickets.png'],
   ['Phone Cards', '/icons/phone-cards.png'],
 ];
-for (const [name, icon] of seedCats) upsertCat.run(name, icon, 1);
+if (process.env.NODE_ENV === 'test' || process.env.ALLOW_DEMO_SEED === 'true') {
+  for (const [name, icon] of seedCats) upsertCat.run(name, icon, 1);
+}
 
 // Migrate stores table — add columns if missing
 runMigration(5, () => {
@@ -619,7 +624,10 @@ db.prepare(
   'CREATE INDEX IF NOT EXISTS idx_scan_sessions_store_status ON scan_sessions(store_id, status, expires_at)'
 ).run();
 
-// One-time migration: convert uc?export=view Drive URLs → server proxy path
+// Migration 23: the four Drive-URL rewrites below were written as "one-time" but sat
+// outside runMigration, so every boot re-scanned the whole inventory table. They are
+// idempotent, so wrapping them in a version is safe and makes the boot cost disappear.
+runMigration(23, () => {
 db.prepare(
   `
   UPDATE inventory
@@ -678,6 +686,32 @@ db.prepare(
     }
   })();
 }
+});
+
+// Migration 24: a category whose name is reserved is filtered out of GET /categories, so
+// any items an older import attached to one were unreachable from the category view while
+// still counting toward the dashboard totals. Rename rather than delete, so the items keep
+// their category and simply become visible again.
+runMigration(24, () => {
+  const reserved = db
+    .prepare("SELECT id, name, store_id FROM categories WHERE LOWER(TRIM(name)) = 'inventory'")
+    .all() as Array<{ id: number; name: string; store_id: number }>;
+  const rename = db.prepare('UPDATE categories SET name = ? WHERE id = ?');
+  const nameTaken = db.prepare(
+    'SELECT 1 FROM categories WHERE LOWER(TRIM(name)) = LOWER(?) AND store_id = ? AND id != ?'
+  );
+  for (const row of reserved) {
+    // UNIQUE(name, store_id) would abort the whole migration — and with it the boot — if the
+    // replacement name already existed, so find a free one first.
+    const base = `${row.name.trim()} (imported)`;
+    let candidate = base;
+    let suffix = 2;
+    while (nameTaken.get(candidate, row.store_id, row.id)) {
+      candidate = `${base} ${suffix++}`;
+    }
+    rename.run(candidate, row.id);
+  }
+});
 
 // Run after all table creation / migrations so the logs table is guaranteed to exist
 pruneAuditLogs();
