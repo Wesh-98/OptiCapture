@@ -28,6 +28,21 @@ export class UnsupportedImageTypeError extends Error {
   }
 }
 
+/**
+ * Express parses a repeated query parameter (?q=a&q=b) into an array. Those arrays reached
+ * better-sqlite3's binder, which refuses them, turning a malformed URL into a 500 — on
+ * /session/:id/items that was reachable without authenticating. Collapse to the first value,
+ * matching how a single value behaves, and drop anything that is not a string.
+ */
+export function firstQueryValue(value: unknown): string | undefined {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) {
+    const [first] = value;
+    return typeof first === 'string' ? first : undefined;
+  }
+  return undefined;
+}
+
 export function normalizeUsername(value: unknown): string {
   return typeof value === 'string' ? value.trim().toLowerCase() : '';
 }

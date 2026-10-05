@@ -1,7 +1,9 @@
-import { Package, MoreHorizontal, Eye, EyeOff, Pencil, Trash2 } from 'lucide-react';
+import { Package, MoreHorizontal, Eye, EyeOff, Pencil, Trash2, AlertTriangle } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import type { Category } from './types';
 import { iconMap, colorMap } from './types';
+import type { PendingCategoryAction } from '../../hooks/useCategoryManagement';
+import { describeCategoryAction } from './categoryActions';
 
 interface Props {
   categories: Category[];
@@ -10,8 +12,8 @@ interface Props {
   isOwner: boolean;
   activeActionMenu: number | null;
   setActiveActionMenu: (id: number | null) => void;
-  deletingCategoryId: number | null;
-  setDeletingCategoryId: (id: number | null) => void;
+  pendingCategoryAction: PendingCategoryAction | null;
+  setPendingCategoryAction: (pending: PendingCategoryAction | null) => void;
   onViewItems: (cat: Category) => void;
   onEditCategory: (cat: Category) => void;
   onCategoryAction: (id: number, action: 'activate' | 'deactivate' | 'deleteItems') => void;
@@ -25,8 +27,8 @@ export function CategoriesTable({
   isOwner,
   activeActionMenu,
   setActiveActionMenu,
-  deletingCategoryId,
-  setDeletingCategoryId,
+  pendingCategoryAction,
+  setPendingCategoryAction,
   onViewItems,
   onEditCategory,
   onCategoryAction,
@@ -71,6 +73,9 @@ export function CategoriesTable({
             const CategoryIcon = !isImageIcon ? (iconMap[cat.icon] ?? Package) : Package;
             const isInactive = cat.status !== 'Active';
             const dropUp = idx >= arr.length - 2;
+            const armedAction =
+              pendingCategoryAction?.id === cat.id ? pendingCategoryAction.action : null;
+            const armedCopy = armedAction ? describeCategoryAction(armedAction, cat) : null;
             return (
               <tr
                 key={cat.id}
@@ -146,77 +151,108 @@ export function CategoriesTable({
                   {activeActionMenu === cat.id && (
                     <div
                       className={cn(
-                        'absolute left-1/2 -translate-x-1/2 w-52 bg-white rounded-lg shadow-xl border border-slate-100 z-20 py-1 text-left',
+                        'absolute left-1/2 -translate-x-1/2 bg-white rounded-lg shadow-xl border border-slate-100 z-20 py-1 text-left',
+                        armedAction ? 'w-72' : 'w-52',
                         dropUp ? 'bottom-full mb-1' : 'top-full mt-1'
                       )}
                     >
-                      <button
-                        className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2"
-                        onClick={() => {
-                          onViewItems(cat);
-                          setActiveActionMenu(null);
-                        }}
-                      >
-                        <Eye size={14} /> View Items
-                      </button>
-
-                      {isOwner && (
+                      {armedCopy ? (
+                        <div className="px-4 py-3">
+                          <p className="flex items-start gap-2 text-sm font-semibold text-slate-900">
+                            <AlertTriangle size={16} className="mt-0.5 shrink-0 text-red-500" />
+                            {armedCopy.title}
+                          </p>
+                          <p className="mt-1.5 text-xs leading-relaxed text-slate-600">
+                            {armedCopy.detail}
+                          </p>
+                          <div className="mt-3 flex items-center gap-2">
+                            <button
+                              className="flex-1 rounded-md bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700"
+                              onClick={() => {
+                                if (armedAction === 'deleteCategory') {
+                                  onDeleteCategory(cat.id);
+                                } else if (armedAction) {
+                                  onCategoryAction(cat.id, armedAction);
+                                }
+                                setActiveActionMenu(null);
+                              }}
+                            >
+                              {armedCopy.confirmLabel}
+                            </button>
+                            <button
+                              className="rounded-md border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                              onClick={() => setPendingCategoryAction(null)}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
                         <>
                           <button
                             className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2"
                             onClick={() => {
-                              onEditCategory(cat);
+                              onViewItems(cat);
                               setActiveActionMenu(null);
                             }}
                           >
-                            <Pencil size={14} /> Edit Category
+                            <Eye size={14} /> View Items
                           </button>
 
-                          <div className="border-t border-slate-100 my-1" />
+                          {isOwner && (
+                            <>
+                              <button
+                                className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2"
+                                onClick={() => {
+                                  onEditCategory(cat);
+                                  setActiveActionMenu(null);
+                                }}
+                              >
+                                <Pencil size={14} /> Edit Category
+                              </button>
 
-                          <button
-                            className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2"
-                            onClick={() =>
-                              onCategoryAction(
-                                cat.id,
-                                cat.status === 'Active' ? 'deactivate' : 'activate'
-                              )
-                            }
-                          >
-                            {cat.status === 'Active' ? (
-                              <>
-                                <EyeOff size={14} /> Set All In-Active
-                              </>
-                            ) : (
-                              <>
-                                <Eye size={14} /> Set All Active
-                              </>
-                            )}
-                          </button>
+                              <div className="border-t border-slate-100 my-1" />
 
-                          <button
-                            className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2"
-                            onClick={() => onCategoryAction(cat.id, 'deleteItems')}
-                          >
-                            <Trash2 size={14} /> Delete All Items
-                          </button>
+                              <button
+                                className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2"
+                                onClick={() =>
+                                  setPendingCategoryAction({
+                                    id: cat.id,
+                                    action: cat.status === 'Active' ? 'deactivate' : 'activate',
+                                  })
+                                }
+                              >
+                                {cat.status === 'Active' ? (
+                                  <>
+                                    <EyeOff size={14} /> Set All In-Active
+                                  </>
+                                ) : (
+                                  <>
+                                    <Eye size={14} /> Set All Active
+                                  </>
+                                )}
+                              </button>
 
-                          <div className="border-t border-slate-100 my-1" />
+                              <button
+                                className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2"
+                                onClick={() =>
+                                  setPendingCategoryAction({ id: cat.id, action: 'deleteItems' })
+                                }
+                              >
+                                <Trash2 size={14} /> Delete All Items
+                              </button>
 
-                          {deletingCategoryId === cat.id ? (
-                            <button
-                              className="w-full text-left px-4 py-2 text-sm text-red-600 font-semibold hover:bg-red-50 flex items-center gap-2"
-                              onClick={() => onDeleteCategory(cat.id)}
-                            >
-                              <Trash2 size={14} /> Confirm Delete?
-                            </button>
-                          ) : (
-                            <button
-                              className="w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-red-50 flex items-center gap-2"
-                              onClick={() => setDeletingCategoryId(cat.id)}
-                            >
-                              <Trash2 size={14} /> Delete Category
-                            </button>
+                              <div className="border-t border-slate-100 my-1" />
+
+                              <button
+                                className="w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-red-50 flex items-center gap-2"
+                                onClick={() =>
+                                  setPendingCategoryAction({ id: cat.id, action: 'deleteCategory' })
+                                }
+                              >
+                                <Trash2 size={14} /> Delete Category
+                              </button>
+                            </>
                           )}
                         </>
                       )}

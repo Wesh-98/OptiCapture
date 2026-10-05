@@ -10,6 +10,7 @@ import {
   normalizeImageUrl,
   toIsoUtc,
   toSqliteUtc,
+  firstQueryValue,
   UnsupportedImageTypeError,
 } from '../helpers.js';
 import type { AuthRequest } from '../types.js';
@@ -288,7 +289,11 @@ function isCategoryInStore(categoryId: unknown, storeId: number | undefined): bo
 }
 
 inventoryRouter.get('/inventory', authenticateToken, (req: AuthRequest, res) => {
-  const { category_id, q, status, page: pageParam, limit: limitParam } = req.query;
+  const category_id = firstQueryValue(req.query.category_id);
+  const q = firstQueryValue(req.query.q);
+  const status = firstQueryValue(req.query.status);
+  const pageParam = firstQueryValue(req.query.page);
+  const limitParam = firstQueryValue(req.query.limit);
   const storeId = req.user.store_id;
 
   // Build WHERE conditions separately so we can reuse for COUNT + data queries
@@ -599,6 +604,12 @@ inventoryRouter.post(
       return res.status(400).json({ error: 'Invalid category' });
 
     const itemName = item_name.trim();
+    // '' is an absent category, not category 0. Passing it straight through hit the
+    // category_id foreign key and surfaced as a 500; the PUT route already normalises it.
+    const categoryIdValue =
+      category_id === '' || category_id === null || category_id === undefined
+        ? null
+        : Number(category_id);
     const cleanUpc = typeof upc === 'string' ? upc.trim() : '';
     const existing = db
       .prepare('SELECT id FROM inventory WHERE LOWER(TRIM(item_name)) = LOWER(?) AND store_id = ?')
@@ -624,7 +635,7 @@ inventoryRouter.post(
           .run(
             itemName,
             quantityValue.value,
-            category_id,
+            categoryIdValue,
             status ?? 'Active',
             savedImage,
             unit,
