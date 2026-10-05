@@ -16,7 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createTestApp, getStoreCode, login, registerStore } from './helpers.js';
 import { db } from '../src/server/db.js';
-import { UPLOADS_DIR } from '../src/server/helpers.js';
+import { UPLOADS_DIR, savedUploadPath } from '../src/server/helpers.js';
 import { getPollResponseOutcome } from '../src/hooks/useScanSession.js';
 
 const request = createTestApp();
@@ -295,5 +295,125 @@ describe('poll failure classification', () => {
 
   it('leaves an unrecognised status to the connectivity path', () => {
     expect(getPollResponseOutcome(500)).toBeNull();
+  });
+});
+
+describe('upload ownership', () => {
+  function writeUpload(label: string): { name: string; diskPath: string } {
+    const name = `audit-${label}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`;
+    const diskPath = path.join(UPLOADS_DIR, name);
+    fs.writeFileSync(diskPath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    return { name, diskPath };
+  }
+
+  it('reports which upload a save created, and which it only passed through', () => {
+    // saveBase64Image echoes anything that is not a data URI, so "the result is an
+    // /uploads path" is not enough to prove this call wrote it.
+    expect(savedUploadPath('data:image/png;base64,AAAA', '/uploads/new.png')).toBe(
+      '/uploads/new.png'
+    );
+    expect(savedUploadPath('/uploads/existing.png', '/uploads/existing.png')).toBeNull();
+    expect(savedUploadPath('https://example.com/a.png', 'https://example.com/a.png')).toBeNull();
+  });
+
+  it('keeps an image path the store already owns, so re-importing an export works', async () => {
+    const upload = writeUpload('roundtrip');
+    db.prepare(
+      `INSERT INTO inventory (item_name, upc, quantity, image, store_id)
+       VALUES ('Round Trip Original', 'roundtrip-upc-1', 1, ?, 1)`
+    ).run(`/uploads/${upload.name}`);
+
+    const res = await request
+      .post('/api/inventory/batch-confirm')
+      .set('Cookie', ownerCookie)
+      .send(
+        confirmBody([{ upc: 'roundtrip-upc-2', item_name: 'Round Trip Copy', image: `/uploads/${upload.name}` }], {
+          upc: 'upc',
+          item_name: 'item_name',
+          image: 'image',
+        })
+      );
+
+    expect(res.status).toBe(200);
+    expect(res.body.errors_total).toBe(0);
+    const row = db
+      .prepare("SELECT image FROM inventory WHERE upc = 'roundtrip-upc-2'")
+      .get() as { image: string | null };
+    expect(row.image).toBe(`/uploads/${upload.name}`);
+    expect(fs.existsSync(upload.diskPath)).toBe(true);
+
+    fs.unlinkSync(upload.diskPath);
+  });
+
+  it('refuses to attach an upload owned by another store to an imported item', async () => {
+    const victimStore = await registerStore(request, {
+      storeName: 'Upload Owner Store',
+      username: 'uploadownerowner',
+    });
+    const upload = writeUpload('foreign');
+    db.prepare(
+      `INSERT INTO inventory (item_name, upc, quantity, image, store_id)
+       VALUES ('Foreign Owner Item', 'foreign-owner-upc', 1, ?, ?)`
+    ).run(`/uploads/${upload.name}`, victimStore.storeId);
+
+    const res = await request
+      .post('/api/inventory/batch-confirm')
+      .set('Cookie', ownerCookie)
+      .send(
+        confirmBody([{ upc: 'foreign-img-upc', item_name: 'Foreign Image Item', image: `/uploads/${upload.name}` }], {
+          upc: 'upc',
+          item_name: 'item_name',
+          image: 'image',
+        })
+      );
+
+    expect(res.status).toBe(200);
+    expect(res.body.errors_total).toBe(1);
+    expect(res.body.errors[0]).toMatch(/not an upload of this store/);
+
+    const row = db
+      .prepare("SELECT image FROM inventory WHERE upc = 'foreign-img-upc'")
+      .get() as { image: string | null };
+    expect(row.image).toBeNull();
+    expect(fs.existsSync(upload.diskPath)).toBe(true);
+
+    fs.unlinkSync(upload.diskPath);
+  });
+
+  it('does not unlink a file another store still references when a store is deleted', async () => {
+    const victim = await registerStore(request, {
+      storeName: 'Shared Upload Victim',
+      username: 'sharedvictimowner',
+    });
+    const doomed = await registerStore(request, {
+      storeName: 'Shared Upload Doomed',
+      username: 'shareddoomedowner',
+    });
+
+    const upload = writeUpload('shared');
+    const stored = `/uploads/${upload.name}`;
+    db.prepare(
+      `INSERT INTO inventory (item_name, upc, quantity, image, store_id)
+       VALUES ('Shared Victim Item', 'shared-victim-upc', 1, ?, ?)`
+    ).run(stored, victim.storeId);
+    // However it got there, the doomed store's row names a file it does not own.
+    db.prepare(
+      `INSERT INTO inventory (item_name, upc, quantity, image, store_id)
+       VALUES ('Shared Doomed Item', 'shared-doomed-upc', 1, ?, ?)`
+    ).run(stored, doomed.storeId);
+
+    const res = await request
+      .delete(`/api/admin/stores/${doomed.storeId}`)
+      .set('Cookie', superadminCookie);
+
+    expect(res.status).toBe(200);
+    // The surviving store still points at it, so the file must still be there.
+    expect(fs.existsSync(upload.diskPath)).toBe(true);
+    const survivor = db
+      .prepare("SELECT image FROM inventory WHERE upc = 'shared-victim-upc'")
+      .get() as { image: string };
+    expect(survivor.image).toBe(stored);
+
+    fs.unlinkSync(upload.diskPath);
   });
 });
