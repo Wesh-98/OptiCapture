@@ -18,7 +18,7 @@ import path from 'node:path';
 
 import { db } from './db.js';
 import { apiLimiter, asyncRoute } from './middleware.js';
-import { UPLOADS_DIR } from './helpers.js';
+import { UPLOADS_DIR, getLocalIP, getTunnelUrl } from './helpers.js';
 import { authRouter } from './routes/auth.js';
 import { adminRouter } from './routes/admin.js';
 import { categoriesRouter } from './routes/categories.js';
@@ -218,6 +218,46 @@ export function createApp() {
   app.use('/api', inventoryRouter); // /api/inventory
   app.use('/api', sessionsRouter); // /api/session(s)
   app.use('/api', logsRouter); // /api/logs
+
+  // ── /api/server-info ─────────────────────────────────────────────────────────
+  // Tells the Scan page which URL to put in the QR code. It has to be registered here,
+  // before the /api 404 below, which would otherwise shadow it. `protocol` is an app
+  // setting written by server.ts once the http/https server exists, and it is read per
+  // request so the handler always sees the final value.
+  app.get('/api/server-info', (req, res) => {
+    const protocol = (req.app.get('protocol') as string | undefined) || 'http';
+    const port = Number.parseInt(process.env.PORT ?? '', 10) || 3000;
+    const publicBaseUrl = process.env.PUBLIC_BASE_URL?.trim().replace(/\/+$/, '') || null;
+
+    if (publicBaseUrl) {
+      // A deployed server's own address is a private one phones cannot reach; never expose it.
+      return res.json({
+        ip: null,
+        port: null,
+        protocol: 'https',
+        mobileUrl: publicBaseUrl,
+        tunnelUrl: null,
+      });
+    }
+
+    const ip = getLocalIP();
+    const tunnelUrl = getTunnelUrl();
+    return res.json({
+      ip,
+      port,
+      protocol,
+      mobileUrl: tunnelUrl ?? `${protocol}://${ip}:${port}`,
+      tunnelUrl: tunnelUrl ?? null,
+    });
+  });
+
+  // ── Unmatched API routes ─────────────────────────────────────────────────────
+  // server.ts mounts the SPA fallback (app.get('*')) after this factory returns, so
+  // without this an unknown /api path fell through to it and answered 200 with
+  // index.html. Clients saw a successful response and only failed later, on res.json().
+  app.use('/api', (req, res) => {
+    res.status(404).json({ error: `Unknown API endpoint: ${req.method} ${req.originalUrl}` });
+  });
 
   // ── Global error handler ─────────────────────────────────────────────────────
   // Catches any error passed to next(err) or thrown synchronously inside a route.

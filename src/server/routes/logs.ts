@@ -1,27 +1,19 @@
 import express from 'express';
 import { db } from '../db.js';
 import { authenticateToken } from '../middleware.js';
+import { firstQueryValue } from '../helpers.js';
 import type { AuthRequest } from '../types.js';
 
 export const logsRouter = express.Router();
 
 logsRouter.get('/logs', authenticateToken, (req: AuthRequest, res) => {
   const storeId = req.user.store_id;
-  const {
-    from,
-    to,
-    q,
-    action,
-    page: pageParam,
-    limit: limitParam,
-  } = req.query as {
-    from?: string;
-    to?: string;
-    q?: string;
-    action?: string;
-    page?: string;
-    limit?: string;
-  };
+  const from = firstQueryValue(req.query.from);
+  const to = firstQueryValue(req.query.to);
+  const q = firstQueryValue(req.query.q);
+  const action = firstQueryValue(req.query.action);
+  const pageParam = firstQueryValue(req.query.page);
+  const limitParam = firstQueryValue(req.query.limit);
   const parsedLimit = Number.parseInt(limitParam ?? '', 10);
   const page = Math.max(Number.parseInt(pageParam ?? '', 10) || 1, 1);
   const limit = Math.min(Math.max(Number.isFinite(parsedLimit) ? parsedLimit : 1000, 1), 5000);

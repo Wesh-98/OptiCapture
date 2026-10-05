@@ -1,6 +1,17 @@
 import { useState } from 'react';
 import type { Category } from '../components/dashboard/types';
 
+/**
+ * Every category action below rewrites or deletes rows in bulk and cannot be undone,
+ * so each one is armed first and only runs on a second, explicit confirmation.
+ */
+export type CategoryActionKind = 'activate' | 'deactivate' | 'deleteItems' | 'deleteCategory';
+
+export interface PendingCategoryAction {
+  id: number;
+  action: CategoryActionKind;
+}
+
 export function useCategoryManagement(
   onStatsChange: () => void,
   addToast: (type: 'success' | 'error' | 'warning', message: string) => void
@@ -11,7 +22,8 @@ export function useCategoryManagement(
   const [catForm, setCatForm] = useState({ name: '', icon: '' });
   const [catError, setCatError] = useState('');
   const [catSaving, setCatSaving] = useState(false);
-  const [deletingCategoryId, setDeletingCategoryId] = useState<number | null>(null);
+  const [pendingCategoryAction, setPendingCategoryAction] =
+    useState<PendingCategoryAction | null>(null);
 
   const fetchCategories = async () => {
     const res = await fetch('/api/categories', { credentials: 'include' });
@@ -74,11 +86,12 @@ export function useCategoryManagement(
         const payload = (await res.json().catch(() => null)) as { error?: string } | null;
         throw new Error(payload?.error || 'Failed to delete category');
       }
-      setDeletingCategoryId(null);
       await fetchCategories();
       onStatsChange();
     } catch (error) {
       addToast('error', error instanceof Error ? error.message : 'Failed to delete category');
+    } finally {
+      setPendingCategoryAction(null);
     }
   };
 
@@ -112,6 +125,8 @@ export function useCategoryManagement(
       onStatsChange();
     } catch (error) {
       addToast('error', error instanceof Error ? error.message : 'Category action failed');
+    } finally {
+      setPendingCategoryAction(null);
     }
   };
 
@@ -126,8 +141,8 @@ export function useCategoryManagement(
     catError,
     setCatError,
     catSaving,
-    deletingCategoryId,
-    setDeletingCategoryId,
+    pendingCategoryAction,
+    setPendingCategoryAction,
     fetchCategories,
     openAddCat,
     openEditCat,
