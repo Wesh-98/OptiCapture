@@ -54,6 +54,31 @@ const IMPORT_CHUNK_ROWS = 1_000;
 const MAX_REPORTED_ERRORS = 100;
 const MAX_REPORTED_SKIPPED_ROWS = 100;
 
+interface ImportPreviewSheet {
+  name: string;
+  headers: string[];
+  headerRowNumber: number;
+  sourceColumnCount: number;
+  preview: Record<string, any>[];
+  rows: Record<string, any>[];
+  rowCount: number;
+}
+
+/**
+ * The one way batch-upload answers with a parsed file, whatever its format, so the row
+ * ceiling is checked before the user maps any columns. Rejecting only at batch-confirm
+ * would let a user map a 50,001-row file and then lose that work to a 413.
+ */
+function sendImportPreview(res: express.Response, sheets: ImportPreviewSheet[]) {
+  const totalRows = sheets.reduce((n, s) => n + s.rowCount, 0);
+  if (totalRows > MAX_IMPORT_ROWS) {
+    return res.status(413).json({
+      error: `This file has ${totalRows.toLocaleString('en-US')} rows. Imports are limited to ${MAX_IMPORT_ROWS.toLocaleString('en-US')} rows — split the file and import it in parts.`,
+    });
+  }
+  return res.json({ sheets, totalRows });
+}
+
 // Multer — memory storage for file uploads (xlsx/csv import)
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -878,7 +903,7 @@ inventoryRouter.post(
         }
         if (rows.length === 0) return res.status(400).json({ error: 'JSON file has no items' });
         const headers = [...new Set(rows.flatMap(row => Object.keys(row)))];
-        const sheets = [
+        return sendImportPreview(res, [
           {
             name: 'Inventory',
             headers,
@@ -888,8 +913,7 @@ inventoryRouter.post(
             rows,
             rowCount: rows.length,
           },
-        ];
-        return res.json({ sheets, totalRows: rows.length });
+        ]);
       }
 
       const isCsv =
@@ -907,7 +931,7 @@ inventoryRouter.post(
           return res.status(400).json({ error: 'Could not parse CSV file.' });
         const rows = data as Record<string, any>[];
         const headers = [...new Set(rows.flatMap(row => Object.keys(row)))];
-        const sheets = [
+        return sendImportPreview(res, [
           {
             name: 'Sheet1',
             headers,
@@ -917,8 +941,7 @@ inventoryRouter.post(
             rows,
             rowCount: rows.length,
           },
-        ];
-        return res.json({ sheets, totalRows: rows.length });
+        ]);
       }
 
       const workbook = new ExcelJS.Workbook();
@@ -953,15 +976,7 @@ inventoryRouter.post(
       if (sheets.length === 0)
         return res.status(400).json({ error: 'File is empty or has no data rows' });
 
-      const totalRows = sheets.reduce((n, s) => n + s.rowCount, 0);
-      if (totalRows > MAX_IMPORT_ROWS) {
-        // Reject here rather than after the user has mapped every column.
-        return res.status(413).json({
-          error: `This file has ${totalRows.toLocaleString('en-US')} rows. Imports are limited to ${MAX_IMPORT_ROWS.toLocaleString('en-US')} rows — split the file and import it in parts.`,
-        });
-      }
-
-      res.json({ sheets, totalRows });
+      sendImportPreview(res, sheets);
     } catch (err: any) {
       logError('import:upload', err);
       res
@@ -1064,8 +1079,11 @@ inventoryRouter.post(
       }
     };
 
-    // Images written to disk by this import, so a rolled-back chunk does not leave them behind.
+    // Images written to disk by this import and attached to a row, so a rolled-back chunk
+    // does not leave them behind.
     const savedImagePaths: string[] = [];
+    // Images saved for rows whose write then failed; removed once their chunk finishes.
+    const rejectedUploads: string[] = [];
 
     const categoryIconMap: Record<string, string> = {
       beverages: '/icons/soft-drinks.png',
@@ -1312,6 +1330,9 @@ inventoryRouter.post(
         return;
       }
 
+      // The file this row saved, if any — known before the write so a failed write can
+      // still be cleaned up.
+      let createdUpload: string | null = null;
       try {
         const qty = qtyResult.value;
         const salePrice = priceResult.value;
@@ -1323,21 +1344,6 @@ inventoryRouter.post(
         const tags = readImportedString(item.tag_names);
         const rowCategory = readImportedString(item.category);
         const catId = rowCategory ? getCategoryId(rowCategory) : sheetCatId;
-        const rawImage = readImportedString(item.image);
-        const normalizedImage = rawImage ? normalizeImageUrl(rawImage) : null;
-        let image = normalizedImage ? saveBase64Image(normalizedImage) : null;
-        // Track only what this import actually wrote, so a rollback cannot delete a file
-        // the sheet merely referenced.
-        const createdUpload = normalizedImage && image ? savedUploadPath(normalizedImage, image) : null;
-        if (createdUpload) {
-          savedImagePaths.push(createdUpload);
-        } else if (image?.startsWith('/uploads/') && !storeOwnsUpload.get(user.store_id, image)) {
-          addError(
-            `"${rowLabel}": image "${image}" is not an upload of this store, so it was left off the item`
-          );
-          image = null;
-        }
-        const importedAt = toSqliteUtc();
 
         const existing: any =
           (externalItemId
@@ -1346,6 +1352,31 @@ inventoryRouter.post(
           (upc ? findByUpc(upc) : null) ??
           (number ? checkNum.get(number, user.store_id) : null) ??
           (externalSku ? checkExternalSku.get(externalSku, user.store_id) : null);
+
+        // A new item needs a real name; a placeholder would reach the catalog as if it were
+        // one. Checked before the image is saved, so a rejected row writes nothing to disk.
+        if (!existing && !itemName) {
+          addError(`"${rowLabel}": Item name is required for a new item`);
+          return;
+        }
+
+        const rawImage = readImportedString(item.image);
+        const normalizedImage = rawImage ? normalizeImageUrl(rawImage) : null;
+        let image = normalizedImage ? saveBase64Image(normalizedImage) : null;
+        // Only what this import actually wrote counts as its own, so a rollback cannot
+        // delete a file the sheet merely referenced.
+        createdUpload = normalizedImage && image ? savedUploadPath(normalizedImage, image) : null;
+        if (
+          !createdUpload &&
+          image?.startsWith('/uploads/') &&
+          !storeOwnsUpload.get(user.store_id, image)
+        ) {
+          addError(
+            `"${rowLabel}": image "${image}" is not an upload of this store, so it was left off the item`
+          );
+          image = null;
+        }
+        const importedAt = toSqliteUtc();
 
         if (existing) {
           updateStmt.run(
@@ -1370,12 +1401,7 @@ inventoryRouter.post(
           );
           results.updated++;
         } else {
-          // A new item needs a real name; a placeholder would reach the catalog as if
-          // it were one. Quantity stays empty rather than inventing stock.
-          if (!itemName) {
-            addError(`"${rowLabel}": Item name is required for a new item`);
-            return;
-          }
+          // Quantity stays empty rather than inventing stock.
           insertStmt.run(
             itemName,
             desc,
@@ -1400,7 +1426,11 @@ inventoryRouter.post(
           );
           results.added++;
         }
+        if (createdUpload) savedImagePaths.push(createdUpload);
       } catch (err: any) {
+        // The row was not written, so nothing refers to the image it saved. The chunk still
+        // commits, so the rollback cleanup would never see this file.
+        if (createdUpload) rejectedUploads.push(createdUpload);
         addError(`"${itemName || upc || number}": ${err.message}`);
       }
     };
@@ -1434,6 +1464,8 @@ inventoryRouter.post(
           // The chunk rolled back, so the images it wrote belong to no row any more.
           await removeUploadedFiles(savedImagePaths.splice(imagesBeforeChunk));
           throw chunkError;
+        } finally {
+          await removeUploadedFiles(rejectedUploads.splice(0));
         }
         // Hand the event loop a turn between chunks so health checks and phone scans are
         // still answered while a large import runs.

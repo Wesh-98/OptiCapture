@@ -9,6 +9,7 @@ import {
   removeUploadedFiles,
   saveBase64Image,
   UnsupportedImageTypeError,
+  uploadFileName,
 } from '../helpers.js';
 import type { AuthRequest } from '../types.js';
 import { logError } from '../logger.js';
@@ -34,22 +35,24 @@ function isValidEmail(value: string): boolean {
 }
 
 /**
- * True when any surviving row still names this upload. A '/uploads/...' value in a deleted
- * store's row is not proof that the store owned the file — an import can write an arbitrary
- * path into inventory.image — so deleting a store must never unlink a file something else
- * still points at.
+ * The upload files some surviving row still points at. A '/uploads/...' value in a deleted
+ * store's row is not proof that the store owned the file — inventory POST/PUT and imports
+ * can write an arbitrary path into inventory.image — so deleting a store must never unlink
+ * a file something else still points at.
+ *
+ * Compared by uploadFileName, the key the unlink uses, not by the stored string:
+ * '/uploads/sub/x.png' and an absolute 'https://…/uploads/x.png' both name x.png. One scan
+ * builds the set rather than one query per file being deleted.
  */
-function isUploadStillReferenced(uploadPath: string): boolean {
-  return Boolean(
-    db
-      .prepare(
-        `SELECT 1 FROM inventory WHERE image = ?
-         UNION ALL SELECT 1 FROM stores WHERE logo = ?
-         UNION ALL SELECT 1 FROM session_items WHERE image = ?
-         LIMIT 1`
-      )
-      .get(uploadPath, uploadPath, uploadPath)
-  );
+function referencedUploadFileNames(): Set<string> {
+  const rows = db
+    .prepare(
+      `SELECT image AS path FROM inventory WHERE image LIKE '%/uploads/%'
+       UNION SELECT logo AS path FROM stores WHERE logo LIKE '%/uploads/%'
+       UNION SELECT image AS path FROM session_items WHERE image LIKE '%/uploads/%'`
+    )
+    .all() as Array<{ path: string }>;
+  return new Set(rows.map(row => uploadFileName(row.path)));
 }
 
 function writeAdminLog(details: string, userId: number, storeId: number) {
@@ -392,7 +395,10 @@ adminRouter.delete(
 
   // Only after the transaction commits — a rollback must not take the files with it — and
   // only for files nothing else still references.
-  await removeUploadedFiles(uploadedImages.filter(image => !isUploadStillReferenced(image)));
+  const stillReferenced = referencedUploadFileNames();
+  await removeUploadedFiles(
+    uploadedImages.filter(image => !stillReferenced.has(uploadFileName(image)))
+  );
 
   writeAdminLog(`Deleted store "${store.name}" (${storeId})`, req.user.id, HQ_STORE_ID);
 

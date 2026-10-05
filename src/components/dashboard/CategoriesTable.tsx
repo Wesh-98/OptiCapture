@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { Package, MoreHorizontal, Eye, EyeOff, Pencil, Trash2, AlertTriangle } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import type { Category } from './types';
@@ -53,9 +54,21 @@ export function CategoriesTable({
       (!statusFilter || c.status === statusFilter)
   );
 
+  // A row that leaves the list (a search, a status filter, a refetch) takes its menu with it,
+  // but the open-menu and armed state live above this table and would outlive it: the page
+  // would keep an invisible click-catcher, and the row would come back already armed,
+  // skipping the arming step. Close and disarm as soon as the row is gone.
+  const openRowGone =
+    activeActionMenu !== null && !filtered.some(c => c.id === activeActionMenu);
+  useEffect(() => {
+    if (!openRowGone) return;
+    setActiveActionMenu(null);
+    setPendingCategoryAction(null);
+  }, [openRowGone, setActiveActionMenu, setPendingCategoryAction]);
+
   return (
     <div className="overflow-x-auto">
-      {activeActionMenu !== null && (
+      {activeActionMenu !== null && !openRowGone && (
         <div
           role="presentation"
           aria-hidden="true"

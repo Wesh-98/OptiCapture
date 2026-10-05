@@ -143,13 +143,29 @@ describe('import ceilings', () => {
   });
 
   it('keeps the audit log entry to counts, not a serialised row dump', async () => {
-    const entry = db
-      .prepare(
-        "SELECT details FROM logs WHERE action = 'IMPORT' AND store_id = 1 ORDER BY id DESC LIMIT 1"
-      )
-      .get() as { details: string };
+    const { lastId } = db.prepare('SELECT COALESCE(MAX(id), 0) AS lastId FROM logs').get() as {
+      lastId: number;
+    };
+    // Rows with no identifier are skipped, and the skipped-row list is what used to be
+    // serialised into the log row.
+    const rows = Array.from({ length: 50 }, (_, i) => ({
+      upc: '',
+      item_name: `Log Dump Item ${i}`,
+    }));
+    const res = await request
+      .post('/api/inventory/batch-confirm')
+      .set('Cookie', ownerCookie)
+      .send(confirmBody(rows, { upc: 'upc', item_name: 'item_name' }));
+    expect(res.status).toBe(200);
+    expect(res.body.skipped).toBe(50);
 
-    expect(entry.details).toMatch(/skipped/);
+    const entries = db
+      .prepare("SELECT details FROM logs WHERE action = 'IMPORT' AND store_id = 1 AND id > ?")
+      .all(lastId) as Array<{ details: string }>;
+    expect(entries).toHaveLength(1);
+    const [entry] = entries;
+
+    expect(entry.details).toMatch(/50 skipped/);
     expect(entry.details).not.toContain('row_num');
     expect(entry.details.length).toBeLessThan(300);
   });
@@ -262,8 +278,14 @@ describe('store deletion cleans up uploads', () => {
        VALUES ('Kept Item', 'keep-upc-1', 1, ?, ?)`
     ).run(`/uploads/${keptName}`, keep.storeId);
 
-    await request.delete(`/api/admin/stores/${doomed.storeId}`).set('Cookie', superadminCookie);
+    const res = await request
+      .delete(`/api/admin/stores/${doomed.storeId}`)
+      .set('Cookie', superadminCookie);
 
+    // The cleanup ran: a failed delete would leave the file there too and prove nothing.
+    expect(res.status).toBe(200);
+    expect(db.prepare('SELECT 1 FROM stores WHERE id = ?').get(doomed.storeId)).toBeUndefined();
+    expect(db.prepare('SELECT 1 FROM stores WHERE id = ?').get(keep.storeId)).toBeDefined();
     expect(fs.existsSync(keptPath)).toBe(true);
     fs.unlinkSync(keptPath);
   });
@@ -415,5 +437,203 @@ describe('upload ownership', () => {
     expect(survivor.image).toBe(stored);
 
     fs.unlinkSync(upload.diskPath);
+  });
+});
+
+describe('PR #2 review round 3', () => {
+  /**
+   * A PNG data URI whose bytes carry a unique marker after the signature, so a file this
+   * test caused can be told apart from uploads other test files write concurrently.
+   */
+  function markedPngDataUri(): { dataUri: string; marker: string } {
+    const marker = `marker-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    const bytes = Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      Buffer.from(marker),
+    ]);
+    return { dataUri: `data:image/png;base64,${bytes.toString('base64')}`, marker };
+  }
+
+  function uploadsContaining(marker: string): string[] {
+    return fs
+      .readdirSync(UPLOADS_DIR)
+      .filter(name => fs.readFileSync(path.join(UPLOADS_DIR, name)).includes(marker));
+  }
+
+  function writeSharedUpload(label: string): { name: string; diskPath: string } {
+    const name = `audit-${label}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`;
+    const diskPath = path.join(UPLOADS_DIR, name);
+    fs.writeFileSync(diskPath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    return { name, diskPath };
+  }
+
+  it('writes no image file for a new row rejected for having no name', async () => {
+    const { dataUri, marker } = markedPngDataUri();
+    const res = await request
+      .post('/api/inventory/batch-confirm')
+      .set('Cookie', ownerCookie)
+      .send(
+        confirmBody([{ upc: 'nameless-image-upc', image: dataUri }], {
+          upc: 'upc',
+          image: 'image',
+        })
+      );
+
+    expect(res.status).toBe(200);
+    expect(res.body.errors_total).toBe(1);
+    expect(res.body.errors[0]).toMatch(/Item name is required/);
+    expect(
+      db.prepare("SELECT 1 FROM inventory WHERE upc = 'nameless-image-upc'").get()
+    ).toBeUndefined();
+    expect(uploadsContaining(marker)).toEqual([]);
+  });
+
+  it('removes the image a row saved when writing that row then fails', async () => {
+    db.exec(`
+      CREATE TRIGGER audit_fail_import_insert BEFORE INSERT ON inventory
+      WHEN NEW.upc = 'insert-fails-upc'
+      BEGIN SELECT RAISE(ABORT, 'forced insert failure'); END
+    `);
+    try {
+      const { dataUri, marker } = markedPngDataUri();
+      const res = await request
+        .post('/api/inventory/batch-confirm')
+        .set('Cookie', ownerCookie)
+        .send(
+          confirmBody(
+            [
+              { upc: 'insert-fails-upc', item_name: 'Doomed Row', image: dataUri },
+              { upc: 'insert-survives-upc', item_name: 'Surviving Row' },
+            ],
+            { upc: 'upc', item_name: 'item_name', image: 'image' }
+          )
+        );
+
+      // The failure stays on its own row; the rest of the chunk commits.
+      expect(res.status).toBe(200);
+      expect(res.body.errors_total).toBe(1);
+      expect(res.body.errors[0]).toMatch(/forced insert failure/);
+      expect(
+        db.prepare("SELECT 1 FROM inventory WHERE upc = 'insert-survives-upc'").get()
+      ).toBeDefined();
+      expect(uploadsContaining(marker)).toEqual([]);
+    } finally {
+      db.exec('DROP TRIGGER IF EXISTS audit_fail_import_insert');
+    }
+  });
+
+  it('keeps the image of a row that was written', async () => {
+    const { dataUri, marker } = markedPngDataUri();
+    const res = await request
+      .post('/api/inventory/batch-confirm')
+      .set('Cookie', ownerCookie)
+      .send(
+        confirmBody([{ upc: 'image-kept-upc', item_name: 'Image Kept', image: dataUri }], {
+          upc: 'upc',
+          item_name: 'item_name',
+          image: 'image',
+        })
+      );
+
+    expect(res.status).toBe(200);
+    const row = db.prepare("SELECT image FROM inventory WHERE upc = 'image-kept-upc'").get() as {
+      image: string;
+    };
+    const files = uploadsContaining(marker);
+    expect(files).toEqual([path.basename(row.image)]);
+    fs.unlinkSync(path.join(UPLOADS_DIR, files[0]));
+  });
+
+  // The cleanup unlinks by file name, so each of these doomed-store values names the
+  // victim's file even though the strings differ. The sub-path case is the reported bug;
+  // the query case guards uploadFileName, which strips '?v=2' and so now resolves it to the
+  // victim's file too.
+  const doomedSpellings: Array<[string, (name: string) => string]> = [
+    ['subpath', name => `/uploads/nested/${name}`],
+    ['query', name => `/uploads/${name}?v=2`],
+  ];
+  for (const [label, spelling] of doomedSpellings) {
+    it(`does not unlink a file another store references, given a ${label} spelling`, async () => {
+      const victim = await registerStore(request, {
+        storeName: `Spelling Victim ${label}`,
+        username: `spellvictim${label}`,
+      });
+      const doomed = await registerStore(request, {
+        storeName: `Spelling Doomed ${label}`,
+        username: `spelldoomed${label}`,
+      });
+      const upload = writeSharedUpload(`spelling-${label}`);
+
+      db.prepare(
+        `INSERT INTO inventory (item_name, upc, quantity, image, store_id)
+         VALUES ('Spelling Victim', ?, 1, ?, ?)`
+      ).run(`spell-victim-${label}`, `/uploads/${upload.name}`, victim.storeId);
+      db.prepare(
+        `INSERT INTO inventory (item_name, upc, quantity, image, store_id)
+         VALUES ('Spelling Doomed', ?, 1, ?, ?)`
+      ).run(`spell-doomed-${label}`, spelling(upload.name), doomed.storeId);
+
+      const res = await request
+        .delete(`/api/admin/stores/${doomed.storeId}`)
+        .set('Cookie', superadminCookie);
+
+      expect(res.status).toBe(200);
+      expect(fs.existsSync(upload.diskPath)).toBe(true);
+      fs.unlinkSync(upload.diskPath);
+    });
+  }
+
+  it('treats an absolute URL to an upload as a reference to that file', async () => {
+    const victim = await registerStore(request, {
+      storeName: 'Absolute URL Victim',
+      username: 'absurlvictimowner',
+    });
+    const doomed = await registerStore(request, {
+      storeName: 'Absolute URL Doomed',
+      username: 'absurldoomedowner',
+    });
+    const upload = writeSharedUpload('absolute');
+
+    db.prepare(
+      `INSERT INTO inventory (item_name, upc, quantity, image, store_id)
+       VALUES ('Absolute Victim', 'abs-victim-upc', 1, ?, ?)`
+    ).run(`https://opticapture.example/uploads/${upload.name}`, victim.storeId);
+    db.prepare(
+      `INSERT INTO inventory (item_name, upc, quantity, image, store_id)
+       VALUES ('Absolute Doomed', 'abs-doomed-upc', 1, ?, ?)`
+    ).run(`/uploads/${upload.name}`, doomed.storeId);
+
+    const res = await request
+      .delete(`/api/admin/stores/${doomed.storeId}`)
+      .set('Cookie', superadminCookie);
+
+    expect(res.status).toBe(200);
+    expect(fs.existsSync(upload.diskPath)).toBe(true);
+    fs.unlinkSync(upload.diskPath);
+  });
+
+  it('rejects an oversized JSON file at preview, before any mapping', async () => {
+    const items = Array.from({ length: 50_001 }, (_, i) => ({ upc: `jsoncap-${i}` }));
+    const res = await request
+      .post('/api/inventory/batch-upload')
+      .set('Cookie', ownerCookie)
+      .attach('file', Buffer.from(JSON.stringify({ items })), {
+        filename: 'inventory.json',
+        contentType: 'application/json',
+      });
+
+    expect(res.status).toBe(413);
+    expect(res.body.error).toMatch(/limited to/i);
+  });
+
+  it('rejects an oversized CSV file at preview, before any mapping', async () => {
+    const csv = ['upc', ...Array.from({ length: 50_001 }, (_, i) => `csvcap-${i}`)].join('\n');
+    const res = await request
+      .post('/api/inventory/batch-upload')
+      .set('Cookie', ownerCookie)
+      .attach('file', Buffer.from(csv), { filename: 'inventory.csv', contentType: 'text/csv' });
+
+    expect(res.status).toBe(413);
+    expect(res.body.error).toMatch(/limited to/i);
   });
 });

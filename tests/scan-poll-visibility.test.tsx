@@ -13,7 +13,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PropsWithChildren } from 'react';
-import { act, renderHook } from '@testing-library/react';
+import { act, cleanup, renderHook } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
 // The real provider fetches on mount and useAuth throws outside it; the hook only reads
@@ -42,6 +42,8 @@ function jsonResponse(body: unknown): Response {
 
 describe('desktop scan polling and tab visibility', () => {
   let pollCount = 0;
+  let pollStatus = 200;
+  let sessionsCreated = 0;
   let visibility: DocumentVisibilityState = 'visible';
 
   const wrapper = ({ children }: PropsWithChildren) => <MemoryRouter>{children}</MemoryRouter>;
@@ -63,6 +65,8 @@ describe('desktop scan polling and tab visibility', () => {
 
   beforeEach(() => {
     pollCount = 0;
+    sessionsCreated = 0;
+    pollStatus = 200;
     visibility = 'visible';
     sessionStorage.clear();
     Object.defineProperty(document, 'visibilityState', {
@@ -76,13 +80,18 @@ describe('desktop scan polling and tab visibility', () => {
       vi.fn(async (input: string | URL | Request) => {
         const url = typeof input === 'string' ? input : input.toString();
         if (url.includes('/api/session/create')) {
-          return jsonResponse({ sessionId: SESSION_ID, otp: 'ABCD2345' });
+          // Each new session gets its own id; every one shares the SESSION_ID prefix, so the
+          // poll match below counts them all.
+          sessionsCreated++;
+          const sessionId = sessionsCreated === 1 ? SESSION_ID : `${SESSION_ID}-${sessionsCreated}`;
+          return jsonResponse({ sessionId, otp: 'ABCD2345' });
         }
         if (url.includes('/api/sessions/active')) {
           return jsonResponse([]);
         }
         if (url.includes(`/api/session/${SESSION_ID}`)) {
           pollCount++;
+          if (pollStatus !== 200) return new Response('{}', { status: pollStatus });
           return jsonResponse({ items: [], expires_at: null, status: 'active', label: null });
         }
         return jsonResponse({});
@@ -91,6 +100,9 @@ describe('desktop scan polling and tab visibility', () => {
   });
 
   afterEach(() => {
+    // Without vitest globals, RTL does not unmount on its own, and a hook left mounted keeps
+    // its visibilitychange listener — it would poll inside the next test.
+    cleanup();
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });
@@ -138,9 +150,46 @@ describe('desktop scan polling and tab visibility', () => {
     // The initial full refresh is explicit, not on the interval, so it still runs.
     await advance(0);
     expect(result.current.sessionId).toBe(SESSION_ID);
+    expect(pollCount).toBeGreaterThan(0);
     const afterMount = pollCount;
 
     await advance(POLL_INTERVAL_MS * 5);
     expect(pollCount).toBe(afterMount);
+  });
+
+  it('stays stopped after a terminal answer, even when the tab comes back', async () => {
+    const { result } = renderHook(() => useScanSession(vi.fn()), { wrapper });
+    await advance(0);
+    expect(result.current.sessionId).toBe(SESSION_ID);
+
+    // The session expires: one poll gets the 410 and the interval stops.
+    pollStatus = 410;
+    await advance(POLL_INTERVAL_MS);
+    expect(result.current.pollError).toMatch(/expired/i);
+    const atExpiry = pollCount;
+    await advance(POLL_INTERVAL_MS * 3);
+    expect(pollCount).toBe(atExpiry);
+
+    // Leaving and returning must not ask again for an answer that cannot change.
+    await setVisibility('hidden');
+    await setVisibility('visible');
+    await advance(POLL_INTERVAL_MS * 3);
+    expect(pollCount).toBe(atExpiry);
+  });
+
+  it('polls again once a new session replaces the one that ended', async () => {
+    const { result } = renderHook(() => useScanSession(vi.fn()), { wrapper });
+    await advance(0);
+
+    pollStatus = 410;
+    await advance(POLL_INTERVAL_MS);
+    const atExpiry = pollCount;
+
+    pollStatus = 200;
+    await act(async () => {
+      await result.current.handleResetSession();
+    });
+    await advance(POLL_INTERVAL_MS * 2);
+    expect(pollCount).toBeGreaterThan(atExpiry);
   });
 });
