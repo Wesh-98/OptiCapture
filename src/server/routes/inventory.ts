@@ -11,8 +11,11 @@ import {
   toIsoUtc,
   toSqliteUtc,
   firstQueryValue,
+  removeUploadedFiles,
+  upcVariants,
   UnsupportedImageTypeError,
 } from '../helpers.js';
+import { isReservedCategoryName } from './categories.js';
 import type { AuthRequest } from '../types.js';
 import { logError } from '../logger.js';
 
@@ -39,6 +42,16 @@ const IMPORT_DESTINATION_FIELDS = new Set([
   'external_sku',
 ]);
 const IMPORT_IDENTIFIER_FIELDS = new Set(['upc', 'number', 'external_item_id', 'external_sku']);
+
+// Import ceilings. The whole file used to be written inside one synchronous transaction, so
+// a large import blocked the event loop from first row to last — long enough for /api/health
+// to stop answering and a load balancer to take the instance out of rotation. Rows are now
+// committed in chunks with a turn of the event loop between them, and the per-row diagnostics
+// are capped so neither the response nor the audit log row can grow without bound.
+const MAX_IMPORT_ROWS = 50_000;
+const IMPORT_CHUNK_ROWS = 1_000;
+const MAX_REPORTED_ERRORS = 100;
+const MAX_REPORTED_SKIPPED_ROWS = 100;
 
 // Multer — memory storage for file uploads (xlsx/csv import)
 const upload = multer({
@@ -939,7 +952,15 @@ inventoryRouter.post(
       if (sheets.length === 0)
         return res.status(400).json({ error: 'File is empty or has no data rows' });
 
-      res.json({ sheets, totalRows: sheets.reduce((n, s) => n + s.rowCount, 0) });
+      const totalRows = sheets.reduce((n, s) => n + s.rowCount, 0);
+      if (totalRows > MAX_IMPORT_ROWS) {
+        // Reject here rather than after the user has mapped every column.
+        return res.status(413).json({
+          error: `This file has ${totalRows.toLocaleString('en-US')} rows. Imports are limited to ${MAX_IMPORT_ROWS.toLocaleString('en-US')} rows — split the file and import it in parts.`,
+        });
+      }
+
+      res.json({ sheets, totalRows });
     } catch (err: any) {
       logError('import:upload', err);
       res
@@ -956,7 +977,7 @@ inventoryRouter.post(
   '/inventory/batch-confirm',
   authenticateToken,
   requireOwner,
-  (req: AuthRequest, res) => {
+  asyncRoute<AuthRequest>(async (req: AuthRequest, res) => {
     const { sheetsData } = req.body as {
       sheetsData: {
         sheetName: string;
@@ -1011,14 +1032,39 @@ inventoryRouter.post(
       }
     }
 
+    const requestedRows = sheetsData.reduce((n, sheet) => n + sheet.rows.length, 0);
+    if (requestedRows > MAX_IMPORT_ROWS) {
+      return res.status(413).json({
+        error: `This import has ${requestedRows.toLocaleString('en-US')} rows. Imports are limited to ${MAX_IMPORT_ROWS.toLocaleString('en-US')} rows — split the file and import it in parts.`,
+      });
+    }
+
     const user = req.user;
     const results = {
       added: 0,
       updated: 0,
       skipped: 0,
       errors: [] as string[],
+      // The true count, which may exceed the capped `errors` list above.
+      errors_total: 0,
       skipped_rows: [] as { row_num: number; sheet: string; item_name: string }[],
     };
+
+    // `results.skipped` and `results.errors_total` stay exact; only the per-row detail lists
+    // are capped, so a 50k-row file of bad rows cannot produce a 50k-entry response.
+    const addError = (message: string) => {
+      results.errors_total++;
+      if (results.errors.length < MAX_REPORTED_ERRORS) results.errors.push(message);
+    };
+    const addSkippedRow = (skipped: { row_num: number; sheet: string; item_name: string }) => {
+      results.skipped++;
+      if (results.skipped_rows.length < MAX_REPORTED_SKIPPED_ROWS) {
+        results.skipped_rows.push(skipped);
+      }
+    };
+
+    // Images written to disk by this import, so a rolled-back chunk does not leave them behind.
+    const savedImagePaths: string[] = [];
 
     const categoryIconMap: Record<string, string> = {
       beverages: '/icons/soft-drinks.png',
@@ -1120,6 +1166,10 @@ inventoryRouter.post(
     const getCategoryId = (name: string): number | null => {
       const trimmed = String(name || '').trim();
       if (!trimmed) return null;
+      // GET /categories hides reserved names, so a category created here under one would
+      // leave its items unreachable from the category view. Leave the item uncategorised —
+      // it is still listed and searchable under Inventory.
+      if (isReservedCategoryName(trimmed)) return null;
       const cacheKey = trimmed.toLowerCase();
       if (categoryIdCache.has(cacheKey)) return categoryIdCache.get(cacheKey) ?? null;
       // Case-insensitive, so "snacks" in a file reuses the store's "Snacks" category.
@@ -1150,6 +1200,16 @@ inventoryRouter.post(
     `
     );
     const checkUpc = db.prepare('SELECT id FROM inventory WHERE upc = ? AND store_id = ?');
+    // A barcode with or without its leading zero is the same item. The scan commit path has
+    // always matched both; this one matched the literal string only, so importing a POS file
+    // created a second row for every item a scan had already added under the other variant.
+    const findByUpc = (value: string): { id: number } | null => {
+      for (const variant of upcVariants(value)) {
+        const row = checkUpc.get(variant, user.store_id) as { id: number } | undefined;
+        if (row) return row;
+      }
+      return null;
+    };
     const checkNum = db.prepare('SELECT id FROM inventory WHERE number = ? AND store_id = ?');
     const checkExternalSku = db.prepare(
       'SELECT id FROM inventory WHERE external_sku = ? AND store_id = ?'
@@ -1188,156 +1248,185 @@ inventoryRouter.post(
     WHERE id = ? AND store_id = ?
   `);
 
-    const transaction = db.transaction(() => {
-      for (const sheet of sheetsData) {
-        const fallbackCategoryName = Object.hasOwn(sheet, 'categoryName')
-          ? readImportedString(sheet.categoryName)
-          : !isGenericImportSheetName(sheet.sheetName)
-            ? sheet.sheetName
-            : '';
-        const sheetCatId = fallbackCategoryName ? getCategoryId(fallbackCategoryName) : null;
+    interface ImportWorkItem {
+      sheet: (typeof sheetsData)[number];
+      row: Record<string, any>;
+      rowIdx: number;
+      sheetCatId: number | null;
+    }
 
-        for (const [rowIdx, row] of sheet.rows.entries()) {
-          const item: Record<string, any> = {};
-          for (const [src, dest] of Object.entries(sheet.mapping)) {
-            if (dest && dest !== '__ignore__') item[dest] = row[src];
-          }
-
-          const upc = readImportedString(item.upc);
-          const number = readImportedString(item.number);
-          const externalSystem = readImportedString(item.external_system);
-          const externalStoreId = readImportedString(item.external_store_id);
-          const externalCategoryId = readImportedString(item.external_category_id);
-          const externalItemId = readImportedString(item.external_item_id);
-          const externalSku = readImportedString(item.external_sku);
-          const itemName = readImportedString(item.item_name);
-          if (!externalItemId && !upc && !number && !externalSku) {
-            results.skipped++;
-            const rawName =
-              itemName ||
-              Object.values(row)
-                .map(v => String(v).trim())
-                .find(v => v !== '') ||
-              '(blank)';
-            results.skipped_rows.push({
-              row_num: rowIdx + 2,
-              sheet: sheet.sheetName,
-              item_name: rawName,
-            });
-            continue;
-          }
-
-          // An external item ID is only an identity together with its source system;
-          // without one it could merge with another platform's item of the same ID.
-          if (externalItemId && !externalSystem) {
-            results.errors.push(
-              `"${itemName || upc || number || externalItemId}": External System is required when External Item ID is set`
-            );
-            continue;
-          }
-
-          const rowLabel = itemName || upc || number || externalItemId || externalSku;
-          const qtyResult = parseImportNumber(item.quantity, 'Quantity', { integer: true });
-          const priceResult = parseImportNumber(item.sale_price, 'Sale price');
-          const taxResult = parseImportNumber(item.tax_percent, 'Tax percent', { max: 100 });
-          const numberError = qtyResult.error ?? priceResult.error ?? taxResult.error;
-          if (numberError) {
-            results.errors.push(`"${rowLabel}": ${numberError}`);
-            continue;
-          }
-
-          try {
-            const qty = qtyResult.value;
-            const salePrice = priceResult.value;
-            const taxPct = taxResult.value;
-            const statusText = readImportedString(item.status);
-            const status = statusText ? normalizeInventoryStatus(statusText) : null;
-            const desc = readImportedString(item.description);
-            const unit = readImportedString(item.unit);
-            const tags = readImportedString(item.tag_names);
-            const rowCategory = readImportedString(item.category);
-            const catId = rowCategory ? getCategoryId(rowCategory) : sheetCatId;
-            const rawImage = readImportedString(item.image);
-            const normalizedImage = rawImage ? normalizeImageUrl(rawImage) : null;
-            const image = normalizedImage ? saveBase64Image(normalizedImage) : null;
-            const importedAt = toSqliteUtc();
-
-            const existing: any =
-              (externalItemId
-                ? checkExternalItem.get(externalItemId, user.store_id, externalSystem)
-                : null) ??
-              (upc ? checkUpc.get(upc, user.store_id) : null) ??
-              (number ? checkNum.get(number, user.store_id) : null) ??
-              (externalSku ? checkExternalSku.get(externalSku, user.store_id) : null);
-
-            if (existing) {
-              updateStmt.run(
-                itemName,
-                desc,
-                qty,
-                unit,
-                salePrice,
-                taxPct,
-                tags,
-                catId,
-                status,
-                image,
-                externalSystem,
-                externalStoreId,
-                externalCategoryId,
-                externalItemId,
-                externalSku,
-                importedAt,
-                existing.id,
-                user.store_id
-              );
-              results.updated++;
-            } else {
-              // A new item needs a real name; a placeholder would reach the catalog as if
-              // it were one. Quantity stays empty rather than inventing stock.
-              if (!itemName) {
-                results.errors.push(`"${rowLabel}": Item name is required for a new item`);
-                continue;
-              }
-              insertStmt.run(
-                itemName,
-                desc,
-                qty,
-                unit,
-                salePrice,
-                taxPct,
-                upc || null,
-                number || null,
-                tags,
-                catId,
-                status ?? 'Active',
-                image,
-                externalSystem || null,
-                externalStoreId || null,
-                externalCategoryId || null,
-                externalItemId || null,
-                externalSku || null,
-                importedAt,
-                'imported',
-                user.store_id
-              );
-              results.added++;
-            }
-          } catch (err: any) {
-            results.errors.push(`"${itemName || upc || number}": ${err.message}`);
-          }
-        }
+    const processRow = ({ sheet, row, rowIdx, sheetCatId }: ImportWorkItem) => {
+      const item: Record<string, any> = {};
+      for (const [src, dest] of Object.entries(sheet.mapping)) {
+        if (dest && dest !== '__ignore__') item[dest] = row[src];
       }
+
+      const upc = readImportedString(item.upc);
+      const number = readImportedString(item.number);
+      const externalSystem = readImportedString(item.external_system);
+      const externalStoreId = readImportedString(item.external_store_id);
+      const externalCategoryId = readImportedString(item.external_category_id);
+      const externalItemId = readImportedString(item.external_item_id);
+      const externalSku = readImportedString(item.external_sku);
+      const itemName = readImportedString(item.item_name);
+      if (!externalItemId && !upc && !number && !externalSku) {
+        const rawName =
+          itemName ||
+          Object.values(row)
+            .map(v => String(v).trim())
+            .find(v => v !== '') ||
+          '(blank)';
+        addSkippedRow({
+          row_num: rowIdx + 2,
+          sheet: sheet.sheetName,
+          item_name: rawName,
+        });
+        return;
+      }
+
+      // An external item ID is only an identity together with its source system;
+      // without one it could merge with another platform's item of the same ID.
+      if (externalItemId && !externalSystem) {
+        addError(
+          `"${itemName || upc || number || externalItemId}": External System is required when External Item ID is set`
+        );
+        return;
+      }
+
+      const rowLabel = itemName || upc || number || externalItemId || externalSku;
+      const qtyResult = parseImportNumber(item.quantity, 'Quantity', { integer: true });
+      const priceResult = parseImportNumber(item.sale_price, 'Sale price');
+      const taxResult = parseImportNumber(item.tax_percent, 'Tax percent', { max: 100 });
+      const numberError = qtyResult.error ?? priceResult.error ?? taxResult.error;
+      if (numberError) {
+        addError(`"${rowLabel}": ${numberError}`);
+        return;
+      }
+
+      try {
+        const qty = qtyResult.value;
+        const salePrice = priceResult.value;
+        const taxPct = taxResult.value;
+        const statusText = readImportedString(item.status);
+        const status = statusText ? normalizeInventoryStatus(statusText) : null;
+        const desc = readImportedString(item.description);
+        const unit = readImportedString(item.unit);
+        const tags = readImportedString(item.tag_names);
+        const rowCategory = readImportedString(item.category);
+        const catId = rowCategory ? getCategoryId(rowCategory) : sheetCatId;
+        const rawImage = readImportedString(item.image);
+        const normalizedImage = rawImage ? normalizeImageUrl(rawImage) : null;
+        const image = normalizedImage ? saveBase64Image(normalizedImage) : null;
+        if (image?.startsWith('/uploads/')) savedImagePaths.push(image);
+        const importedAt = toSqliteUtc();
+
+        const existing: any =
+          (externalItemId
+            ? checkExternalItem.get(externalItemId, user.store_id, externalSystem)
+            : null) ??
+          (upc ? findByUpc(upc) : null) ??
+          (number ? checkNum.get(number, user.store_id) : null) ??
+          (externalSku ? checkExternalSku.get(externalSku, user.store_id) : null);
+
+        if (existing) {
+          updateStmt.run(
+            itemName,
+            desc,
+            qty,
+            unit,
+            salePrice,
+            taxPct,
+            tags,
+            catId,
+            status,
+            image,
+            externalSystem,
+            externalStoreId,
+            externalCategoryId,
+            externalItemId,
+            externalSku,
+            importedAt,
+            existing.id,
+            user.store_id
+          );
+          results.updated++;
+        } else {
+          // A new item needs a real name; a placeholder would reach the catalog as if
+          // it were one. Quantity stays empty rather than inventing stock.
+          if (!itemName) {
+            addError(`"${rowLabel}": Item name is required for a new item`);
+            return;
+          }
+          insertStmt.run(
+            itemName,
+            desc,
+            qty,
+            unit,
+            salePrice,
+            taxPct,
+            upc || null,
+            number || null,
+            tags,
+            catId,
+            status ?? 'Active',
+            image,
+            externalSystem || null,
+            externalStoreId || null,
+            externalCategoryId || null,
+            externalItemId || null,
+            externalSku || null,
+            importedAt,
+            'imported',
+            user.store_id
+          );
+          results.added++;
+        }
+      } catch (err: any) {
+        addError(`"${itemName || upc || number}": ${err.message}`);
+      }
+    };
+
+    const commitChunk = db.transaction((chunk: ImportWorkItem[]) => {
+      for (const workItem of chunk) processRow(workItem);
     });
 
+    // Resolve each sheet's fallback category once, then flatten every row into one list so
+    // the commit loop below can slice it into chunks regardless of sheet boundaries.
+    const work: ImportWorkItem[] = [];
+    for (const sheet of sheetsData) {
+      const fallbackCategoryName = Object.hasOwn(sheet, 'categoryName')
+        ? readImportedString(sheet.categoryName)
+        : !isGenericImportSheetName(sheet.sheetName)
+          ? sheet.sheetName
+          : '';
+      const sheetCatId = fallbackCategoryName ? getCategoryId(fallbackCategoryName) : null;
+      for (const [rowIdx, row] of sheet.rows.entries()) {
+        work.push({ sheet, row, rowIdx, sheetCatId });
+      }
+    }
+
     try {
-      transaction();
-      const totalRows = sheetsData.reduce((n, s) => n + s.rows.length, 0);
-      const skippedSummary =
-        results.skipped_rows.length > 0 ? ` | skipped:${JSON.stringify(results.skipped_rows)}` : '';
+      for (let start = 0; start < work.length; start += IMPORT_CHUNK_ROWS) {
+        const chunk = work.slice(start, start + IMPORT_CHUNK_ROWS);
+        const imagesBeforeChunk = savedImagePaths.length;
+        try {
+          commitChunk(chunk);
+        } catch (chunkError) {
+          // The chunk rolled back, so the images it wrote belong to no row any more.
+          removeUploadedFiles(savedImagePaths.splice(imagesBeforeChunk));
+          throw chunkError;
+        }
+        // Hand the event loop a turn between chunks so health checks and phone scans are
+        // still answered while a large import runs.
+        if (start + IMPORT_CHUNK_ROWS < work.length) {
+          await new Promise(resolve => setImmediate(resolve));
+        }
+      }
+
+      // Counts only: the full skipped-row list used to be serialised into this one column.
       db.prepare('INSERT INTO logs (action, details, user_id, store_id) VALUES (?, ?, ?, ?)').run(
         'IMPORT',
-        `Imported ${totalRows} rows across ${sheetsData.length} sheet(s): +${results.added} new, ~${results.updated} updated, ${results.skipped} skipped${skippedSummary}`,
+        `Imported ${work.length} rows across ${sheetsData.length} sheet(s): +${results.added} new, ~${results.updated} updated, ${results.skipped} skipped, ${results.errors_total} failed`,
         user.id,
         user.store_id
       );
@@ -1346,5 +1435,5 @@ inventoryRouter.post(
       logError('inventory:batch-confirm', err);
       res.status(500).json({ error: 'An internal error occurred' });
     }
-  }
+  })
 );

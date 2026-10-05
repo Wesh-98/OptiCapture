@@ -10,7 +10,7 @@ const RESERVED_CATEGORY_NAMES = ['inventory'];
 const reservedCategoryPlaceholders = RESERVED_CATEGORY_NAMES.map(() => '?').join(', ');
 const visibleCategoryCondition = `LOWER(TRIM(c.name)) NOT IN (${reservedCategoryPlaceholders})`;
 
-function isReservedCategoryName(name: string): boolean {
+export function isReservedCategoryName(name: string): boolean {
   return RESERVED_CATEGORY_NAMES.includes(name.trim().toLowerCase());
 }
 
