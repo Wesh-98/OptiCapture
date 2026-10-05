@@ -3,7 +3,12 @@ import { cn } from '../../lib/utils';
 import type { Category } from './types';
 import { iconMap, colorMap } from './types';
 import type { PendingCategoryAction } from '../../hooks/useCategoryManagement';
-import { describeCategoryAction } from './categoryActions';
+import {
+  armedActionFor,
+  categoryMenuReducer,
+  describeCategoryAction,
+  type CategoryMenuEvent,
+} from './categoryActions';
 
 interface Props {
   categories: Category[];
@@ -34,6 +39,14 @@ export function CategoriesTable({
   onCategoryAction,
   onDeleteCategory,
 }: Readonly<Props>) {
+  // Both halves of the menu state live in different owners (the page holds which menu is
+  // open, the hook holds what is armed), so apply the reducer's result to both setters.
+  const dispatchMenuEvent = (event: CategoryMenuEvent) => {
+    const next = categoryMenuReducer({ activeActionMenu, pendingCategoryAction }, event);
+    setActiveActionMenu(next.activeActionMenu);
+    setPendingCategoryAction(next.pendingCategoryAction);
+  };
+
   const filtered = categories.filter(
     c =>
       c.name.toLowerCase().includes(search.toLowerCase()) &&
@@ -47,7 +60,7 @@ export function CategoriesTable({
           role="presentation"
           aria-hidden="true"
           className="fixed inset-0 z-10"
-          onClick={() => setActiveActionMenu(null)}
+          onClick={() => dispatchMenuEvent({ type: 'closeMenu' })}
         />
       )}
       <table className="w-full min-w-[640px] table-fixed text-left">
@@ -73,8 +86,7 @@ export function CategoriesTable({
             const CategoryIcon = !isImageIcon ? (iconMap[cat.icon] ?? Package) : Package;
             const isInactive = cat.status !== 'Active';
             const dropUp = idx >= arr.length - 2;
-            const armedAction =
-              pendingCategoryAction?.id === cat.id ? pendingCategoryAction.action : null;
+            const armedAction = armedActionFor(pendingCategoryAction, cat.id);
             const armedCopy = armedAction ? describeCategoryAction(armedAction, cat) : null;
             return (
               <tr
@@ -139,7 +151,7 @@ export function CategoriesTable({
                     </button>
                     <button
                       onClick={() =>
-                        setActiveActionMenu(activeActionMenu === cat.id ? null : cat.id)
+                        dispatchMenuEvent({ type: 'toggleMenu', categoryId: cat.id })
                       }
                       className="p-2 hover:bg-slate-200 rounded-full text-slate-400 hover:text-navy-900 transition-colors"
                       title="More actions"
@@ -169,19 +181,21 @@ export function CategoriesTable({
                             <button
                               className="flex-1 rounded-md bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700"
                               onClick={() => {
+                                // Disarm and close first: the confirmation for an action
+                                // already on its way must not be presentable again.
+                                dispatchMenuEvent({ type: 'confirm' });
                                 if (armedAction === 'deleteCategory') {
                                   onDeleteCategory(cat.id);
                                 } else if (armedAction) {
                                   onCategoryAction(cat.id, armedAction);
                                 }
-                                setActiveActionMenu(null);
                               }}
                             >
                               {armedCopy.confirmLabel}
                             </button>
                             <button
                               className="rounded-md border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
-                              onClick={() => setPendingCategoryAction(null)}
+                              onClick={() => dispatchMenuEvent({ type: 'cancelArm' })}
                             >
                               Cancel
                             </button>
@@ -193,7 +207,7 @@ export function CategoriesTable({
                             className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2"
                             onClick={() => {
                               onViewItems(cat);
-                              setActiveActionMenu(null);
+                              dispatchMenuEvent({ type: 'closeMenu' });
                             }}
                           >
                             <Eye size={14} /> View Items
@@ -205,7 +219,7 @@ export function CategoriesTable({
                                 className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2"
                                 onClick={() => {
                                   onEditCategory(cat);
-                                  setActiveActionMenu(null);
+                                  dispatchMenuEvent({ type: 'closeMenu' });
                                 }}
                               >
                                 <Pencil size={14} /> Edit Category
@@ -216,8 +230,9 @@ export function CategoriesTable({
                               <button
                                 className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2"
                                 onClick={() =>
-                                  setPendingCategoryAction({
-                                    id: cat.id,
+                                  dispatchMenuEvent({
+                                    type: 'arm',
+                                    categoryId: cat.id,
                                     action: cat.status === 'Active' ? 'deactivate' : 'activate',
                                   })
                                 }
@@ -236,7 +251,11 @@ export function CategoriesTable({
                               <button
                                 className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 flex items-center gap-2"
                                 onClick={() =>
-                                  setPendingCategoryAction({ id: cat.id, action: 'deleteItems' })
+                                  dispatchMenuEvent({
+                                    type: 'arm',
+                                    categoryId: cat.id,
+                                    action: 'deleteItems',
+                                  })
                                 }
                               >
                                 <Trash2 size={14} /> Delete All Items
@@ -247,7 +266,11 @@ export function CategoriesTable({
                               <button
                                 className="w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-red-50 flex items-center gap-2"
                                 onClick={() =>
-                                  setPendingCategoryAction({ id: cat.id, action: 'deleteCategory' })
+                                  dispatchMenuEvent({
+                                    type: 'arm',
+                                    categoryId: cat.id,
+                                    action: 'deleteCategory',
+                                  })
                                 }
                               >
                                 <Trash2 size={14} /> Delete Category
