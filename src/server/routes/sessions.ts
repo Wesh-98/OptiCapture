@@ -7,6 +7,7 @@ import type { AuthRequest } from '../types.js';
 import { isTokenRevoked, upcCache, upcCacheSet, UPC_CACHE_TTL } from '../cache.js';
 import {
   UnsupportedImageTypeError,
+  firstQueryValue,
   generateOTP,
   lookupProductByUpc,
   normalizeImageUrl,
@@ -261,13 +262,10 @@ sessionsRouter.get('/session/:id/meta', authenticateToken, (req: AuthRequest, re
 
 sessionsRouter.get('/session/:id/items', scanLimiter, (req, res) => {
   const { id: sessionId } = req.params;
-  const otp = req.query.otp;
+  const otp = firstQueryValue(req.query.otp);
   // Apply the same 128-char cap used by the POST /scan route — the GET path
   // was missed in the prior fix round.
-  const device_id =
-    typeof req.query.device_id === 'string'
-      ? req.query.device_id.slice(0, 128)
-      : req.query.device_id;
+  const device_id = firstQueryValue(req.query.device_id)?.slice(0, 128);
 
   if (!otp) return res.status(400).json({ error: 'OTP required' });
 
@@ -547,7 +545,7 @@ sessionsRouter.post(
         ? String(existing.recent_scan_ids).split(' ')
         : [];
       if (existing && scanId && recentScanIds.includes(scanId)) {
-        return { item: readBack(existing.id), duplicate: true };
+        return { item: readBack(existing.id), duplicate: true, rowId: existing.id as number };
       }
 
       let rowId: number | bigint;
@@ -620,10 +618,10 @@ sessionsRouter.post(
 
       // Read back by row id: a scan merged into an existing leading-zero variant keeps that
       // row's UPC, so looking it up by the scanned UPC would find nothing.
-      return { item: readBack(rowId), duplicate: false };
+      return { item: readBack(rowId), duplicate: false, rowId: Number(rowId) };
     });
 
-    const { item: updatedItem, duplicate } = upsertScan();
+    const { item: updatedItem, duplicate, rowId: stagedRowId } = upsertScan();
 
     // Respond immediately — phone is unblocked
     res.json({ success: true, item: updatedItem, duplicate });
@@ -659,7 +657,7 @@ sessionsRouter.post(
               END,
               lookup_status = ?, product_name = COALESCE(?, product_name),
               brand = COALESCE(?, brand), image = COALESCE(?, image), source = ?
-          WHERE session_id = ? AND upc = ? AND source != 'manual'
+          WHERE id = ? AND session_id = ? AND source != 'manual'
         `
             ).run(
               resolvedStatus,
@@ -667,8 +665,11 @@ sessionsRouter.post(
               resolvedBrand,
               resolvedImage,
               resolvedSource,
-              id,
-              cleanUpc
+              // Target the staged row by id. A scan of the leading-zero variant merges into
+              // the row created by the first variant, which keeps that first UPC, so matching
+              // on the scanned UPC here found nothing and the name never arrived.
+              stagedRowId,
+              id
             );
           }
         })
@@ -860,6 +861,22 @@ sessionsRouter.post(
       verifyIds?: number[];
     };
     const user = req.user;
+
+    // Reject malformed shapes before using them: a non-array `assignments` with a
+    // truthy .length (a string, say) reached .map() and threw, answering 500 to what is
+    // a bad request.
+    if (
+      (assignments !== undefined && !Array.isArray(assignments)) ||
+      (selectedIds !== undefined && !Array.isArray(selectedIds)) ||
+      (verifyIds !== undefined && !Array.isArray(verifyIds))
+    ) {
+      return res
+        .status(400)
+        .json({ error: 'assignments, selectedIds and verifyIds must be arrays' });
+    }
+    if (assignments?.some(entry => typeof entry !== 'object' || entry === null)) {
+      return res.status(400).json({ error: 'Each assignment must be an object' });
+    }
 
     // Build a normalised id→category_id map
     let assignmentMap = new Map<number, number>();

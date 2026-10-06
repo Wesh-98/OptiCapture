@@ -306,7 +306,9 @@ authRouter.get(
 
     try {
       const { tokens } = await googleClient.getToken(code);
-      googleClient.setCredentials(tokens);
+      // No setCredentials here: verifyIdToken takes the token explicitly, and googleClient is
+      // a module-level singleton, so storing per-user credentials on it would let concurrent
+      // sign-ins overwrite each other's state.
       const ticket = await googleClient.verifyIdToken({
         idToken: tokens.id_token!,
         audience: process.env.GOOGLE_CLIENT_ID,

@@ -237,8 +237,8 @@ export default function Dashboard() {
             isOwner={isOwner}
             activeActionMenu={activeActionMenu}
             setActiveActionMenu={setActiveActionMenu}
-            deletingCategoryId={cats.deletingCategoryId}
-            setDeletingCategoryId={cats.setDeletingCategoryId}
+            pendingCategoryAction={cats.pendingCategoryAction}
+            setPendingCategoryAction={cats.setPendingCategoryAction}
             onViewItems={handleViewItems}
             onEditCategory={cats.openEditCat}
             onCategoryAction={cats.handleCategoryAction}

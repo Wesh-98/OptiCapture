@@ -314,8 +314,9 @@ describe('logs route', () => {
       .query({ limit: '-20' });
 
     expect(res.status).toBe(200);
-    expect(res.body).toHaveLength(1);
-    expect(res.body[0].details).toBe('Taker-visible log');
+    // GET /logs always answers with the paginated envelope, with or without ?page.
+    expect(res.body.items).toHaveLength(1);
+    expect(res.body.items[0].details).toBe('Taker-visible log');
   });
   it('rejects malformed date parameters', async () => {
     const badFromRes = await request
@@ -364,13 +365,13 @@ describe('logs route', () => {
       .query({ from: '2026-01-02', to: '2026-01-02', limit: '2' });
 
     expect(res.status).toBe(200);
-    expect(res.body).toHaveLength(2);
-    expect(res.body.map((entry: any) => entry.details)).toEqual([
+    expect(res.body.items).toHaveLength(2);
+    expect(res.body.items.map((entry: any) => entry.details)).toEqual([
       'Filtered admin log B',
       'Filtered admin log A',
     ]);
-    expect(res.body.every((entry: any) => entry.store_id === 1)).toBe(true);
-    expect(res.body.every((entry: any) => entry.username === 'admin')).toBe(true);
+    expect(res.body.items.every((entry: any) => entry.store_id === 1)).toBe(true);
+    expect(res.body.items.every((entry: any) => entry.username === 'admin')).toBe(true);
   });
 
   it('filters and paginates logs in SQL before returning a page', async () => {

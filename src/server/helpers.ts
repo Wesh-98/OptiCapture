@@ -28,6 +28,21 @@ export class UnsupportedImageTypeError extends Error {
   }
 }
 
+/**
+ * Express parses a repeated query parameter (?q=a&q=b) into an array. Those arrays reached
+ * better-sqlite3's binder, which refuses them, turning a malformed URL into a 500 — on
+ * /session/:id/items that was reachable without authenticating. Collapse to the first value,
+ * matching how a single value behaves, and drop anything that is not a string.
+ */
+export function firstQueryValue(value: unknown): string | undefined {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) {
+    const [first] = value;
+    return typeof first === 'string' ? first : undefined;
+  }
+  return undefined;
+}
+
 export function normalizeUsername(value: unknown): string {
   return typeof value === 'string' ? value.trim().toLowerCase() : '';
 }
@@ -82,6 +97,55 @@ export function saveBase64Image(base64Data: string): string {
   const filename = `${randomUUID()}.${ext}`;
   fs.writeFileSync(path.join(UPLOADS_DIR, filename), buffer);
   return `/uploads/${filename}`;
+}
+
+/**
+ * The upload this saveBase64Image call created, or null when it created nothing.
+ *
+ * saveBase64Image returns its input unchanged for anything that is not a data URI, so an
+ * imported spreadsheet cell holding an existing '/uploads/...' path comes back verbatim.
+ * Treating that as a file this import wrote would put somebody else's upload on the
+ * rollback cleanup list, and deleting a path is not recoverable.
+ */
+export function savedUploadPath(input: string, result: string): string | null {
+  if (result === input) return null;
+  return result.startsWith('/uploads/') ? result : null;
+}
+
+/**
+ * The file in UPLOADS_DIR that a stored upload reference resolves to. Every check of
+ * whether a file is still in use must compare by this, the same key the unlink uses:
+ * '/uploads/sub/x.png' and '/uploads/x.png' are different strings but the same file.
+ */
+export function uploadFileName(value: string): string {
+  return path.basename(value.split(/[?#]/)[0]);
+}
+
+/**
+ * Deletes files previously returned by saveBase64Image. Used when the work that saved them
+ * is rolled back or its owning store is deleted — otherwise every rolled-back import and
+ * every deleted store leaves its images on disk forever.
+ *
+ * Callers must pass only paths they own: a '/uploads/...' value stored in a row is not
+ * proof that the row's store owns the file, because an import can write an arbitrary path
+ * into inventory.image. Paths are reduced to uploadFileName so a stored value can never
+ * escape the uploads directory, and a missing file is not an error.
+ *
+ * Unlinking is async so neither a store deletion nor an import rollback blocks the event
+ * loop while it walks a long list.
+ */
+export async function removeUploadedFiles(paths: Iterable<string>): Promise<number> {
+  let removed = 0;
+  for (const value of paths) {
+    if (typeof value !== 'string' || !value.startsWith('/uploads/')) continue;
+    try {
+      await fs.promises.unlink(path.join(UPLOADS_DIR, uploadFileName(value)));
+      removed++;
+    } catch {
+      // Already gone, or never written — nothing to clean up.
+    }
+  }
+  return removed;
 }
 
 // Normalize Google Drive sharing URLs to embeddable thumbnail URLs

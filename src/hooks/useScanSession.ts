@@ -5,6 +5,9 @@ import type { SessionItem, UiStatus } from '../components/scan/types';
 import { parseServerTimestamp } from '../lib/utils';
 type FetchInit = Parameters<typeof globalThis.fetch>[1];
 
+/** Desktop live-feed cadence. Paused entirely while the tab is hidden. */
+export const POLL_INTERVAL_MS = 2000;
+
 export interface PollCursor {
   updatedAt: string;
   id: number;
@@ -154,6 +157,76 @@ export function evaluateSessionDraftAlert(params: SessionDraftAlertEvaluation): 
     nextLastLongSessionAlertAt: params.lastLongSessionAlertAt,
     nextIdleAlertFired: params.idleAlertFired,
   };
+}
+
+/**
+ * Thrown when a poll gets a real HTTP answer. The server replied, so this is not a
+ * connectivity problem and must not be reported as one.
+ */
+export class PollResponseError extends Error {
+  readonly status: number;
+
+  constructor(status: number) {
+    super(`Polling failed: ${status}`);
+    this.name = 'PollResponseError';
+    this.status = status;
+  }
+}
+
+/**
+ * A poll that fails because the session is gone, expired, or no longer ours is a terminal
+ * state with its own explanation — retrying cannot help. Previously every failure, including
+ * these, became "Server is offline or unreachable. Restart the server and refresh", which
+ * told store staff to restart a server that was answering perfectly well.
+ */
+export function getPollResponseOutcome(status: number): {
+  shouldStopPolling: boolean;
+  uiStatus: UiStatus | null;
+  statusMessage: string | null;
+  pollError: string;
+} | null {
+  if (status === 410) {
+    return {
+      shouldStopPolling: true,
+      uiStatus: 'error',
+      statusMessage: 'This scan session has expired.',
+      pollError: 'Session expired - start a new session to keep scanning.',
+    };
+  }
+  if (status === 403 || status === 404) {
+    return {
+      shouldStopPolling: true,
+      uiStatus: 'error',
+      statusMessage: 'This scan session is no longer available.',
+      pollError: 'Session not available - start a new session to keep scanning.',
+    };
+  }
+  if (status === 409) {
+    return {
+      shouldStopPolling: true,
+      uiStatus: 'error',
+      statusMessage: 'Select a store to continue.',
+      pollError: 'Store selection required - pick a store, then reopen this page.',
+    };
+  }
+  if (status === 401) {
+    return {
+      shouldStopPolling: true,
+      uiStatus: 'error',
+      statusMessage: 'Your session has ended. Please log in again.',
+      pollError: 'Signed out - log in again to keep scanning.',
+    };
+  }
+  if (status === 429) {
+    // Retryable: the limiter window passes on its own, so keep polling.
+    return {
+      shouldStopPolling: false,
+      uiStatus: null,
+      statusMessage: null,
+      pollError: 'Too many requests - the live feed will catch up shortly.',
+    };
+  }
+  return null;
 }
 
 export function getPollFailureOutcome(failCount: number): {
@@ -428,6 +501,10 @@ export function useScanSession(
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isBusyRef = useRef(false);
   const pollFailCountRef = useRef(0);
+  // Set when the server answers that this session is over for us (expired, gone, signed
+  // out). Nothing but a different session can change that answer, so neither the interval
+  // nor a return to the tab may poll again until the session itself changes.
+  const pollHaltedRef = useRef(false);
   const lastPollCursorRef = useRef<PollCursor | null>(null);
   const manuallyDeselectedRef = useRef<Set<number>>(new Set());
   const sessionStartTimeRef = useRef<number | null>(null);
@@ -532,7 +609,7 @@ export function useScanSession(
       try {
         const cursor = fullRefresh ? null : lastPollCursorRef.current;
         const res = await fetch(buildPollUrl(sessionId, cursor), { credentials: 'include' });
-        if (!res.ok) throw new Error(`Polling failed: ${res.status}`);
+        if (!res.ok) throw new PollResponseError(res.status);
 
         const { items: data, expiresAt, status, label } = parseSessionEnvelope(await res.json());
         if (expiresAt) setSessionExpiresAt(expiresAt);
@@ -584,9 +661,21 @@ export function useScanSession(
         }
 
         setPollError(null);
-      } catch {
-        pollFailCountRef.current += 1;
-        const failure = getPollFailureOutcome(pollFailCountRef.current);
+      } catch (error) {
+        // A response with a status is the server telling us something specific; only a
+        // transport failure means it might be unreachable.
+        const responseOutcome =
+          error instanceof PollResponseError ? getPollResponseOutcome(error.status) : null;
+
+        let failure: ReturnType<typeof getPollFailureOutcome>;
+        if (responseOutcome) {
+          failure = responseOutcome;
+          if (responseOutcome.shouldStopPolling) pollHaltedRef.current = true;
+        } else {
+          pollFailCountRef.current += 1;
+          failure = getPollFailureOutcome(pollFailCountRef.current);
+        }
+
         if (failure.shouldStopPolling && pollIntervalRef.current) {
           globalThis.clearInterval(pollIntervalRef.current);
           pollIntervalRef.current = null;
@@ -608,11 +697,36 @@ export function useScanSession(
 
   const startPolling = useCallback(() => {
     stopPolling();
-    if (!sessionId) return;
+    if (!sessionId || pollHaltedRef.current) return;
+    // A hidden tab cannot show the feed, and every poll still counts against the store's
+    // per-IP request budget — a handful of forgotten tabs was enough to exhaust it for
+    // everyone in the shop. Poll only while this tab is actually visible.
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
     pollIntervalRef.current = globalThis.setInterval(() => {
       void fetchSessionItems();
-    }, 2000);
+    }, POLL_INTERVAL_MS);
   }, [sessionId, fetchSessionItems, stopPolling]);
+
+  // Resume on the way back, with one immediate catch-up poll so the feed is current before
+  // the next interval tick.
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+
+    const handleVisibilityChange = () => {
+      if (getSessionActivationAction(sessionId, sessionStatusRef.current) !== 'poll') return;
+      if (pollHaltedRef.current) return;
+
+      if (document.visibilityState === 'visible') {
+        void fetchSessionItems();
+        startPolling();
+      } else {
+        stopPolling();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [sessionId, fetchSessionItems, startPolling, stopPolling]);
 
   useEffect(() => {
     const resumeFromParam = async (paramSessionId: string): Promise<boolean> => {
@@ -735,6 +849,8 @@ export function useScanSession(
       return;
     }
 
+    // A new or resumed session starts with a clean slate.
+    pollHaltedRef.current = false;
     lastPollCursorRef.current = null;
     void fetchSessionItems(true);
 

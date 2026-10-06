@@ -1,6 +1,22 @@
 import { useState } from 'react';
 import type { Category } from '../components/dashboard/types';
 
+/**
+ * Every category action below rewrites or deletes rows in bulk and cannot be undone,
+ * so each one is armed first and only runs on a second, explicit confirmation.
+ *
+ * The armed action's lifetime belongs to the row menu (see categoryMenuReducer), which
+ * disarms at dispatch time. These handlers deliberately do not clear it on completion:
+ * a request settling later would otherwise disarm a confirmation the user had just armed
+ * again.
+ */
+export type CategoryActionKind = 'activate' | 'deactivate' | 'deleteItems' | 'deleteCategory';
+
+export interface PendingCategoryAction {
+  id: number;
+  action: CategoryActionKind;
+}
+
 export function useCategoryManagement(
   onStatsChange: () => void,
   addToast: (type: 'success' | 'error' | 'warning', message: string) => void
@@ -11,7 +27,8 @@ export function useCategoryManagement(
   const [catForm, setCatForm] = useState({ name: '', icon: '' });
   const [catError, setCatError] = useState('');
   const [catSaving, setCatSaving] = useState(false);
-  const [deletingCategoryId, setDeletingCategoryId] = useState<number | null>(null);
+  const [pendingCategoryAction, setPendingCategoryAction] =
+    useState<PendingCategoryAction | null>(null);
 
   const fetchCategories = async () => {
     const res = await fetch('/api/categories', { credentials: 'include' });
@@ -74,7 +91,6 @@ export function useCategoryManagement(
         const payload = (await res.json().catch(() => null)) as { error?: string } | null;
         throw new Error(payload?.error || 'Failed to delete category');
       }
-      setDeletingCategoryId(null);
       await fetchCategories();
       onStatsChange();
     } catch (error) {
@@ -126,8 +142,8 @@ export function useCategoryManagement(
     catError,
     setCatError,
     catSaving,
-    deletingCategoryId,
-    setDeletingCategoryId,
+    pendingCategoryAction,
+    setPendingCategoryAction,
     fetchCategories,
     openAddCat,
     openEditCat,

@@ -88,21 +88,26 @@ export function ImportResultPanel({
         />
       </div>
 
-      {result.errors.length > 0 && (
+      {result.errors_total > 0 && (
         <div className="mb-6 rounded-xl border border-red-100 bg-red-50 p-4">
           <div className="mb-2 flex items-center gap-2 font-medium text-red-700">
             <AlertTriangle size={16} />
-            {result.errors.length} row{result.errors.length !== 1 ? 's' : ''} failed
+            {result.errors_total} row{result.errors_total !== 1 ? 's' : ''} failed
           </div>
           <ul className="max-h-40 space-y-1 overflow-y-auto font-mono text-xs text-red-600">
             {result.errors.map(error => (
               <li key={error}>{error}</li>
             ))}
           </ul>
+          {result.errors_total > result.errors.length && (
+            <p className="mt-2 text-xs text-red-500">
+              Showing the first {result.errors.length} of {result.errors_total} failures.
+            </p>
+          )}
         </div>
       )}
 
-      {result.skipped_rows.length > 0 && (
+      {result.skipped > 0 && result.skipped_rows.length > 0 && (
         <div className="mb-6 rounded-xl border border-amber-100 bg-amber-50 p-4">
           <button
             onClick={() => setShowSkipped(previous => !previous)}
@@ -110,8 +115,7 @@ export function ImportResultPanel({
           >
             <div className="flex items-center gap-2">
               <AlertTriangle size={16} />
-              {result.skipped_rows.length} row{result.skipped_rows.length !== 1 ? 's' : ''} skipped{' '}
-              (no UPC or SKU)
+              {result.skipped} row{result.skipped !== 1 ? 's' : ''} skipped (no UPC or SKU)
             </div>
             <ChevronRight
               size={16}
@@ -129,6 +133,11 @@ export function ImportResultPanel({
                 </li>
               ))}
             </ul>
+          )}
+          {showSkipped && result.skipped > result.skipped_rows.length && (
+            <p className="mt-2 text-xs text-amber-700">
+              Showing the first {result.skipped_rows.length} of {result.skipped} skipped rows.
+            </p>
           )}
         </div>
       )}
