@@ -238,6 +238,13 @@ function parseImportResult(data: unknown): ImportResult {
     updated: readRequiredCount(data.updated),
     skipped: readRequiredCount(data.skipped),
     errors: normalizeStringList(data.errors),
+    // The server caps the message list; fall back to its length when the total is absent.
+    errors_total:
+      typeof data.errors_total === 'number' &&
+      Number.isFinite(data.errors_total) &&
+      data.errors_total >= 0
+        ? Math.trunc(data.errors_total)
+        : normalizeStringList(data.errors).length,
     skipped_rows: normalizeSkippedRows(data.skipped_rows),
   };
 }

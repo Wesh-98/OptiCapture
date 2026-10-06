@@ -6,8 +6,10 @@ import { BCRYPT_COST } from '../cache.js';
 import {
   generateTempPassword,
   normalizeUsername,
+  removeUploadedFiles,
   saveBase64Image,
   UnsupportedImageTypeError,
+  uploadFileName,
 } from '../helpers.js';
 import type { AuthRequest } from '../types.js';
 import { logError } from '../logger.js';
@@ -30,6 +32,27 @@ function isStoreRole(value: unknown): value is StoreRole {
 
 function isValidEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+/**
+ * The upload files some surviving row still points at. A '/uploads/...' value in a deleted
+ * store's row is not proof that the store owned the file — inventory POST/PUT and imports
+ * can write an arbitrary path into inventory.image — so deleting a store must never unlink
+ * a file something else still points at.
+ *
+ * Compared by uploadFileName, the key the unlink uses, not by the stored string:
+ * '/uploads/sub/x.png' and an absolute 'https://…/uploads/x.png' both name x.png. One scan
+ * builds the set rather than one query per file being deleted.
+ */
+function referencedUploadFileNames(): Set<string> {
+  const rows = db
+    .prepare(
+      `SELECT image AS path FROM inventory WHERE image LIKE '%/uploads/%'
+       UNION SELECT logo AS path FROM stores WHERE logo LIKE '%/uploads/%'
+       UNION SELECT image AS path FROM session_items WHERE image LIKE '%/uploads/%'`
+    )
+    .all() as Array<{ path: string }>;
+  return new Set(rows.map(row => uploadFileName(row.path)));
 }
 
 function writeAdminLog(details: string, userId: number, storeId: number) {
@@ -306,13 +329,29 @@ adminRouter.delete(
 );
 
 // Super admin — delete store + all associated data
-adminRouter.delete('/stores/:id', authenticateToken, requireSuperadmin, (req: AuthRequest, res) => {
+adminRouter.delete(
+  '/stores/:id',
+  authenticateToken,
+  requireSuperadmin,
+  asyncRoute<AuthRequest>(async (req: AuthRequest, res) => {
   const storeId = Number(req.params.id);
   if (storeId === HQ_STORE_ID) {
     return res.status(403).json({ error: 'The HQ store is managed internally' });
   }
   const store = db.prepare('SELECT id, name FROM stores WHERE id = ?').get(storeId) as any;
   if (!store) return res.status(404).json({ error: 'Store not found' });
+
+  // Collect the store's own uploaded images before the rows naming them are deleted.
+  // Without this every deleted store left its product images on disk forever.
+  const uploadedImages = (
+    db
+      .prepare(
+        `SELECT image AS path FROM inventory WHERE store_id = ? AND image LIKE '/uploads/%'
+         UNION
+         SELECT logo AS path FROM stores WHERE id = ? AND logo LIKE '/uploads/%'`
+      )
+      .all(storeId, storeId) as Array<{ path: string }>
+  ).map(row => row.path);
 
   db.transaction(() => {
     // Delete in dependency order
@@ -354,10 +393,18 @@ adminRouter.delete('/stores/:id', authenticateToken, requireSuperadmin, (req: Au
     db.prepare(`DELETE FROM stores WHERE id = ?`).run(storeId);
   })();
 
+  // Only after the transaction commits — a rollback must not take the files with it — and
+  // only for files nothing else still references.
+  const stillReferenced = referencedUploadFileNames();
+  await removeUploadedFiles(
+    uploadedImages.filter(image => !stillReferenced.has(uploadFileName(image)))
+  );
+
   writeAdminLog(`Deleted store "${store.name}" (${storeId})`, req.user.id, HQ_STORE_ID);
 
   res.json({ ok: true, deleted: store.name });
-});
+  })
+);
 
 // Super admin — edit store details
 adminRouter.put('/stores/:id', authenticateToken, requireSuperadmin, (req: AuthRequest, res) => {
