@@ -8,12 +8,7 @@ The complete SQLite DDL for the current app is in [database-schema.sql](database
 | --- | --- | --- |
 | Current database | [Quick ERD (SVG)](opticapture-erd-quick.svg) | [Detailed ERD (SVG)](opticapture-erd.svg) |
 
-
 Teal denotes entities, red arrows denote SQL foreign keys, and pale red panels hold key notes.
-
-
-
-
 
 The [current relationship and rules declaration](DATABASE_RELATIONSHIPS_CURRENT.md) describes what the app actually enforces today.
 
@@ -65,9 +60,6 @@ node --import tsx scripts/export-db-schema.mjs
 node --import tsx scripts/export-db-schema.mjs --check
 node scripts/export-erd.mjs
 node scripts/export-erd.mjs --check
-
-
-
 ```
 
 The exporter only uses in-memory databases and validates that the SQL can create an empty SQLite database.

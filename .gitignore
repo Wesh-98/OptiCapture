@@ -32,3 +32,11 @@ OptiCapture — Project Oveview.pdf
 
 # Local database backups (npm run db:backup)
 backups/
+
+# Internal docs kept off the public repo: partner integration design and audit reports.
+docs/internal/
+
+# Local AI tooling config (Claude Code / CodeRabbit skills, MCP servers)
+.agents/
+.mcp.json
+skills-lock.json
