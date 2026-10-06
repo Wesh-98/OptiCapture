@@ -1431,6 +1431,9 @@ inventoryRouter.post(
         // The row was not written, so nothing refers to the image it saved. The chunk still
         // commits, so the rollback cleanup would never see this file.
         if (createdUpload) rejectedUploads.push(createdUpload);
+        // A full disk or an I/O error makes SQLite roll back the whole transaction. Every
+        // later row would then commit on its own, outside the chunk, so stop the chunk here.
+        if (!db.inTransaction) throw err;
         addError(`"${itemName || upc || number}": ${err.message}`);
       }
     };
@@ -1454,6 +1457,10 @@ inventoryRouter.post(
       }
     }
 
+    // What the committed chunks wrote. `results` also counts the rows of a chunk that later
+    // rolls back, so a failure partway through reports from this instead.
+    const committed = { rows: 0, added: 0, updated: 0, skipped: 0, errors_total: 0 };
+
     try {
       for (let start = 0; start < work.length; start += IMPORT_CHUNK_ROWS) {
         const chunk = work.slice(start, start + IMPORT_CHUNK_ROWS);
@@ -1467,6 +1474,13 @@ inventoryRouter.post(
         } finally {
           await removeUploadedFiles(rejectedUploads.splice(0));
         }
+        Object.assign(committed, {
+          rows: start + chunk.length,
+          added: results.added,
+          updated: results.updated,
+          skipped: results.skipped,
+          errors_total: results.errors_total,
+        });
         // Hand the event loop a turn between chunks so health checks and phone scans are
         // still answered while a large import runs.
         if (start + IMPORT_CHUNK_ROWS < work.length) {
@@ -1484,7 +1498,35 @@ inventoryRouter.post(
       res.json(results);
     } catch (err: any) {
       logError('inventory:batch-confirm', err);
-      res.status(500).json({ error: 'An internal error occurred' });
+      if (committed.rows === 0) {
+        res.status(500).json({ error: 'An internal error occurred' });
+        return;
+      }
+      // Earlier chunks are already in the database, so record them and say so. Importing
+      // the file again is safe: rows already saved are matched and updated, not duplicated.
+      try {
+        db.prepare('INSERT INTO logs (action, details, user_id, store_id) VALUES (?, ?, ?, ?)').run(
+          'IMPORT',
+          `Import stopped after ${committed.rows} of ${work.length} rows across ${sheetsData.length} sheet(s): +${committed.added} new, ~${committed.updated} updated, ${committed.skipped} skipped, ${committed.errors_total} failed`,
+          user.id,
+          user.store_id
+        );
+      } catch (logErr) {
+        // The failure that stopped the import may stop this write too; the response still goes out.
+        logError('inventory:batch-confirm:log', logErr);
+      }
+      const savedRows = committed.rows.toLocaleString('en-US');
+      const totalRows = work.length.toLocaleString('en-US');
+      res.status(500).json({
+        error: `The import stopped partway: ${savedRows} of ${totalRows} rows were saved (${committed.added} new, ${committed.updated} updated). Import the file again to finish — rows already saved will be updated, not duplicated.`,
+        partial: true,
+        rows_saved: committed.rows,
+        rows_total: work.length,
+        added: committed.added,
+        updated: committed.updated,
+        skipped: committed.skipped,
+        errors_total: committed.errors_total,
+      });
     }
   })
 );

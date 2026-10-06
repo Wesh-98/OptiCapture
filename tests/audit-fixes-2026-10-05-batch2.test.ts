@@ -7,6 +7,7 @@
  *   - import enforces a row ceiling and caps its per-row diagnostics
  *   - import never creates a category under a reserved name
  *   - import still writes every row correctly across more than one commit chunk
+ *   - an import that stops partway reports and logs only the chunks it saved
  *   - GET /logs answers one shape and filters by date, not by string ordering
  *   - deleting a store removes the images it owned
  *   - a poll that gets an HTTP answer is not reported as an offline server
@@ -635,5 +636,89 @@ describe('PR #2 review round 3', () => {
 
     expect(res.status).toBe(413);
     expect(res.body.error).toMatch(/limited to/i);
+  });
+});
+
+describe('import that stops partway', () => {
+  // RAISE(ROLLBACK) ends the whole transaction mid-chunk, which is how SQLite answers a full
+  // disk or an I/O error — the failures that stop a chunk rather than a single row.
+  function failImportAt(upc: string) {
+    db.exec(`
+      CREATE TRIGGER audit_rollback_import BEFORE INSERT ON inventory
+      WHEN NEW.upc = '${upc}'
+      BEGIN SELECT RAISE(ROLLBACK, 'forced chunk failure'); END
+    `);
+  }
+
+  function importLogsSince(lastId: number): Array<{ details: string }> {
+    return db
+      .prepare("SELECT details FROM logs WHERE action = 'IMPORT' AND store_id = 1 AND id > ?")
+      .all(lastId) as Array<{ details: string }>;
+  }
+
+  function lastLogId(): number {
+    return (db.prepare('SELECT COALESCE(MAX(id), 0) AS lastId FROM logs').get() as { lastId: number })
+      .lastId;
+  }
+
+  it('reports and logs the chunks it saved, and nothing from the chunk that failed', async () => {
+    const rows = Array.from({ length: 1_200 }, (_, i) => ({
+      upc: `partial-${i}`,
+      item_name: `Partial Item ${i}`,
+    }));
+    const logId = lastLogId();
+    // Row 1,005 sits in the second chunk; the rows after it in that chunk must not be written.
+    failImportAt('partial-1005');
+    try {
+      const res = await request
+        .post('/api/inventory/batch-confirm')
+        .set('Cookie', ownerCookie)
+        .send(confirmBody(rows, { upc: 'upc', item_name: 'item_name' }));
+
+      expect(res.status).toBe(500);
+      expect(res.body.partial).toBe(true);
+      expect(res.body.rows_saved).toBe(1_000);
+      expect(res.body.rows_total).toBe(1_200);
+      expect(res.body.added).toBe(1_000);
+      expect(res.body.updated).toBe(0);
+      expect(res.body.error).toMatch(/1,000 of 1,200/);
+
+      const saved = db
+        .prepare("SELECT COUNT(*) AS n FROM inventory WHERE upc LIKE 'partial-%' AND store_id = 1")
+        .get() as { n: number };
+      expect(saved.n).toBe(1_000);
+
+      const entries = importLogsSince(logId);
+      expect(entries).toHaveLength(1);
+      expect(entries[0].details).toMatch(/stopped after 1000 of 1200 rows/i);
+      expect(entries[0].details).toMatch(/\+1000 new/);
+    } finally {
+      db.exec('DROP TRIGGER IF EXISTS audit_rollback_import');
+    }
+  });
+
+  it('reports a plain failure when the first chunk fails, since nothing was saved', async () => {
+    const rows = Array.from({ length: 20 }, (_, i) => ({
+      upc: `firstchunk-${i}`,
+      item_name: `First Chunk Item ${i}`,
+    }));
+    const logId = lastLogId();
+    failImportAt('firstchunk-5');
+    try {
+      const res = await request
+        .post('/api/inventory/batch-confirm')
+        .set('Cookie', ownerCookie)
+        .send(confirmBody(rows, { upc: 'upc', item_name: 'item_name' }));
+
+      expect(res.status).toBe(500);
+      expect(res.body.partial).toBeUndefined();
+      const saved = db
+        .prepare("SELECT COUNT(*) AS n FROM inventory WHERE upc LIKE 'firstchunk-%' AND store_id = 1")
+        .get() as { n: number };
+      expect(saved.n).toBe(0);
+      expect(importLogsSince(logId)).toEqual([]);
+    } finally {
+      db.exec('DROP TRIGGER IF EXISTS audit_rollback_import');
+    }
   });
 });
