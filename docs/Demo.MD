@@ -148,7 +148,7 @@ Expected result:
 4. Review detected sheets, headers, preview rows, and row counts.
 5. Review the automatic column mappings.
 6. Adjust mappings as needed.
-7. Map external identifiers when the integration workflow is being tested.
+7. Map external identifiers when the file includes them.
 8. Confirm the import.
 9. Review the import result: added rows, updated rows, skipped rows, and errors.
 10. Return to the dashboard.

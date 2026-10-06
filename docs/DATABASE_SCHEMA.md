@@ -7,15 +7,10 @@ The complete SQLite DDL for the current app is in [database-schema.sql](database
 | Scope | One-page quick reference | Detailed reference |
 | --- | --- | --- |
 | Current database | [Quick ERD (SVG)](opticapture-erd-quick.svg) | [Detailed ERD (SVG)](opticapture-erd.svg) |
-| Proposed integration target | [Quick ERD (SVG)](opticapture-integration-erd-quick.svg) | [Detailed ERD (SVG)](opticapture-integration-erd-detailed.svg) |
 
-Teal denotes entities, red arrows denote SQL foreign keys, and pale red panels hold key notes. In integration diagrams, dashed teal outlines mark proposed entities. The one-page integration ERD shows all 25 tables, lists every table's FK parents, and draws 19 key parent-to-child links. The detailed integration ERD draws all 56 foreign keys with their parent and child columns, alongside each table's columns and indexes.
+Teal denotes entities, red arrows denote SQL foreign keys, and pale red panels hold key notes.
 
-Download the [complete database reference bundle (ZIP)](opticapture-database-reference.zip) for all four ERDs, both relationship declarations, and both SQL files.
-
-The [new-item handoff design](NEW_ITEM_HANDOFF.md) proposes how items found by scanning are sent to the existing platform and linked back.
-
-The [current relationship and rules declaration](DATABASE_RELATIONSHIPS_CURRENT.md) describes what the app actually enforces today. The [integration relationship and rules declaration](DATABASE_RELATIONSHIPS_INTEGRATION.md) describes the additive [integration SQL proposal](integration-schema-proposal.sql), its workflow rules, and the external contracts that still need confirmation. The two integration ERDs are design references, not deployed schema.
+The [current relationship and rules declaration](DATABASE_RELATIONSHIPS_CURRENT.md) describes what the app actually enforces today.
 
 The current detailed ERD is zoomable and shows every column's SQLite type, nullability, default, primary/foreign key markers, each table's indexes and unique constraints, the seven enforced foreign keys with optionality, and app-level associations that have no database constraint.
 
@@ -65,9 +60,6 @@ node --import tsx scripts/export-db-schema.mjs
 node --import tsx scripts/export-db-schema.mjs --check
 node scripts/export-erd.mjs
 node scripts/export-erd.mjs --check
-node scripts/export-reference-erds.mjs
-node scripts/export-reference-erds.mjs --check
-node scripts/verify-integration-schema.mjs
 ```
 
 The exporter only uses in-memory databases and validates that the SQL can create an empty SQLite database.

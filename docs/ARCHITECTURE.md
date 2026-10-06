@@ -61,7 +61,6 @@ OptiCapture/
 |- docs/
 |  |- ARCHITECTURE.md
 |  |- DEMO_SCRIPT.md
-|  |- Initial Integration Plan.md
 |  \- TECHNICAL.md
 |- tests/
 |- src/

@@ -105,5 +105,3 @@ UPC is a scan identifier, not a guaranteed external item identity. The external 
 - `INTEGER PRIMARY KEY` aliases the row ID and cannot be null. A non-integer `TEXT PRIMARY KEY` in a normal SQLite rowid table can accept `NULL` unless separately declared `NOT NULL`; `scan_sessions.session_id` is such a declaration. The app supplies non-null IDs.
 - `UNIQUE` constraints permit multiple rows with `NULL` in a key component. Partial unique indexes have the exact predicates shown in [database-schema.sql](database-schema.sql).
 - There are no database-enforced nonnegative quantity/price checks, cross-store category checks, count snapshot tables, export idempotency records, or reconciliation records today.
-
-**Reference boundary:** The [integration design](DATABASE_RELATIONSHIPS_INTEGRATION.md) is a proposal and is not deployed. Do not infer planned constraints from the current ERDs.

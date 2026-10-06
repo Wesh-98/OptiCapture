@@ -31,8 +31,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isProduction = process.env.NODE_ENV === 'production';
 // Hosting platforms assign the port through PORT; 3000 stays the local default.
 export const PORT = Number.parseInt(process.env.PORT ?? '', 10) || 3000;
-// The public origin phones reach (e.g. https://scan.example.com). In integrated mode this
-// is the existing platform's domain; without it the QR link falls back to the tunnel or LAN.
+// The public origin phones reach (e.g. https://scan.example.com). Without it the QR link
+// falls back to the tunnel or LAN.
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL?.trim().replace(/\/+$/, '') || null;
 if (PUBLIC_BASE_URL && !PUBLIC_BASE_URL.startsWith('https://')) {
   logWarn('startup', 'PUBLIC_BASE_URL is not HTTPS; phone cameras will not open on it', {
