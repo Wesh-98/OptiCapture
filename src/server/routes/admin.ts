@@ -271,6 +271,28 @@ adminRouter.get(
 );
 
 // Super admin — one item from one store, plus the other stores that carry the same UPC
+/**
+ * One item with its revision and the other stores carrying its UPC. The item view and the
+ * edit response both use this, so a saved UPC change brings back matches for the new UPC.
+ */
+function readItemDetail(itemId: number, storeId: number) {
+  const item = readItemSnapshot(itemId, storeId);
+  if (!item) return null;
+  const upc = item.upc?.trim();
+  const otherStores = upc
+    ? db
+        .prepare(
+          `SELECT i.id AS item_id, i.store_id, s.name AS store_name, s.status AS store_status,
+             i.sale_price, i.status
+           FROM inventory i JOIN stores s ON s.id = i.store_id
+           WHERE TRIM(i.upc) = ? AND i.store_id NOT IN (?, ?)
+           ORDER BY s.name COLLATE NOCASE`
+        )
+        .all(upc, storeId, HQ_STORE_ID)
+    : [];
+  return { item: { ...item, revision: itemRevision(item) }, other_stores: otherStores };
+}
+
 adminRouter.get(
   '/stores/:id/items/:itemId',
   authenticateToken,
@@ -280,28 +302,9 @@ adminRouter.get(
     if (!store) return;
     const itemId = parseIdParam(req.params.itemId);
     if (itemId === null) return res.status(400).json({ error: 'Invalid item ID' });
-    const item = db
-      .prepare(
-        `SELECT i.*, c.name AS category_name
-         FROM inventory i LEFT JOIN categories c ON c.id = i.category_id
-         WHERE i.id = ? AND i.store_id = ?`
-      )
-      .get(itemId, store.id) as { upc: string | null } | undefined;
-    if (!item) return res.status(404).json({ error: 'Item not found in this store' });
-
-    const upc = item.upc?.trim();
-    const otherStores = upc
-      ? db
-          .prepare(
-            `SELECT i.id AS item_id, i.store_id, s.name AS store_name, s.status AS store_status,
-               i.sale_price, i.status
-             FROM inventory i JOIN stores s ON s.id = i.store_id
-             WHERE TRIM(i.upc) = ? AND i.store_id NOT IN (?, ?)
-             ORDER BY s.name COLLATE NOCASE`
-          )
-          .all(upc, store.id, HQ_STORE_ID)
-      : [];
-    res.json({ item: { ...item, revision: itemRevision(item) }, other_stores: otherStores });
+    const detail = readItemDetail(itemId, store.id);
+    if (!detail) return res.status(404).json({ error: 'Item not found in this store' });
+    res.json(detail);
   }
 );
 
@@ -403,8 +406,7 @@ adminRouter.put(
       describe: (before, after) => describeItemEdit(before, after, note),
     });
     if (result.status !== 200) return res.status(result.status).json(result.body);
-    const saved = readItemSnapshot(itemId, store.id);
-    res.json({ item: saved && { ...saved, revision: itemRevision(saved) } });
+    res.json(readItemDetail(itemId, store.id));
   }
 );
 

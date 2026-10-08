@@ -342,8 +342,8 @@ export default function AdminItemDetail() {
                   storeId={id}
                   item={viewedItem}
                   categories={view.categories}
-                  onSaved={saved => {
-                    detail.applyEdit(saved);
+                  onSaved={(saved, otherStores) => {
+                    detail.applyEdit(saved, otherStores);
                     view.refresh();
                     setEditingItemId(null);
                     setSavedFor(itemId ?? null);

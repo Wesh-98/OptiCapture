@@ -8,7 +8,7 @@ import {
   SUPPORTED_UPLOAD_IMAGE_ERROR,
 } from '../../lib/imageUpload';
 import type { Category } from '../dashboard/types';
-import type { AdminItem } from '../../hooks/useAdminItemDetail';
+import type { AdminItem, SameUpcEntry } from '../../hooks/useAdminItemDetail';
 import { FILTER_INPUT } from './AdminUi';
 import { formatPrice } from './format';
 
@@ -162,7 +162,7 @@ export function ItemEditForm({
   storeId: string;
   item: AdminItem;
   categories: Category[];
-  onSaved: (item: Partial<AdminItem>) => void;
+  onSaved: (item: Partial<AdminItem>, otherStores: SameUpcEntry[]) => void;
   onCancel: () => void;
   onReload: () => void;
 }>) {
@@ -223,7 +223,7 @@ export function ItemEditForm({
         setError(data?.error || 'Could not save the changes.');
         return;
       }
-      onSaved(data.item);
+      onSaved(data.item, data.other_stores ?? []);
     } catch {
       setError('Could not reach the server. Nothing was saved.');
     } finally {

@@ -68,7 +68,10 @@ export function useAdminItemDetail(storeId: string | undefined, itemId: string |
     error,
     /** Fetch the item again, e.g. after an edit was refused because it changed. */
     reload: () => setReloadKey(key => key + 1),
-    /** Show a saved edit without another round trip. */
-    applyEdit: (next: Partial<AdminItem>) => setItem(prev => (prev ? { ...prev, ...next } : prev)),
+    /** Show a saved edit without another round trip, with matches for its saved UPC. */
+    applyEdit: (next: Partial<AdminItem>, nextOtherStores: SameUpcEntry[]) => {
+      setItem(prev => (prev ? { ...prev, ...next } : prev));
+      setOtherStores(nextOtherStores);
+    },
   };
 }

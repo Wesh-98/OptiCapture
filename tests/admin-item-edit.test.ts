@@ -125,6 +125,16 @@ describe('superadmin item edits', () => {
     expect(detail.body.item.revision).toBe(revision());
   });
 
+  it('returns the other stores carrying the saved UPC, not the old one', async () => {
+    db.prepare(
+      `INSERT INTO inventory (item_name, quantity, category_id, status, upc, store_id)
+       VALUES ('Match Cola', 1, ?, 'Active', 'MATCH-9', ?)`
+    ).run(otherCategoryId, otherStoreId);
+    const res = await edit({ changes: { upc: 'MATCH-9' }, expected_revision: revision() });
+    expect(res.status).toBe(200);
+    expect(res.body.other_stores.map((row: any) => row.store_id)).toEqual([otherStoreId]);
+  });
+
   it('only lets the superadmin change catalog fields', async () => {
     const res = await edit({
       changes: { quantity: 99, tag_names: 'x' },
