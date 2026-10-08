@@ -745,130 +745,201 @@ inventoryRouter.post(
   }
 );
 
+/** An inventory row with its category name: the before and after of an update. */
+export interface InventoryRowSnapshot {
+  id: number;
+  item_name: string;
+  upc: string | null;
+  category_id: number | null;
+  category_name: string | null;
+  sale_price: number | null;
+  tax_percent: number | null;
+  unit: string | null;
+  status: string;
+  description: string | null;
+  updated_at: string;
+}
+
+export interface ItemUpdateOptions {
+  /** Refuse with 409 when the row's updated_at no longer matches (the superadmin's edits). */
+  expectedUpdatedAt?: string;
+  /**
+   * The log line for the change, from the row before and after. Returning null means nothing
+   * visible changed, and the update is rolled back with a 400. Without it the store's usual
+   * "Updated item" line is written.
+   */
+  describe?: (before: InventoryRowSnapshot, after: InventoryRowSnapshot) => string | null;
+}
+
+class ItemUpdateConflict extends Error {}
+class ItemUpdateNoChange extends Error {}
+
+export function readItemSnapshot(itemId: unknown, storeId: number | undefined) {
+  return db
+    .prepare(
+      `SELECT i.*, c.name AS category_name
+         FROM inventory i LEFT JOIN categories c ON c.id = i.category_id
+        WHERE i.id = ? AND i.store_id = ?`
+    )
+    .get(itemId, storeId) as InventoryRowSnapshot | undefined;
+}
+
+/**
+ * Validates and applies one item update for one store, and logs it to that store. Shared by
+ * the store's own PUT /inventory/:id and the superadmin's edit route so both follow the same
+ * rules. Returns the status and body to send.
+ */
+export function updateInventoryItem(
+  storeId: number | undefined,
+  userId: number,
+  itemId: unknown,
+  body: Record<string, any>,
+  options: ItemUpdateOptions = {}
+): { status: number; body: Record<string, unknown> } {
+  const {
+    item_name,
+    quantity,
+    category_id,
+    status,
+    unit,
+    sale_price,
+    tax_percent,
+    description,
+    tag_names,
+    image,
+    upc,
+  } = body;
+  const bad = (error: string) => ({ status: 400, body: { error } });
+
+  // Reject blank strings — the POST route already guards this but PUT skipped the trim check
+  if (
+    item_name !== undefined &&
+    (typeof item_name !== 'string' || item_name.trim().length === 0 || item_name.length > 500)
+  )
+    return bad('Item name must be a non-empty string of 500 characters or fewer');
+  if (description !== undefined && description !== null && typeof description !== 'string')
+    return bad('Description must be a string');
+  if (description && description.length > 2000)
+    return bad('Description must be 2000 characters or fewer');
+  if (quantity === null) return bad('quantity must be a number');
+  const quantityValue = parseInventoryNumber(quantity, 'quantity', {
+    integer: true,
+    max: 1_000_000,
+  });
+  if (quantityValue.error) return bad(quantityValue.error);
+  const salePriceValue = parseInventoryNumber(sale_price, 'sale_price', { max: 1_000_000 });
+  if (salePriceValue.error) return bad(salePriceValue.error);
+  const taxValue = parseInventoryNumber(tax_percent, 'tax_percent', { max: 100 });
+  if (taxValue.error) return bad(taxValue.error);
+  const stringError = validateInventoryStrings({ upc, unit, tag_names, image });
+  if (stringError) return bad(stringError);
+  if (status !== undefined && !['Active', 'Inactive'].includes(status))
+    return bad('status must be Active or Inactive');
+  if (!isCategoryInStore(category_id, storeId)) return bad('Invalid category');
+
+  const existingItem = db
+    .prepare('SELECT item_name, upc FROM inventory WHERE id = ? AND store_id = ?')
+    .get(itemId, storeId) as { item_name: string; upc: string | null } | undefined;
+  if (!existingItem) return { status: 404, body: { error: 'Item not found' } };
+
+  try {
+    const assignments = ['updated_at = CURRENT_TIMESTAMP'];
+    const values: unknown[] = [];
+    const assign = (column: string, value: unknown) => {
+      assignments.push(`${column} = ?`);
+      values.push(value);
+    };
+
+    if (item_name !== undefined) assign('item_name', item_name.trim());
+    if (quantity !== undefined) assign('quantity', quantityValue.value);
+    if (category_id !== undefined)
+      assign(
+        'category_id',
+        category_id === '' || category_id === null ? null : Number(category_id)
+      );
+    if (status !== undefined) assign('status', status);
+    if (unit !== undefined) assign('unit', unit === '' || unit === null ? null : String(unit));
+    if (sale_price !== undefined) assign('sale_price', salePriceValue.value);
+    if (tax_percent !== undefined) assign('tax_percent', taxValue.value);
+    if (description !== undefined) assign('description', description || null);
+    if (tag_names !== undefined) assign('tag_names', tag_names || null);
+    if (image !== undefined) {
+      const normalizedImage = image ? normalizeImageUrl(String(image)) : null;
+      assign('image', normalizedImage ? saveBase64Image(normalizedImage) : null);
+    }
+    if (upc !== undefined) assign('upc', upc === null ? null : String(upc).trim() || null);
+    // 0 changes means either the id doesn't exist or it belongs to a different
+    // store. Return 404 either way — this prevents cross-tenant writes from
+    // silently succeeding with a 200 while actually touching nothing.
+    const changes = db.transaction(() => {
+      // Read inside the transaction so the conflict check and the "before" values
+      // describe exactly the row this update replaces.
+      const before =
+        options.describe || options.expectedUpdatedAt !== undefined
+          ? readItemSnapshot(itemId, storeId)
+          : undefined;
+      if (
+        options.expectedUpdatedAt !== undefined &&
+        before?.updated_at !== options.expectedUpdatedAt
+      ) {
+        throw new ItemUpdateConflict();
+      }
+      const r = db
+        .prepare(
+          `UPDATE inventory
+           SET ${assignments.join(', ')}
+           WHERE id = ? AND store_id = ?`
+        )
+        .run(...values, itemId, storeId);
+      if (r.changes > 0) {
+        let details = `Updated item "${item_name?.trim() || existingItem.item_name}"`;
+        if (options.describe && before) {
+          const after = readItemSnapshot(itemId, storeId);
+          const described = after ? options.describe(before, after) : null;
+          if (described === null) throw new ItemUpdateNoChange();
+          details = described;
+        }
+        db.prepare('INSERT INTO logs (action, details, user_id, store_id) VALUES (?, ?, ?, ?)').run(
+          'UPDATE',
+          details,
+          userId,
+          storeId
+        );
+      }
+      return r.changes;
+    })();
+
+    if (changes === 0) return { status: 404, body: { error: 'Item not found' } };
+
+    // Invalidate UPC cache so mobile scanners see the updated product name immediately
+    if (existingItem.upc) upcCache.delete(existingItem.upc);
+    if (upc) upcCache.delete(String(upc));
+
+    return { status: 200, body: { success: true } };
+  } catch (err: any) {
+    if (err instanceof ItemUpdateConflict) {
+      return {
+        status: 409,
+        body: { error: 'This item was changed since you opened it. Reload it and try again.' },
+      };
+    }
+    if (err instanceof ItemUpdateNoChange) return bad('Nothing to change');
+    if (err instanceof UnsupportedImageTypeError) return bad(err.message);
+    if (err.message?.includes('UNIQUE')) {
+      return { status: 409, body: { error: 'An item with that UPC or name already exists' } };
+    }
+    logError('inventory:update', err, 'Failed to update inventory item', { itemId });
+    return { status: 500, body: { error: 'An internal error occurred' } };
+  }
+}
+
 inventoryRouter.put(
   '/inventory/:id',
   authenticateToken,
   requireOwnerOrTaker,
   (req: AuthRequest, res) => {
-    const {
-      item_name,
-      quantity,
-      category_id,
-      status,
-      unit,
-      sale_price,
-      tax_percent,
-      description,
-      tag_names,
-      image,
-      upc,
-    } = req.body;
-    const { id } = req.params;
-    const user = req.user;
-
-    // Reject blank strings — the POST route already guards this but PUT skipped the trim check
-    if (
-      item_name !== undefined &&
-      (typeof item_name !== 'string' || item_name.trim().length === 0 || item_name.length > 500)
-    )
-      return res
-        .status(400)
-        .json({ error: 'Item name must be a non-empty string of 500 characters or fewer' });
-    if (description !== undefined && description !== null && typeof description !== 'string')
-      return res.status(400).json({ error: 'Description must be a string' });
-    if (description && description.length > 2000)
-      return res.status(400).json({ error: 'Description must be 2000 characters or fewer' });
-    if (quantity === null) return res.status(400).json({ error: 'quantity must be a number' });
-    const quantityValue = parseInventoryNumber(quantity, 'quantity', {
-      integer: true,
-      max: 1_000_000,
-    });
-    if (quantityValue.error) return res.status(400).json({ error: quantityValue.error });
-    const salePriceValue = parseInventoryNumber(sale_price, 'sale_price', { max: 1_000_000 });
-    if (salePriceValue.error) return res.status(400).json({ error: salePriceValue.error });
-    const taxValue = parseInventoryNumber(tax_percent, 'tax_percent', { max: 100 });
-    if (taxValue.error) return res.status(400).json({ error: taxValue.error });
-    const stringError = validateInventoryStrings({ upc, unit, tag_names, image });
-    if (stringError) return res.status(400).json({ error: stringError });
-    if (status !== undefined && !['Active', 'Inactive'].includes(status))
-      return res.status(400).json({ error: 'status must be Active or Inactive' });
-    if (!isCategoryInStore(category_id, user.store_id))
-      return res.status(400).json({ error: 'Invalid category' });
-
-    const existingItem = db
-      .prepare('SELECT item_name, upc FROM inventory WHERE id = ? AND store_id = ?')
-      .get(id, user.store_id) as { item_name: string; upc: string | null } | undefined;
-    if (!existingItem) return res.status(404).json({ error: 'Item not found' });
-
-    try {
-      const assignments = ['updated_at = CURRENT_TIMESTAMP'];
-      const values: unknown[] = [];
-      const assign = (column: string, value: unknown) => {
-        assignments.push(`${column} = ?`);
-        values.push(value);
-      };
-
-      if (item_name !== undefined) assign('item_name', item_name.trim());
-      if (quantity !== undefined) assign('quantity', quantityValue.value);
-      if (category_id !== undefined)
-        assign(
-          'category_id',
-          category_id === '' || category_id === null ? null : Number(category_id)
-        );
-      if (status !== undefined) assign('status', status);
-      if (unit !== undefined) assign('unit', unit === '' || unit === null ? null : String(unit));
-      if (sale_price !== undefined) assign('sale_price', salePriceValue.value);
-      if (tax_percent !== undefined) assign('tax_percent', taxValue.value);
-      if (description !== undefined) assign('description', description || null);
-      if (tag_names !== undefined) assign('tag_names', tag_names || null);
-      if (image !== undefined) {
-        const normalizedImage = image ? normalizeImageUrl(String(image)) : null;
-        assign('image', normalizedImage ? saveBase64Image(normalizedImage) : null);
-      }
-      if (upc !== undefined) assign('upc', upc === null ? null : String(upc).trim() || null);
-      // 0 changes means either the id doesn't exist or it belongs to a different
-      // store. Return 404 either way — this prevents cross-tenant writes from
-      // silently succeeding with a 200 while actually touching nothing.
-      const changes = db.transaction(() => {
-        const r = db
-          .prepare(
-            `UPDATE inventory
-             SET ${assignments.join(', ')}
-             WHERE id = ? AND store_id = ?`
-          )
-          .run(...values, id, user.store_id);
-        if (r.changes > 0) {
-          db.prepare(
-            'INSERT INTO logs (action, details, user_id, store_id) VALUES (?, ?, ?, ?)'
-          ).run(
-            'UPDATE',
-            `Updated item "${item_name?.trim() || existingItem.item_name}"`,
-            user.id,
-            user.store_id
-          );
-        }
-        return r.changes;
-      })();
-
-      if (changes === 0) return res.status(404).json({ error: 'Item not found' });
-
-      // Invalidate UPC cache so mobile scanners see the updated product name immediately
-      if (existingItem.upc) upcCache.delete(existingItem.upc);
-      if (upc) upcCache.delete(String(upc));
-
-      res.json({ success: true });
-    } catch (err: any) {
-      if (err instanceof UnsupportedImageTypeError) {
-        return res.status(400).json({ error: err.message });
-      }
-      if (err.message?.includes('UNIQUE')) {
-        return res.status(409).json({ error: 'An item with that UPC or name already exists' });
-      }
-      logError('inventory:update', err, 'Failed to update inventory item', {
-        itemId: req.params.id,
-      });
-      res.status(500).json({ error: 'An internal error occurred' });
-    }
+    const result = updateInventoryItem(req.user.store_id, req.user.id, req.params.id, req.body);
+    res.status(result.status).json(result.body);
   }
 );
 

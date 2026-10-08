@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import type { Category, InventoryItem } from '../components/dashboard/types';
 
@@ -84,13 +84,22 @@ export function useAdminStoreInventory(storeId: string | undefined) {
     [navigate]
   );
 
-  // Store header + category list: once per store.
+  // Bumped after an edit so the header, category counts and items reload in place.
+  const [refreshKey, setRefreshKey] = useState(0);
+  const refresh = useCallback(() => setRefreshKey(key => key + 1), []);
+
+  // Store header + category list: once per store, and again after an edit. Only a new
+  // store blanks the page; a refresh swaps the figures in place.
+  const loadedStoreId = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (!storeId) return;
     let cancelled = false;
-    setStore(null);
-    setCategories([]);
-    setLoadError('');
+    if (loadedStoreId.current !== storeId) {
+      loadedStoreId.current = storeId;
+      setStore(null);
+      setCategories([]);
+      setLoadError('');
+    }
     void (async () => {
       try {
         const [storeRes, categoriesRes] = await Promise.all([
@@ -113,7 +122,7 @@ export function useAdminStoreInventory(storeId: string | undefined) {
     return () => {
       cancelled = true;
     };
-  }, [storeId, readJson]);
+  }, [storeId, readJson, refreshKey]);
 
   // Any filter change starts again from the first page. The reset happens with the filter
   // in one render, so the old page number is never fetched under the new filter.
@@ -187,7 +196,17 @@ export function useAdminStoreInventory(storeId: string | undefined) {
     return () => {
       cancelled = true;
     };
-  }, [storeId, page, pageSize, debouncedSearch, categoryId, statusFilter, sort, readJson]);
+  }, [
+    storeId,
+    page,
+    pageSize,
+    debouncedSearch,
+    categoryId,
+    statusFilter,
+    sort,
+    readJson,
+    refreshKey,
+  ]);
 
   const handleLogout = async () => {
     await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
@@ -215,5 +234,6 @@ export function useAdminStoreInventory(storeId: string | undefined) {
     page,
     setPage,
     handleLogout,
+    refresh,
   };
 }

@@ -13,7 +13,12 @@ import {
 } from '../helpers.js';
 import type { AuthRequest } from '../types.js';
 import { logError } from '../logger.js';
-import { listStoreInventory } from './inventory.js';
+import {
+  listStoreInventory,
+  readItemSnapshot,
+  updateInventoryItem,
+  type InventoryRowSnapshot,
+} from './inventory.js';
 import {
   listStoreCategories,
   RESERVED_CATEGORY_NAMES,
@@ -296,6 +301,104 @@ adminRouter.get(
           .all(upc, store.id, HQ_STORE_ID)
       : [];
     res.json({ item, other_stores: otherStores });
+  }
+);
+
+// What the superadmin may change on a store's item. Quantity, tags and images stay with
+// the store.
+const EDITABLE_ITEM_FIELDS = [
+  'item_name',
+  'upc',
+  'category_id',
+  'sale_price',
+  'tax_percent',
+  'unit',
+  'status',
+  'description',
+] as const;
+const MAX_EDIT_REASON = 500;
+
+const formatMoney = (value: number | null) => (value == null ? '—' : `$${value.toFixed(2)}`);
+const formatText = (value: string | null) => (value?.trim() ? value.trim() : '—');
+
+/**
+ * The store-log line for a superadmin edit: every visible before → after, plus the reason.
+ * Null when nothing the store would see actually changed.
+ */
+export function describeItemEdit(
+  before: InventoryRowSnapshot,
+  after: InventoryRowSnapshot,
+  reason: string
+): string | null {
+  const parts: string[] = [];
+  const diff = (label: string, from: string, to: string) => {
+    if (from !== to) parts.push(`${label} ${from} → ${to}`);
+  };
+  diff('Name', formatText(before.item_name), formatText(after.item_name));
+  diff('UPC', formatText(before.upc), formatText(after.upc));
+  diff('Category', before.category_name ?? 'Uncategorized', after.category_name ?? 'Uncategorized');
+  diff('Price', formatMoney(before.sale_price), formatMoney(after.sale_price));
+  diff(
+    'Tax',
+    before.tax_percent == null ? '—' : `${before.tax_percent}%`,
+    after.tax_percent == null ? '—' : `${after.tax_percent}%`
+  );
+  diff('Unit', formatText(before.unit), formatText(after.unit));
+  diff('Status', before.status, after.status);
+  // Descriptions can run to 2,000 characters, so the log only notes that it changed.
+  if ((before.description ?? '') !== (after.description ?? '')) parts.push('Description updated');
+  if (parts.length === 0) return null;
+  const line = `Super Admin edited "${after.item_name}": ${parts.join('; ')}`;
+  return reason ? `${line}. Reason: ${reason}` : line;
+}
+
+// Superadmin edit of one item in one store. It runs through the same update as the store's
+// own edit, refuses if the item changed since the form was opened, and logs the change to
+// that store under the superadmin's name.
+adminRouter.put(
+  '/stores/:id/items/:itemId',
+  authenticateToken,
+  requireSuperadmin,
+  (req: AuthRequest, res) => {
+    const store = resolveViewedStore(req, res);
+    if (!store) return;
+    if (store.status !== 'active') {
+      return res.status(403).json({ error: 'Suspended stores are read-only' });
+    }
+    const itemId = parseIdParam(req.params.itemId);
+    if (itemId === null) return res.status(400).json({ error: 'Invalid item ID' });
+
+    const { changes, expected_updated_at, reason } = req.body ?? {};
+    if (!changes || typeof changes !== 'object' || Array.isArray(changes)) {
+      return res.status(400).json({ error: 'changes must be an object' });
+    }
+    const fields = Object.keys(changes);
+    const notEditable = fields.filter(
+      field => !(EDITABLE_ITEM_FIELDS as readonly string[]).includes(field)
+    );
+    if (notEditable.length > 0) {
+      return res.status(400).json({ error: `Cannot edit: ${notEditable.join(', ')}` });
+    }
+    if (fields.length === 0) return res.status(400).json({ error: 'Nothing to change' });
+    if (typeof expected_updated_at !== 'string' || !expected_updated_at) {
+      return res.status(400).json({ error: 'expected_updated_at is required' });
+    }
+    if (reason != null && typeof reason !== 'string') {
+      return res.status(400).json({ error: 'reason must be a string' });
+    }
+    const note = (reason ?? '').trim();
+    if (note.length > MAX_EDIT_REASON) {
+      return res
+        .status(400)
+        .json({ error: `Reason must be ${MAX_EDIT_REASON} characters or fewer` });
+    }
+
+    const result = updateInventoryItem(store.id, req.user.id, itemId, changes, {
+      expectedUpdatedAt: expected_updated_at,
+      describe: (before, after) => describeItemEdit(before, after, note),
+    });
+    if (result.status !== 200) return res.status(result.status).json(result.body);
+    res.json({ item: readItemSnapshot(itemId, store.id) });
   }
 );
 

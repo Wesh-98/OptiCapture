@@ -1,6 +1,14 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, Eye, Image as ImageIcon, Search, X } from 'lucide-react';
+import {
+  ChevronLeft,
+  ChevronRight,
+  Eye,
+  Image as ImageIcon,
+  Pencil,
+  Search,
+  X,
+} from 'lucide-react';
 import { cn, parseServerDate } from '../lib/utils';
 import { AdminLayout } from '../components/superadmin/AdminLayout';
 import {
@@ -12,6 +20,7 @@ import {
   FILTER_INPUT,
 } from '../components/superadmin/AdminUi';
 import { formatPrice } from '../components/superadmin/format';
+import { ItemEditForm } from '../components/superadmin/ItemEditForm';
 import {
   CATEGORY_PARAM,
   useAdminStoreInventory,
@@ -26,7 +35,8 @@ import { useAdminStoreList } from '../hooks/useAdminStoreList';
 const PANE_HEADING =
   'px-4 py-3.5 border-b border-theme-border text-xs font-extrabold uppercase tracking-wider text-brand-600';
 
-// Superadmin: one item in context. Store | items (by category) | detail, read-only.
+// Superadmin: one item in context. Store | items (by category) | detail, with editing
+// for active stores.
 // Without an item in the URL the detail pane waits for a pick.
 export default function AdminItemDetail() {
   const { id, itemId } = useParams<{ id: string; itemId: string }>();
@@ -36,6 +46,13 @@ export default function AdminItemDetail() {
 
   // The detail hook keeps the previous item until the next one loads; don't treat it as this one.
   const viewedItem = detail.item && String(detail.item.id) === itemId ? detail.item : null;
+
+  // Editing belongs to one item: opening another item leaves the form behind. Suspended
+  // stores stay read-only (the server refuses their edits too).
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [savedFor, setSavedFor] = useState<string | null>(null);
+  const editing = editingItemId !== null && editingItemId === itemId;
+  const canEdit = Boolean(viewedItem) && view.store?.status === 'active';
 
   // With no category in the URL, open the items pane on the item's own category, once per
   // store; after that the superadmin's own choice sticks while they move between items.
@@ -113,10 +130,12 @@ export default function AdminItemDetail() {
                     </span>
                   </h1>
                 </div>
-                <span className="inline-flex items-center gap-1.5 text-sm text-theme-muted">
-                  <Eye size={15} className="text-brand-600" />
-                  Read-only
-                </span>
+                {view.store && view.store.status !== 'active' && (
+                  <span className="inline-flex items-center gap-1.5 text-sm text-accent-600">
+                    <Eye size={15} />
+                    Read-only while suspended
+                  </span>
+                )}
               </div>
               <div className="flex flex-wrap gap-2">
                 <label className="sr-only" htmlFor="detail-item-category">
@@ -265,23 +284,64 @@ export default function AdminItemDetail() {
             aria-label="Item detail"
             className="order-1 lg:order-none w-full lg:w-[340px] shrink-0 bg-white border-b lg:border-b-0 lg:border-l border-theme-border flex flex-col min-h-0"
           >
-            <div className={cn(PANE_HEADING, 'flex items-center justify-between py-2')}>
-              <span>Item detail</span>
-              <Link
-                to={`${storeHref}${categoryQuery}`}
-                aria-label="Close item detail"
-                className="w-8 h-8 flex items-center justify-center rounded-lg text-theme-muted hover:bg-theme-subtle"
-              >
-                <X size={16} />
-              </Link>
+            <div className={cn(PANE_HEADING, 'flex items-center justify-between gap-2 py-2')}>
+              <span>{editing ? 'Edit item' : 'Item detail'}</span>
+              <span className="flex items-center gap-1">
+                {canEdit && !editing && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSavedFor(null);
+                      setEditingItemId(itemId ?? null);
+                    }}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-brand-600 px-3 text-xs font-semibold normal-case tracking-normal text-white hover:bg-brand-700"
+                  >
+                    <Pencil size={13} />
+                    Edit
+                  </button>
+                )}
+                <Link
+                  to={`${storeHref}${categoryQuery}`}
+                  aria-label="Close item detail"
+                  className="w-8 h-8 flex items-center justify-center rounded-lg text-theme-muted hover:bg-theme-subtle"
+                >
+                  <X size={16} />
+                </Link>
+              </span>
             </div>
             <div className="flex-1 overflow-y-auto p-5">
-              {itemId ? (
-                <ItemDetailBody
-                  detail={detail}
-                  storeName={view.store?.name}
-                  loading={detail.loading}
+              {editing && viewedItem && id ? (
+                <ItemEditForm
+                  // A reload after a refused save brings a new updated_at: start from it.
+                  key={`${viewedItem.id}-${viewedItem.updated_at}`}
+                  storeId={id}
+                  item={viewedItem}
+                  categories={view.categories}
+                  onSaved={saved => {
+                    detail.applyEdit(saved);
+                    view.refresh();
+                    setEditingItemId(null);
+                    setSavedFor(itemId ?? null);
+                  }}
+                  onCancel={() => setEditingItemId(null)}
+                  onReload={detail.reload}
                 />
+              ) : itemId ? (
+                <>
+                  {savedFor === itemId && (
+                    <p
+                      role="status"
+                      className="mb-4 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-sm font-medium text-brand-700"
+                    >
+                      Changes saved and recorded in the store's activity log.
+                    </p>
+                  )}
+                  <ItemDetailBody
+                    detail={detail}
+                    storeName={view.store?.name}
+                    loading={detail.loading}
+                  />
+                </>
               ) : (
                 <p className="text-sm text-theme-muted">
                   Select an item from the list to see its details.

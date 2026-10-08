@@ -17,13 +17,14 @@ export interface SameUpcEntry {
   status: string;
 }
 
-// One item from one store for the superadmin detail view, read-only.
+// One item from one store for the superadmin detail view.
 export function useAdminItemDetail(storeId: string | undefined, itemId: string | undefined) {
   const navigate = useNavigate();
   const [item, setItem] = useState<AdminItem | null>(null);
   const [otherStores, setOtherStores] = useState<SameUpcEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     if (!storeId || !itemId) return;
@@ -56,7 +57,16 @@ export function useAdminItemDetail(storeId: string | undefined, itemId: string |
     return () => {
       cancelled = true;
     };
-  }, [storeId, itemId, navigate]);
+  }, [storeId, itemId, navigate, reloadKey]);
 
-  return { item, otherStores, loading, error };
+  return {
+    item,
+    otherStores,
+    loading,
+    error,
+    /** Fetch the item again, e.g. after an edit was refused because it changed. */
+    reload: () => setReloadKey(key => key + 1),
+    /** Show a saved edit without another round trip. */
+    applyEdit: (next: Partial<AdminItem>) => setItem(prev => (prev ? { ...prev, ...next } : prev)),
+  };
 }
