@@ -145,18 +145,18 @@ export function HeaderStat({
 }: Readonly<{ label: string; value: string | number; tone?: 'default' | 'brand' | 'accent' }>) {
   return (
     <div className="w-fit flex flex-col rounded-xl border border-theme-border bg-theme-subtle px-3.5 py-2">
+      <span className="text-xs font-semibold uppercase tracking-wide text-theme-muted">
+        {label}
+      </span>
       <span
         className={cn(
-          'text-xl font-bold leading-tight',
+          'mt-0.5 text-xl font-bold leading-tight',
           tone === 'brand' && 'text-brand-600',
           tone === 'accent' && 'text-accent-600',
           tone === 'default' && 'text-black'
         )}
       >
         {typeof value === 'number' ? value.toLocaleString() : value}
-      </span>
-      <span className="text-xs font-semibold uppercase tracking-wide text-theme-muted">
-        {label}
       </span>
     </div>
   );
