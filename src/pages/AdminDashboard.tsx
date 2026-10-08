@@ -22,16 +22,22 @@ import {
   HeaderStat,
   StoreAvatar,
   StoreStatusBadge,
-  FILTER_SELECT,
   FILTER_INPUT,
   SEGMENT_ACTIVE,
   SelectIcon,
+  ICON_ONLY_SELECT,
 } from '../components/superadmin/AdminUi';
 import { timeAgo } from '../components/superadmin/format';
 import type { StoreRow } from '../components/superadmin/types';
 
 type StatusFilter = 'all' | 'active' | 'suspended';
 type SortKey = 'items' | 'name' | 'recent';
+
+const STORE_SORT_LABELS: Record<SortKey, string> = {
+  items: 'Most items',
+  name: 'Name A–Z',
+  recent: 'Last capture',
+};
 
 const SORTS: Record<SortKey, (a: StoreRow, b: StoreRow) => number> = {
   items: (a, b) => b.item_count - a.item_count,
@@ -177,12 +183,17 @@ export default function AdminDashboard() {
             <label className="sr-only" htmlFor="store-sort">
               Sort stores
             </label>
-            <SelectIcon icon={ArrowDownUpIcon}>
+            <SelectIcon
+              icon={ArrowDownUpIcon}
+              iconOnly
+              active={sort !== 'items'}
+              title={`Sort: ${STORE_SORT_LABELS[sort]}`}
+            >
               <select
                 id="store-sort"
                 value={sort}
                 onChange={e => setSort(e.target.value as SortKey)}
-                className={cn('h-10 pl-8', FILTER_SELECT)}
+                className={ICON_ONLY_SELECT}
               >
                 <option value="items">Most items</option>
                 <option value="name">Name A–Z</option>

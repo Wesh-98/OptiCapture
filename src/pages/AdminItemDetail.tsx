@@ -23,6 +23,7 @@ import {
   FILTER_SELECT,
   FILTER_INPUT,
   SelectIcon,
+  ICON_ONLY_SELECT,
 } from '../components/superadmin/AdminUi';
 import { formatPrice } from '../components/superadmin/format';
 import { ItemEditForm } from '../components/superadmin/ItemEditForm';
@@ -30,6 +31,7 @@ import {
   CATEGORY_PARAM,
   useAdminStoreInventory,
   ITEM_SORT_LABELS,
+  ITEM_STATUS_LABELS as STATUS_LABELS,
   type ItemSort,
   type ItemStatusFilter,
   type ViewedStore,
@@ -153,7 +155,7 @@ export default function AdminItemDetail() {
                     onChange={e =>
                       view.setCategoryId(e.target.value === '' ? null : Number(e.target.value))
                     }
-                    className={cn('h-9 max-w-full pl-8', FILTER_SELECT)}
+                    className={cn('h-9 max-w-full', FILTER_SELECT, 'pl-8')}
                   >
                     <option value="">Select Category</option>
                     {view.categories.map(category => (
@@ -180,12 +182,18 @@ export default function AdminItemDetail() {
                 <label className="sr-only" htmlFor="detail-item-status">
                   Item status
                 </label>
-                <SelectIcon icon={FilterIcon}>
+                <SelectIcon
+                  icon={FilterIcon}
+                  iconOnly
+                  active={view.statusFilter !== 'all'}
+                  title={`Status: ${STATUS_LABELS[view.statusFilter]}`}
+                  className="w-9 h-9"
+                >
                   <select
                     id="detail-item-status"
                     value={view.statusFilter}
                     onChange={e => view.setStatusFilter(e.target.value as ItemStatusFilter)}
-                    className={cn('h-9 pl-8', FILTER_SELECT)}
+                    className={ICON_ONLY_SELECT}
                   >
                     <option value="all">All status</option>
                     <option value="Active">Active</option>
@@ -195,12 +203,18 @@ export default function AdminItemDetail() {
                 <label className="sr-only" htmlFor="detail-item-sort">
                   Sort items
                 </label>
-                <SelectIcon icon={ArrowDownUpIcon}>
+                <SelectIcon
+                  icon={ArrowDownUpIcon}
+                  iconOnly
+                  active={view.sort !== 'recent'}
+                  title={`Sort: ${ITEM_SORT_LABELS[view.sort]}`}
+                  className="w-9 h-9"
+                >
                   <select
                     id="detail-item-sort"
                     value={view.sort}
                     onChange={e => view.setSort(e.target.value as ItemSort)}
-                    className={cn('h-9 pl-8', FILTER_SELECT)}
+                    className={ICON_ONLY_SELECT}
                   >
                     {(Object.keys(ITEM_SORT_LABELS) as ItemSort[]).map(value => (
                       <option key={value} value={value}>
@@ -399,7 +413,7 @@ function StoresPane({
             value={current?.id ?? ''}
             onChange={e => onSelect(Number(e.target.value))}
             disabled={stores === null}
-            className={cn('w-full h-10 pl-8', FILTER_SELECT)}
+            className={cn('w-full h-10', FILTER_SELECT, 'pl-8')}
           >
             {stores === null && <option value="">Loading stores...</option>}
             {stores?.map(store => (

@@ -9,23 +9,60 @@ import { cn } from '../../lib/utils';
 export const FILTER_SELECT =
   'px-2.5 text-sm font-semibold rounded-lg border border-brand-600 bg-brand-600 text-white cursor-pointer hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-400 focus:ring-offset-1 [&>option]:bg-white [&>option]:text-black';
 
-/** A white icon at the left of a teal filter dropdown. The dropdown takes `pl-8`. */
+/**
+ * A white icon on a teal filter dropdown. By default the icon sits at the left and the
+ * dropdown keeps its text (give it `pl-8` after FILTER_SELECT). With `iconOnly` the control
+ * is a square icon button: the dropdown covers it invisibly (ICON_ONLY_SELECT), so clicks,
+ * the keyboard and the native option list still work. `title` says what is chosen, and
+ * `active` adds a dot when the choice is not the default.
+ */
 export function SelectIcon({
   icon: Icon,
   className,
+  iconOnly = false,
+  active = false,
+  title,
   children,
-}: Readonly<{ icon: LucideIcon; className?: string; children: ReactNode }>) {
+}: Readonly<{
+  icon: LucideIcon;
+  className?: string;
+  iconOnly?: boolean;
+  active?: boolean;
+  title?: string;
+  children: ReactNode;
+}>) {
   return (
-    <span className={cn('relative inline-flex', className)}>
+    <span
+      title={title}
+      className={cn(
+        'relative inline-flex',
+        iconOnly &&
+          'w-10 h-10 shrink-0 items-center justify-center rounded-lg bg-brand-600 text-white hover:bg-brand-700 focus-within:ring-2 focus-within:ring-brand-400 focus-within:ring-offset-1',
+        className
+      )}
+    >
       <Icon
-        size={15}
+        size={iconOnly ? 17 : 15}
         aria-hidden="true"
-        className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-white"
+        className={cn(
+          'pointer-events-none text-white',
+          !iconOnly && 'absolute left-2.5 top-1/2 -translate-y-1/2'
+        )}
       />
+      {iconOnly && active && (
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute top-1 right-1 w-2 h-2 rounded-full bg-white ring-2 ring-brand-600"
+        />
+      )}
       {children}
     </span>
   );
 }
+
+/** The dropdown inside an icon-only SelectIcon: invisible, covering the whole button. */
+export const ICON_ONLY_SELECT =
+  'absolute inset-0 w-full h-full opacity-0 cursor-pointer [&>option]:bg-white [&>option]:text-black';
 
 /** Filter-bar text boxes: white with a teal outline. */
 export const FILTER_INPUT =

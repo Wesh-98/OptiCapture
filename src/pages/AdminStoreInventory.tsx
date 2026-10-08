@@ -17,11 +17,13 @@ import {
   FILTER_SELECT,
   FILTER_INPUT,
   SelectIcon,
+  ICON_ONLY_SELECT,
 } from '../components/superadmin/AdminUi';
 import {
   CATEGORY_PARAM,
   useAdminStoreInventory,
   ITEM_SORT_LABELS,
+  ITEM_STATUS_LABELS as STATUS_LABELS,
   type ItemSort,
   type ItemStatusFilter,
 } from '../hooks/useAdminStoreInventory';
@@ -106,7 +108,7 @@ export default function AdminStoreInventory() {
                     onChange={e =>
                       view.setCategoryId(e.target.value === '' ? null : Number(e.target.value))
                     }
-                    className={cn('h-10 max-w-full pl-8', FILTER_SELECT)}
+                    className={cn('h-10 max-w-full', FILTER_SELECT, 'pl-8')}
                   >
                     <option value="">Select Category</option>
                     {categories.map(category => (
@@ -133,12 +135,17 @@ export default function AdminStoreInventory() {
                 <label className="sr-only" htmlFor="item-status">
                   Item status
                 </label>
-                <SelectIcon icon={FilterIcon}>
+                <SelectIcon
+                  icon={FilterIcon}
+                  iconOnly
+                  active={view.statusFilter !== 'all'}
+                  title={`Status: ${STATUS_LABELS[view.statusFilter]}`}
+                >
                   <select
                     id="item-status"
                     value={view.statusFilter}
                     onChange={e => view.setStatusFilter(e.target.value as ItemStatusFilter)}
-                    className={cn('h-10 pl-8', FILTER_SELECT)}
+                    className={ICON_ONLY_SELECT}
                   >
                     <option value="all">All status</option>
                     <option value="Active">Active</option>
@@ -148,12 +155,17 @@ export default function AdminStoreInventory() {
                 <label className="sr-only" htmlFor="item-sort">
                   Sort items
                 </label>
-                <SelectIcon icon={ArrowDownUpIcon}>
+                <SelectIcon
+                  icon={ArrowDownUpIcon}
+                  iconOnly
+                  active={view.sort !== 'recent'}
+                  title={`Sort: ${ITEM_SORT_LABELS[view.sort]}`}
+                >
                   <select
                     id="item-sort"
                     value={view.sort}
                     onChange={e => view.setSort(e.target.value as ItemSort)}
-                    className={cn('h-10 pl-8', FILTER_SELECT)}
+                    className={ICON_ONLY_SELECT}
                   >
                     {(Object.keys(ITEM_SORT_LABELS) as ItemSort[]).map(value => (
                       <option key={value} value={value}>

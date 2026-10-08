@@ -19,6 +19,12 @@ export interface ViewedStore {
 }
 
 export type ItemStatusFilter = 'all' | 'Active' | 'Inactive';
+
+export const ITEM_STATUS_LABELS: Record<ItemStatusFilter, string> = {
+  all: 'All status',
+  Active: 'Active',
+  Inactive: 'In-Active',
+};
 export type PageSize = 50 | 100 | 200;
 export type ItemSort = 'recent' | 'name_asc' | 'name_desc';
 
