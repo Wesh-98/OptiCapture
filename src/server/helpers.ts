@@ -68,8 +68,11 @@ function verifyImageMagicBytes(buffer: Buffer, mimeType: string): boolean {
 
 // Save base64 image to disk, return file path. Pass-through for URLs/paths.
 export function saveBase64Image(base64Data: string): string {
+  // Any data URL must be one of the allowed images. Anything else used to fall through and
+  // be stored raw in the database (an SVG, or a non-image data URL).
+  if (!/^\s*data:/i.test(base64Data)) return base64Data;
   const match = /^data:image\/(\w+);base64,(.+)$/.exec(base64Data);
-  if (!match) return base64Data;
+  if (!match) throw new UnsupportedImageTypeError();
 
   // Only allow safe image types
   const mimeMatch = /^data:([^;]+);base64,/.exec(base64Data);
@@ -286,10 +289,7 @@ export function isValidGtin(code: string): boolean | null {
   return null;
 }
 
-export async function fetchGoUpc(
-  upc: string,
-  signal: AbortSignal
-): Promise<LookupResult | null> {
+export async function fetchGoUpc(upc: string, signal: AbortSignal): Promise<LookupResult | null> {
   try {
     const apiKey = process.env.GO_UPC_API_KEY?.trim();
     // Go-UPC API requires an API key for lookups

@@ -1,5 +1,6 @@
+import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, type LucideIcon } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
 // Small pieces shared by the Super Admin pages.
@@ -7,6 +8,61 @@ import { cn } from '../../lib/utils';
 /** Filter-bar dropdowns: solid teal with white text. The open list stays white. */
 export const FILTER_SELECT =
   'px-2.5 text-sm font-semibold rounded-lg border border-brand-600 bg-brand-600 text-white cursor-pointer hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-400 focus:ring-offset-1 [&>option]:bg-white [&>option]:text-black';
+
+/**
+ * A white icon on a teal filter dropdown. By default the icon sits at the left and the
+ * dropdown keeps its text (give it `pl-8` after FILTER_SELECT). With `iconOnly` the control
+ * is a square icon button: the dropdown covers it invisibly (ICON_ONLY_SELECT), so clicks,
+ * the keyboard and the native option list still work. `title` says what is chosen, and
+ * `active` adds a dot when the choice is not the default.
+ */
+export function SelectIcon({
+  icon: Icon,
+  className,
+  iconOnly = false,
+  active = false,
+  title,
+  children,
+}: Readonly<{
+  icon: LucideIcon;
+  className?: string;
+  iconOnly?: boolean;
+  active?: boolean;
+  title?: string;
+  children: ReactNode;
+}>) {
+  return (
+    <span
+      title={title}
+      className={cn(
+        'relative inline-flex',
+        iconOnly &&
+          'w-10 h-10 shrink-0 items-center justify-center rounded-lg bg-brand-600 text-white hover:bg-brand-700 focus-within:ring-2 focus-within:ring-brand-400 focus-within:ring-offset-1',
+        className
+      )}
+    >
+      <Icon
+        size={iconOnly ? 17 : 15}
+        aria-hidden="true"
+        className={cn(
+          'pointer-events-none text-white',
+          !iconOnly && 'absolute left-2.5 top-1/2 -translate-y-1/2'
+        )}
+      />
+      {iconOnly && active && (
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute top-1 right-1 w-2 h-2 rounded-full bg-white ring-2 ring-brand-600"
+        />
+      )}
+      {children}
+    </span>
+  );
+}
+
+/** The dropdown inside an icon-only SelectIcon: invisible, covering the whole button. */
+export const ICON_ONLY_SELECT =
+  'absolute inset-0 w-full h-full opacity-0 cursor-pointer [&>option]:bg-white [&>option]:text-black';
 
 /** Filter-bar text boxes: white with a teal outline. */
 export const FILTER_INPUT =
@@ -89,18 +145,18 @@ export function HeaderStat({
 }: Readonly<{ label: string; value: string | number; tone?: 'default' | 'brand' | 'accent' }>) {
   return (
     <div className="w-fit flex flex-col rounded-xl border border-theme-border bg-theme-subtle px-3.5 py-2">
+      <span className="text-xs font-semibold uppercase tracking-wide text-theme-muted">
+        {label}
+      </span>
       <span
         className={cn(
-          'text-xl font-bold leading-tight',
+          'mt-0.5 text-xl font-bold leading-tight',
           tone === 'brand' && 'text-brand-600',
           tone === 'accent' && 'text-accent-600',
           tone === 'default' && 'text-black'
         )}
       >
         {typeof value === 'number' ? value.toLocaleString() : value}
-      </span>
-      <span className="text-xs font-semibold uppercase tracking-wide text-theme-muted">
-        {label}
       </span>
     </div>
   );

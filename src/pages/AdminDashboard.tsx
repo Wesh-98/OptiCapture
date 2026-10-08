@@ -12,6 +12,7 @@ import {
   Store as StoreIcon,
   Trash2,
   type LucideIcon,
+  ArrowDownUp as ArrowDownUpIcon,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useAdminStores } from '../hooks/useAdminStores';
@@ -21,15 +22,22 @@ import {
   HeaderStat,
   StoreAvatar,
   StoreStatusBadge,
-  FILTER_SELECT,
   FILTER_INPUT,
   SEGMENT_ACTIVE,
+  SelectIcon,
+  ICON_ONLY_SELECT,
 } from '../components/superadmin/AdminUi';
 import { timeAgo } from '../components/superadmin/format';
 import type { StoreRow } from '../components/superadmin/types';
 
 type StatusFilter = 'all' | 'active' | 'suspended';
 type SortKey = 'items' | 'name' | 'recent';
+
+const STORE_SORT_LABELS: Record<SortKey, string> = {
+  items: 'Most items',
+  name: 'Name A–Z',
+  recent: 'Last capture',
+};
 
 const SORTS: Record<SortKey, (a: StoreRow, b: StoreRow) => number> = {
   items: (a, b) => b.item_count - a.item_count,
@@ -175,16 +183,23 @@ export default function AdminDashboard() {
             <label className="sr-only" htmlFor="store-sort">
               Sort stores
             </label>
-            <select
-              id="store-sort"
-              value={sort}
-              onChange={e => setSort(e.target.value as SortKey)}
-              className={cn('h-10', FILTER_SELECT)}
+            <SelectIcon
+              icon={ArrowDownUpIcon}
+              iconOnly
+              active={sort !== 'items'}
+              title={`Sort: ${STORE_SORT_LABELS[sort]}`}
             >
-              <option value="items">Most items</option>
-              <option value="name">Name A–Z</option>
-              <option value="recent">Last capture</option>
-            </select>
+              <select
+                id="store-sort"
+                value={sort}
+                onChange={e => setSort(e.target.value as SortKey)}
+                className={ICON_ONLY_SELECT}
+              >
+                <option value="items">Most items</option>
+                <option value="name">Name A–Z</option>
+                <option value="recent">Last capture</option>
+              </select>
+            </SelectIcon>
           </div>
 
           {admin.isLoading ? (

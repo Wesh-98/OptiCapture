@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { InventoryItem } from '../components/dashboard/types';
 
 export interface AdminItem extends InventoryItem {
   store_id: number;
   created_at: string;
+  /** Fingerprint of the item as loaded; an edit sends it back so a stale save is refused. */
+  revision: string;
 }
 
 /** The same UPC as carried by another store. */
@@ -17,13 +19,20 @@ export interface SameUpcEntry {
   status: string;
 }
 
-// One item from one store for the superadmin detail view, read-only.
+// One item from one store for the superadmin detail view.
 export function useAdminItemDetail(storeId: string | undefined, itemId: string | undefined) {
   const navigate = useNavigate();
   const [item, setItem] = useState<AdminItem | null>(null);
   const [otherStores, setOtherStores] = useState<SameUpcEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);
+  // The item on screen now. A save can finish after the superadmin has moved to another
+  // item, and its result must not land on that one.
+  const shownItemId = useRef(itemId);
+  useEffect(() => {
+    shownItemId.current = itemId;
+  }, [itemId]);
 
   useEffect(() => {
     if (!storeId || !itemId) return;
@@ -56,7 +65,20 @@ export function useAdminItemDetail(storeId: string | undefined, itemId: string |
     return () => {
       cancelled = true;
     };
-  }, [storeId, itemId, navigate]);
+  }, [storeId, itemId, navigate, reloadKey]);
 
-  return { item, otherStores, loading, error };
+  return {
+    item,
+    otherStores,
+    loading,
+    error,
+    /** Fetch the item again, e.g. after an edit was refused because it changed. */
+    reload: () => setReloadKey(key => key + 1),
+    /** Show a saved edit without another round trip, with matches for its saved UPC. */
+    applyEdit: (next: Partial<AdminItem>, nextOtherStores: SameUpcEntry[]) => {
+      if (String(next.id) !== shownItemId.current) return;
+      setItem(prev => (prev && prev.id === next.id ? { ...prev, ...next } : prev));
+      setOtherStores(nextOtherStores);
+    },
+  };
 }

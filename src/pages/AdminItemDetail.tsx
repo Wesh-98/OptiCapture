@@ -1,6 +1,18 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, Eye, Image as ImageIcon, Search, X } from 'lucide-react';
+import {
+  ChevronLeft,
+  ChevronRight,
+  Eye,
+  Image as ImageIcon,
+  Pencil,
+  Search,
+  X,
+  ArrowDownUp as ArrowDownUpIcon,
+  Filter as FilterIcon,
+  Store as StoreIcon,
+  Tag as TagIcon,
+} from 'lucide-react';
 import { cn, parseServerDate } from '../lib/utils';
 import { AdminLayout } from '../components/superadmin/AdminLayout';
 import {
@@ -10,12 +22,16 @@ import {
   StoreStatusBadge,
   FILTER_SELECT,
   FILTER_INPUT,
+  SelectIcon,
+  ICON_ONLY_SELECT,
 } from '../components/superadmin/AdminUi';
 import { formatPrice } from '../components/superadmin/format';
+import { ItemEditForm } from '../components/superadmin/ItemEditForm';
 import {
   CATEGORY_PARAM,
   useAdminStoreInventory,
   ITEM_SORT_LABELS,
+  ITEM_STATUS_LABELS as STATUS_LABELS,
   type ItemSort,
   type ItemStatusFilter,
   type ViewedStore,
@@ -26,7 +42,8 @@ import { useAdminStoreList } from '../hooks/useAdminStoreList';
 const PANE_HEADING =
   'px-4 py-3.5 border-b border-theme-border text-xs font-extrabold uppercase tracking-wider text-brand-600';
 
-// Superadmin: one item in context. Store | items (by category) | detail, read-only.
+// Superadmin: one item in context. Store | items (by category) | detail, with editing
+// for active stores.
 // Without an item in the URL the detail pane waits for a pick.
 export default function AdminItemDetail() {
   const { id, itemId } = useParams<{ id: string; itemId: string }>();
@@ -36,6 +53,13 @@ export default function AdminItemDetail() {
 
   // The detail hook keeps the previous item until the next one loads; don't treat it as this one.
   const viewedItem = detail.item && String(detail.item.id) === itemId ? detail.item : null;
+
+  // Editing belongs to one item: opening another item leaves the form behind. Suspended
+  // stores stay read-only (the server refuses their edits too).
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [savedFor, setSavedFor] = useState<string | null>(null);
+  const editing = editingItemId !== null && editingItemId === itemId;
+  const canEdit = Boolean(viewedItem) && view.store?.status === 'active';
 
   // With no category in the URL, open the items pane on the item's own category, once per
   // store; after that the superadmin's own choice sticks while they move between items.
@@ -113,30 +137,34 @@ export default function AdminItemDetail() {
                     </span>
                   </h1>
                 </div>
-                <span className="inline-flex items-center gap-1.5 text-sm text-theme-muted">
-                  <Eye size={15} className="text-brand-600" />
-                  Read-only
-                </span>
+                {view.store && view.store.status !== 'active' && (
+                  <span className="inline-flex items-center gap-1.5 text-sm text-accent-600">
+                    <Eye size={15} />
+                    Read-only while suspended
+                  </span>
+                )}
               </div>
               <div className="flex flex-wrap gap-2">
                 <label className="sr-only" htmlFor="detail-item-category">
                   Category
                 </label>
-                <select
-                  id="detail-item-category"
-                  value={view.categoryId ?? ''}
-                  onChange={e =>
-                    view.setCategoryId(e.target.value === '' ? null : Number(e.target.value))
-                  }
-                  className={cn('h-9 max-w-full', FILTER_SELECT)}
-                >
-                  <option value="">Select Category</option>
-                  {view.categories.map(category => (
-                    <option key={category.id} value={category.id}>
-                      {category.name} ({category.item_count.toLocaleString()})
-                    </option>
-                  ))}
-                </select>
+                <SelectIcon icon={TagIcon} className="max-w-full">
+                  <select
+                    id="detail-item-category"
+                    value={view.categoryId ?? ''}
+                    onChange={e =>
+                      view.setCategoryId(e.target.value === '' ? null : Number(e.target.value))
+                    }
+                    className={cn('h-9 max-w-full', FILTER_SELECT, 'pl-8')}
+                  >
+                    <option value="">Select Category</option>
+                    {view.categories.map(category => (
+                      <option key={category.id} value={category.id}>
+                        {category.name} ({category.item_count.toLocaleString()})
+                      </option>
+                    ))}
+                  </select>
+                </SelectIcon>
                 <label className="relative flex-[1_1_200px]">
                   <span className="sr-only">Search items</span>
                   <Search
@@ -154,31 +182,47 @@ export default function AdminItemDetail() {
                 <label className="sr-only" htmlFor="detail-item-status">
                   Item status
                 </label>
-                <select
-                  id="detail-item-status"
-                  value={view.statusFilter}
-                  onChange={e => view.setStatusFilter(e.target.value as ItemStatusFilter)}
-                  className={cn('h-9', FILTER_SELECT)}
+                <SelectIcon
+                  icon={FilterIcon}
+                  iconOnly
+                  active={view.statusFilter !== 'all'}
+                  title={`Status: ${STATUS_LABELS[view.statusFilter]}`}
+                  className="w-9 h-9"
                 >
-                  <option value="all">All status</option>
-                  <option value="Active">Active</option>
-                  <option value="Inactive">In-Active</option>
-                </select>
+                  <select
+                    id="detail-item-status"
+                    value={view.statusFilter}
+                    onChange={e => view.setStatusFilter(e.target.value as ItemStatusFilter)}
+                    className={ICON_ONLY_SELECT}
+                  >
+                    <option value="all">All status</option>
+                    <option value="Active">Active</option>
+                    <option value="Inactive">In-Active</option>
+                  </select>
+                </SelectIcon>
                 <label className="sr-only" htmlFor="detail-item-sort">
                   Sort items
                 </label>
-                <select
-                  id="detail-item-sort"
-                  value={view.sort}
-                  onChange={e => view.setSort(e.target.value as ItemSort)}
-                  className={cn('h-9', FILTER_SELECT)}
+                <SelectIcon
+                  icon={ArrowDownUpIcon}
+                  iconOnly
+                  active={view.sort !== 'recent'}
+                  title={`Sort: ${ITEM_SORT_LABELS[view.sort]}`}
+                  className="w-9 h-9"
                 >
-                  {(Object.keys(ITEM_SORT_LABELS) as ItemSort[]).map(value => (
-                    <option key={value} value={value}>
-                      {ITEM_SORT_LABELS[value]}
-                    </option>
-                  ))}
-                </select>
+                  <select
+                    id="detail-item-sort"
+                    value={view.sort}
+                    onChange={e => view.setSort(e.target.value as ItemSort)}
+                    className={ICON_ONLY_SELECT}
+                  >
+                    {(Object.keys(ITEM_SORT_LABELS) as ItemSort[]).map(value => (
+                      <option key={value} value={value}>
+                        {ITEM_SORT_LABELS[value]}
+                      </option>
+                    ))}
+                  </select>
+                </SelectIcon>
               </div>
             </div>
 
@@ -265,23 +309,67 @@ export default function AdminItemDetail() {
             aria-label="Item detail"
             className="order-1 lg:order-none w-full lg:w-[340px] shrink-0 bg-white border-b lg:border-b-0 lg:border-l border-theme-border flex flex-col min-h-0"
           >
-            <div className={cn(PANE_HEADING, 'flex items-center justify-between py-2')}>
-              <span>Item detail</span>
-              <Link
-                to={`${storeHref}${categoryQuery}`}
-                aria-label="Close item detail"
-                className="w-8 h-8 flex items-center justify-center rounded-lg text-theme-muted hover:bg-theme-subtle"
-              >
-                <X size={16} />
-              </Link>
+            <div className={cn(PANE_HEADING, 'flex items-center justify-between gap-2 py-2')}>
+              <span>{editing ? 'Edit item' : 'Item detail'}</span>
+              <span className="flex items-center gap-1">
+                {canEdit && !editing && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSavedFor(null);
+                      setEditingItemId(itemId ?? null);
+                    }}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-brand-600 px-3 text-xs font-semibold normal-case tracking-normal text-white hover:bg-brand-700"
+                  >
+                    <Pencil size={13} />
+                    Edit
+                  </button>
+                )}
+                <Link
+                  to={`${storeHref}${categoryQuery}`}
+                  aria-label="Close item detail"
+                  className="w-8 h-8 flex items-center justify-center rounded-lg text-theme-muted hover:bg-theme-subtle"
+                >
+                  <X size={16} />
+                </Link>
+              </span>
             </div>
             <div className="flex-1 overflow-y-auto p-5">
-              {itemId ? (
-                <ItemDetailBody
-                  detail={detail}
-                  storeName={view.store?.name}
-                  loading={detail.loading}
+              {editing && viewedItem && id ? (
+                <ItemEditForm
+                  // A reload after a refused save brings a new revision: start from it.
+                  key={`${viewedItem.id}-${viewedItem.revision}`}
+                  storeId={id}
+                  item={viewedItem}
+                  categories={view.categories}
+                  onSaved={(saved, otherStores) => {
+                    // This can arrive after the superadmin has opened another item, so every
+                    // update is tied to the saved item, not to whatever is on screen.
+                    const savedId = String(saved.id);
+                    detail.applyEdit(saved, otherStores);
+                    view.refresh();
+                    setEditingItemId(current => (current === savedId ? null : current));
+                    setSavedFor(savedId);
+                  }}
+                  onCancel={() => setEditingItemId(null)}
+                  onReload={detail.reload}
                 />
+              ) : itemId ? (
+                <>
+                  {savedFor === itemId && (
+                    <p
+                      role="status"
+                      className="mb-4 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-sm font-medium text-brand-700"
+                    >
+                      Changes saved and recorded in the store's activity log.
+                    </p>
+                  )}
+                  <ItemDetailBody
+                    detail={detail}
+                    storeName={view.store?.name}
+                    loading={detail.loading}
+                  />
+                </>
               ) : (
                 <p className="text-sm text-theme-muted">
                   Select an item from the list to see its details.
@@ -322,21 +410,23 @@ function StoresPane({
         <label className="sr-only" htmlFor="detail-store">
           Store
         </label>
-        <select
-          id="detail-store"
-          value={current?.id ?? ''}
-          onChange={e => onSelect(Number(e.target.value))}
-          disabled={stores === null}
-          className={cn('w-full h-10', FILTER_SELECT)}
-        >
-          {stores === null && <option value="">Loading stores...</option>}
-          {stores?.map(store => (
-            <option key={store.id} value={store.id}>
-              {store.name}
-              {store.status === 'active' ? '' : ' (Suspended)'}
-            </option>
-          ))}
-        </select>
+        <SelectIcon icon={StoreIcon} className="w-full">
+          <select
+            id="detail-store"
+            value={current?.id ?? ''}
+            onChange={e => onSelect(Number(e.target.value))}
+            disabled={stores === null}
+            className={cn('w-full h-10', FILTER_SELECT, 'pl-8')}
+          >
+            {stores === null && <option value="">Loading stores...</option>}
+            {stores?.map(store => (
+              <option key={store.id} value={store.id}>
+                {store.name}
+                {store.status === 'active' ? '' : ' (Suspended)'}
+              </option>
+            ))}
+          </select>
+        </SelectIcon>
 
         {current && (
           <div className="hidden lg:block space-y-3">
