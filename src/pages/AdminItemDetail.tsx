@@ -8,6 +8,10 @@ import {
   Pencil,
   Search,
   X,
+  ArrowDownUp as ArrowDownUpIcon,
+  Filter as FilterIcon,
+  Store as StoreIcon,
+  Tag as TagIcon,
 } from 'lucide-react';
 import { cn, parseServerDate } from '../lib/utils';
 import { AdminLayout } from '../components/superadmin/AdminLayout';
@@ -18,6 +22,7 @@ import {
   StoreStatusBadge,
   FILTER_SELECT,
   FILTER_INPUT,
+  SelectIcon,
 } from '../components/superadmin/AdminUi';
 import { formatPrice } from '../components/superadmin/format';
 import { ItemEditForm } from '../components/superadmin/ItemEditForm';
@@ -141,21 +146,23 @@ export default function AdminItemDetail() {
                 <label className="sr-only" htmlFor="detail-item-category">
                   Category
                 </label>
-                <select
-                  id="detail-item-category"
-                  value={view.categoryId ?? ''}
-                  onChange={e =>
-                    view.setCategoryId(e.target.value === '' ? null : Number(e.target.value))
-                  }
-                  className={cn('h-9 max-w-full', FILTER_SELECT)}
-                >
-                  <option value="">Select Category</option>
-                  {view.categories.map(category => (
-                    <option key={category.id} value={category.id}>
-                      {category.name} ({category.item_count.toLocaleString()})
-                    </option>
-                  ))}
-                </select>
+                <SelectIcon icon={TagIcon} className="max-w-full">
+                  <select
+                    id="detail-item-category"
+                    value={view.categoryId ?? ''}
+                    onChange={e =>
+                      view.setCategoryId(e.target.value === '' ? null : Number(e.target.value))
+                    }
+                    className={cn('h-9 max-w-full pl-8', FILTER_SELECT)}
+                  >
+                    <option value="">Select Category</option>
+                    {view.categories.map(category => (
+                      <option key={category.id} value={category.id}>
+                        {category.name} ({category.item_count.toLocaleString()})
+                      </option>
+                    ))}
+                  </select>
+                </SelectIcon>
                 <label className="relative flex-[1_1_200px]">
                   <span className="sr-only">Search items</span>
                   <Search
@@ -173,31 +180,35 @@ export default function AdminItemDetail() {
                 <label className="sr-only" htmlFor="detail-item-status">
                   Item status
                 </label>
-                <select
-                  id="detail-item-status"
-                  value={view.statusFilter}
-                  onChange={e => view.setStatusFilter(e.target.value as ItemStatusFilter)}
-                  className={cn('h-9', FILTER_SELECT)}
-                >
-                  <option value="all">All status</option>
-                  <option value="Active">Active</option>
-                  <option value="Inactive">In-Active</option>
-                </select>
+                <SelectIcon icon={FilterIcon}>
+                  <select
+                    id="detail-item-status"
+                    value={view.statusFilter}
+                    onChange={e => view.setStatusFilter(e.target.value as ItemStatusFilter)}
+                    className={cn('h-9 pl-8', FILTER_SELECT)}
+                  >
+                    <option value="all">All status</option>
+                    <option value="Active">Active</option>
+                    <option value="Inactive">In-Active</option>
+                  </select>
+                </SelectIcon>
                 <label className="sr-only" htmlFor="detail-item-sort">
                   Sort items
                 </label>
-                <select
-                  id="detail-item-sort"
-                  value={view.sort}
-                  onChange={e => view.setSort(e.target.value as ItemSort)}
-                  className={cn('h-9', FILTER_SELECT)}
-                >
-                  {(Object.keys(ITEM_SORT_LABELS) as ItemSort[]).map(value => (
-                    <option key={value} value={value}>
-                      {ITEM_SORT_LABELS[value]}
-                    </option>
-                  ))}
-                </select>
+                <SelectIcon icon={ArrowDownUpIcon}>
+                  <select
+                    id="detail-item-sort"
+                    value={view.sort}
+                    onChange={e => view.setSort(e.target.value as ItemSort)}
+                    className={cn('h-9 pl-8', FILTER_SELECT)}
+                  >
+                    {(Object.keys(ITEM_SORT_LABELS) as ItemSort[]).map(value => (
+                      <option key={value} value={value}>
+                        {ITEM_SORT_LABELS[value]}
+                      </option>
+                    ))}
+                  </select>
+                </SelectIcon>
               </div>
             </div>
 
@@ -382,21 +393,23 @@ function StoresPane({
         <label className="sr-only" htmlFor="detail-store">
           Store
         </label>
-        <select
-          id="detail-store"
-          value={current?.id ?? ''}
-          onChange={e => onSelect(Number(e.target.value))}
-          disabled={stores === null}
-          className={cn('w-full h-10', FILTER_SELECT)}
-        >
-          {stores === null && <option value="">Loading stores...</option>}
-          {stores?.map(store => (
-            <option key={store.id} value={store.id}>
-              {store.name}
-              {store.status === 'active' ? '' : ' (Suspended)'}
-            </option>
-          ))}
-        </select>
+        <SelectIcon icon={StoreIcon} className="w-full">
+          <select
+            id="detail-store"
+            value={current?.id ?? ''}
+            onChange={e => onSelect(Number(e.target.value))}
+            disabled={stores === null}
+            className={cn('w-full h-10 pl-8', FILTER_SELECT)}
+          >
+            {stores === null && <option value="">Loading stores...</option>}
+            {stores?.map(store => (
+              <option key={store.id} value={store.id}>
+                {store.name}
+                {store.status === 'active' ? '' : ' (Suspended)'}
+              </option>
+            ))}
+          </select>
+        </SelectIcon>
 
         {current && (
           <div className="hidden lg:block space-y-3">

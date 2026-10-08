@@ -1,5 +1,6 @@
+import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, type LucideIcon } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
 // Small pieces shared by the Super Admin pages.
@@ -7,6 +8,24 @@ import { cn } from '../../lib/utils';
 /** Filter-bar dropdowns: solid teal with white text. The open list stays white. */
 export const FILTER_SELECT =
   'px-2.5 text-sm font-semibold rounded-lg border border-brand-600 bg-brand-600 text-white cursor-pointer hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-400 focus:ring-offset-1 [&>option]:bg-white [&>option]:text-black';
+
+/** A white icon at the left of a teal filter dropdown. The dropdown takes `pl-8`. */
+export function SelectIcon({
+  icon: Icon,
+  className,
+  children,
+}: Readonly<{ icon: LucideIcon; className?: string; children: ReactNode }>) {
+  return (
+    <span className={cn('relative inline-flex', className)}>
+      <Icon
+        size={15}
+        aria-hidden="true"
+        className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-white"
+      />
+      {children}
+    </span>
+  );
+}
 
 /** Filter-bar text boxes: white with a teal outline. */
 export const FILTER_INPUT =

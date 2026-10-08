@@ -12,6 +12,7 @@ import {
   Store as StoreIcon,
   Trash2,
   type LucideIcon,
+  ArrowDownUp as ArrowDownUpIcon,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useAdminStores } from '../hooks/useAdminStores';
@@ -24,6 +25,7 @@ import {
   FILTER_SELECT,
   FILTER_INPUT,
   SEGMENT_ACTIVE,
+  SelectIcon,
 } from '../components/superadmin/AdminUi';
 import { timeAgo } from '../components/superadmin/format';
 import type { StoreRow } from '../components/superadmin/types';
@@ -175,16 +177,18 @@ export default function AdminDashboard() {
             <label className="sr-only" htmlFor="store-sort">
               Sort stores
             </label>
-            <select
-              id="store-sort"
-              value={sort}
-              onChange={e => setSort(e.target.value as SortKey)}
-              className={cn('h-10', FILTER_SELECT)}
-            >
-              <option value="items">Most items</option>
-              <option value="name">Name A–Z</option>
-              <option value="recent">Last capture</option>
-            </select>
+            <SelectIcon icon={ArrowDownUpIcon}>
+              <select
+                id="store-sort"
+                value={sort}
+                onChange={e => setSort(e.target.value as SortKey)}
+                className={cn('h-10 pl-8', FILTER_SELECT)}
+              >
+                <option value="items">Most items</option>
+                <option value="name">Name A–Z</option>
+                <option value="recent">Last capture</option>
+              </select>
+            </SelectIcon>
           </div>
 
           {admin.isLoading ? (
