@@ -231,7 +231,9 @@ export function parseImportNumber(
 ): { value: number | null; error?: string } {
   const text = readImportedString(value);
   if (!text) return { value: null };
-  const cleaned = text.replace(/^[$£€¥]\s*/, '').replace(/(?<=\d),(?=\d{3}\b)/g, '').replace(/\s*%$/, '');
+  let cleaned = text.replace(/^[$£€¥]\s*/, '').replace(/(?<=\d),(?=\d{3}\b)/g, '');
+  // Drop a trailing "%" and any space before it, without a regex that can backtrack.
+  if (cleaned.endsWith('%')) cleaned = cleaned.slice(0, -1).trimEnd();
   const parsed = Number(cleaned);
   const max = options.max ?? 1_000_000;
   if (!cleaned || !Number.isFinite(parsed) || parsed < 0) {
@@ -241,7 +243,10 @@ export function parseImportNumber(
     return { value: null, error: `${label} "${text}" must be a whole number` };
   }
   if (parsed > max) {
-    return { value: null, error: `${label} "${text}" is larger than ${max.toLocaleString('en-US')}` };
+    return {
+      value: null,
+      error: `${label} "${text}" is larger than ${max.toLocaleString('en-US')}`,
+    };
   }
   return { value: parsed };
 }
@@ -327,13 +332,33 @@ function isCategoryInStore(categoryId: unknown, storeId: number | undefined): bo
   );
 }
 
-inventoryRouter.get('/inventory', authenticateToken, (req: AuthRequest, res) => {
-  const category_id = firstQueryValue(req.query.category_id);
-  const q = firstQueryValue(req.query.q);
-  const status = firstQueryValue(req.query.status);
-  const pageParam = firstQueryValue(req.query.page);
-  const limitParam = firstQueryValue(req.query.limit);
-  const storeId = req.user.store_id;
+/**
+ * One page of a store's items, filtered the way the inventory page filters them. Shared by
+ * GET /inventory (the caller's active store) and the superadmin's per-store view (the store
+ * named in the URL), so both read the same rows. Returns an error string for a bad filter.
+ */
+// Optional `sort` values. Without one the list keeps its usual most-recently-updated order.
+const INVENTORY_SORTS: Record<string, string> = {
+  recent: 'i.created_at DESC, i.id DESC',
+  name_asc: 'i.item_name COLLATE NOCASE ASC, i.id ASC',
+  name_desc: 'i.item_name COLLATE NOCASE DESC, i.id DESC',
+};
+
+export function listStoreInventory(
+  storeId: number | undefined,
+  query: express.Request['query']
+): { error: string } | { items: unknown[]; total: number; page: number; limit: number } {
+  const category_id = firstQueryValue(query.category_id);
+  const q = firstQueryValue(query.q);
+  const status = firstQueryValue(query.status);
+  const pageParam = firstQueryValue(query.page);
+  const limitParam = firstQueryValue(query.limit);
+  const sort = firstQueryValue(query.sort);
+
+  if (sort && !Object.hasOwn(INVENTORY_SORTS, sort)) {
+    return { error: `sort must be one of: ${Object.keys(INVENTORY_SORTS).join(', ')}` };
+  }
+  const orderBy = sort ? INVENTORY_SORTS[sort] : 'i.updated_at DESC';
 
   // Build WHERE conditions separately so we can reuse for COUNT + data queries
   const conditions: string[] = ['i.store_id = ?'];
@@ -346,7 +371,7 @@ inventoryRouter.get('/inventory', authenticateToken, (req: AuthRequest, res) => 
 
   if (status) {
     if (status !== 'Active' && status !== 'Inactive') {
-      return res.status(400).json({ error: 'status must be Active or Inactive' });
+      return { error: 'status must be Active or Inactive' };
     }
     conditions.push('i.status = ?');
     params.push(status);
@@ -375,9 +400,15 @@ inventoryRouter.get('/inventory', authenticateToken, (req: AuthRequest, res) => 
     total: number;
   };
   const items = db
-    .prepare(`${select} ORDER BY i.updated_at DESC LIMIT ? OFFSET ?`)
+    .prepare(`${select} ORDER BY ${orderBy} LIMIT ? OFFSET ?`)
     .all(...params, safeLimit, offset);
-  res.json({ items, total, page: pageNum, limit: safeLimit });
+  return { items, total, page: pageNum, limit: safeLimit };
+}
+
+inventoryRouter.get('/inventory', authenticateToken, (req: AuthRequest, res) => {
+  const result = listStoreInventory(req.user.store_id, req.query);
+  if ('error' in result) return res.status(400).json(result);
+  res.json(result);
 });
 
 // Export inventory — XLSX, CSV, JSON, PDF
@@ -656,7 +687,12 @@ inventoryRouter.post(
     if (existing) {
       return res.status(409).json({ error: 'Item with this name already exists' });
     }
-    if (cleanUpc && db.prepare('SELECT 1 FROM inventory WHERE upc = ? AND store_id = ?').get(cleanUpc, user.store_id)) {
+    if (
+      cleanUpc &&
+      db
+        .prepare('SELECT 1 FROM inventory WHERE upc = ? AND store_id = ?')
+        .get(cleanUpc, user.store_id)
+    ) {
       return res.status(409).json({ error: 'An item with that UPC already exists' });
     }
 
@@ -1193,7 +1229,9 @@ inventoryRouter.post(
       if (categoryIdCache.has(cacheKey)) return categoryIdCache.get(cacheKey) ?? null;
       // Case-insensitive, so "snacks" in a file reuses the store's "Snacks" category.
       const existing = db
-        .prepare('SELECT id FROM categories WHERE LOWER(TRIM(name)) = LOWER(?) AND store_id = ? ORDER BY id LIMIT 1')
+        .prepare(
+          'SELECT id FROM categories WHERE LOWER(TRIM(name)) = LOWER(?) AND store_id = ? ORDER BY id LIMIT 1'
+        )
         .get(trimmed, user.store_id) as any;
       if (existing) {
         categoryIdCache.set(cacheKey, existing.id);

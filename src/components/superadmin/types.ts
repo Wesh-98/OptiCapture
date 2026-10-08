@@ -8,6 +8,10 @@ export interface StoreRow {
   created_at: string;
   user_count: number;
   item_count: number;
+  category_count: number;
+  items_added_week: number;
+  last_item_added_at: string | null;
+  missing_upc_count: number;
   logo?: string | null;
   street?: string;
   city?: string;

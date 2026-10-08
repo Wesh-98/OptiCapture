@@ -1,10 +1,10 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useReducedMotion } from 'motion/react';
-import { Store, Package, ShieldCheck, ShieldOff, LogOut } from 'lucide-react';
 import { AlertTriangle, X } from 'lucide-react';
-import { cn } from '../lib/utils';
 import { useAdminStores } from '../hooks/useAdminStores';
 import { useStoreUsers } from '../hooks/useStoreUsers';
+import { AdminLayout } from '../components/superadmin/AdminLayout';
 import { StoreTable } from '../components/superadmin/StoreTable';
 import { EditStoreModal } from '../components/superadmin/EditStoreModal';
 import { DeleteStoreModal } from '../components/superadmin/DeleteStoreModal';
@@ -13,6 +13,7 @@ import { ResetPasswordModal } from '../components/superadmin/ResetPasswordModal'
 
 export default function SuperAdmin() {
   const prefersReducedMotion = useReducedMotion();
+  const navigate = useNavigate();
 
   const admin = useAdminStores();
   const users = useStoreUsers();
@@ -22,80 +23,54 @@ export default function SuperAdmin() {
     fetchStores();
   }, [fetchStores]);
 
-  const active = admin.stores.filter(s => s.status === 'active').length;
-  const suspended = admin.stores.filter(s => s.status === 'suspended').length;
-  const totalItems = admin.stores.reduce((n, s) => n + (s.item_count || 0), 0);
+  // Selected store IDs. The live selection is read through the current store list, so a
+  // store that is deleted or refreshed away stops counting as selected.
+  const [rawSelectedIds, setSelectedIds] = useState<ReadonlySet<number>>(new Set());
+  const selectedIds = useMemo<ReadonlySet<number>>(
+    () => new Set(admin.stores.map(store => store.id).filter(id => rawSelectedIds.has(id))),
+    [admin.stores, rawSelectedIds]
+  );
+
+  const toggleStore = (id: number) =>
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const toggleAllVisible = () =>
+    setSelectedIds(prev => {
+      const visible = admin.filteredStores.map(store => store.id);
+      const next = new Set(prev);
+      if (visible.every(id => prev.has(id))) visible.forEach(id => next.delete(id));
+      else visible.forEach(id => next.add(id));
+      return next;
+    });
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      {/* Top nav */}
-      <header className="h-16 flex items-center justify-between px-6 bg-navy-900">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 bg-white rounded-lg flex items-center justify-center p-1">
-            <img src="/logo.svg" alt="Inventory Portal logo" className="w-full h-full object-contain" />
-          </div>
-          <div>
-            <h1 className="text-base font-bold text-white leading-tight">Inventory Portal</h1>
-            <p className="text-xs text-slate-400 leading-tight">Super Admin</p>
-          </div>
+    <AdminLayout onLogout={admin.handleLogout}>
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold text-black">Stores</h1>
+          <p className="mt-1 text-sm font-medium text-theme-muted">
+            Manage stores and open any store's inventory
+          </p>
         </div>
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full text-white bg-navy-800">
-            <ShieldCheck size={15} className="text-emerald-500" />
-            <span className="text-sm font-medium">superadmin</span>
-          </div>
-          <button
-            onClick={admin.handleLogout}
-            className="flex items-center gap-2 text-slate-400 hover:text-white hover:bg-white/10 transition-colors text-sm px-3 py-1.5 rounded-lg"
-          >
-            <LogOut size={15} />
-            Sign out
-          </button>
-        </div>
-      </header>
 
-      <div className="max-w-7xl mx-auto px-6 py-8 space-y-6">
         {/* Page-level error banner */}
         {admin.actionError && (
-          <div className="flex items-center gap-2 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
+          <div className="flex items-center gap-2 px-4 py-3 bg-accent-50 border border-accent-100 rounded-xl text-sm text-accent-700">
             <AlertTriangle size={16} className="shrink-0" />
             <span className="flex-1">{admin.actionError}</span>
             <button
               onClick={() => admin.setActionError('')}
-              className="text-red-400 hover:text-red-600"
+              className="text-accent-400 hover:text-accent-600"
             >
               <X size={16} />
             </button>
           </div>
         )}
-
-        {/* Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {[
-            {
-              label: 'Total Stores',
-              value: admin.stores.length,
-              icon: Store,
-              color: 'text-navy-900',
-            },
-            { label: 'Active', value: active, icon: ShieldCheck, color: 'text-emerald-600' },
-            { label: 'Suspended', value: suspended, icon: ShieldOff, color: 'text-red-500' },
-            {
-              label: 'Total Items',
-              value: totalItems.toLocaleString(),
-              icon: Package,
-              color: 'text-slate-700',
-            },
-          ].map(({ label, value, icon: Icon, color }) => (
-            <div key={label} className="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
-              <div className="flex items-center gap-2 mb-1">
-                <Icon size={16} className={color} />
-                <p className="text-xs text-slate-500 uppercase font-semibold">{label}</p>
-              </div>
-              <p className={cn('text-2xl font-bold', color)}>{value}</p>
-            </div>
-          ))}
-        </div>
 
         <StoreTable
           stores={admin.stores}
@@ -110,10 +85,15 @@ export default function SuperAdmin() {
           onStatusFilter={admin.setStatusFilter}
           onJoinedSort={admin.setJoinedSort}
           onRefresh={admin.fetchStores}
+          onInventory={store => navigate(`/admin/stores/${store.id}`)}
           onEdit={admin.openEdit}
           onUsers={users.openUsers}
           onToggleStatus={admin.toggleStatus}
           onDelete={admin.openDeleteConfirm}
+          selectedIds={selectedIds}
+          onToggleStore={toggleStore}
+          onToggleAll={toggleAllVisible}
+          onClearSelection={() => setSelectedIds(new Set())}
         />
       </div>
 
@@ -179,6 +159,6 @@ export default function SuperAdmin() {
           onClose={() => users.setResetResult(null)}
         />
       )}
-    </div>
+    </AdminLayout>
   );
 }

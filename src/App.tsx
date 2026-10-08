@@ -10,6 +10,9 @@ import Layout from './components/Layout';
 const Login = lazy(() => import('./pages/Login'));
 const Signup = lazy(() => import('./pages/Signup'));
 const SuperAdmin = lazy(() => import('./pages/SuperAdmin'));
+const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
+const AdminStoreInventory = lazy(() => import('./pages/AdminStoreInventory'));
+const AdminItemDetail = lazy(() => import('./pages/AdminItemDetail'));
 const StorePicker = lazy(() => import('./pages/StorePicker'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const MobileScan = lazy(() => import('./pages/MobileScan'));
@@ -160,7 +163,39 @@ export default function App() {
               path="/admin"
               element={
                 <AdminRoute>
+                  <AdminDashboard />
+                </AdminRoute>
+              }
+            />
+            <Route
+              path="/admin/stores"
+              element={
+                <AdminRoute>
                   <SuperAdmin />
+                </AdminRoute>
+              }
+            />
+            <Route
+              path="/admin/stores/:id"
+              element={
+                <AdminRoute>
+                  <AdminStoreInventory />
+                </AdminRoute>
+              }
+            />
+            <Route
+              path="/admin/stores/:id/items"
+              element={
+                <AdminRoute>
+                  <AdminItemDetail />
+                </AdminRoute>
+              }
+            />
+            <Route
+              path="/admin/stores/:id/items/:itemId"
+              element={
+                <AdminRoute>
+                  <AdminItemDetail />
                 </AdminRoute>
               }
             />
