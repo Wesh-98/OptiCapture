@@ -1,5 +1,7 @@
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import fs from 'node:fs';
 import { db } from '../src/server/db.js';
+import { UPLOADS_DIR } from '../src/server/helpers.js';
 import { createTestApp, getStoreCode, login, registerStore } from './helpers.js';
 
 const request = createTestApp();
@@ -199,6 +201,42 @@ describe('superadmin item edits', () => {
     });
     expect(res.status).toBe(400);
     expect(readItem().image).toBeNull();
+  });
+
+  describe('a refused save leaves no uploaded file behind', () => {
+    const png =
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+    const uploadCount = () => (fs.existsSync(UPLOADS_DIR) ? fs.readdirSync(UPLOADS_DIR).length : 0);
+    // The cleanup runs just after the response, so give it a moment.
+    const settle = () => new Promise(resolve => setTimeout(resolve, 50));
+
+    it('when the superadmin form is stale', async () => {
+      const before = uploadCount();
+      const res = await edit({
+        changes: { image: png },
+        expected_updated_at: '2000-01-01 00:00:00',
+      });
+      expect(res.status).toBe(409);
+      await settle();
+      expect(uploadCount()).toBe(before);
+    });
+
+    it("when a store's own edit hits a duplicate UPC", async () => {
+      db.prepare(
+        `INSERT INTO inventory (item_name, quantity, category_id, status, upc, store_id)
+         VALUES ('Orphan Chips', 1, ?, 'Active', '0003', ?)`
+      ).run(categoryId, storeId);
+      const owner = await login(request, 'editowner', 'Password1', getStoreCode(storeId));
+      const before = uploadCount();
+      const res = await request
+        .put(`/api/inventory/${itemId}`)
+        .set('Cookie', owner)
+        .send({ upc: '0003', image: png });
+      expect(res.status).toBe(409);
+      await settle();
+      expect(uploadCount()).toBe(before);
+      expect(readItem().image).toBeNull();
+    });
   });
 
   it('is closed to store owners', async () => {

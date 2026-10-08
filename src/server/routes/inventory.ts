@@ -696,9 +696,13 @@ inventoryRouter.post(
       return res.status(409).json({ error: 'An item with that UPC already exists' });
     }
 
+    // Removed again if the insert fails, so a refused item leaves no file behind.
+    let createdUpload: string | null = null;
     try {
       const normalizedImage = image ? normalizeImageUrl(image) : null;
       const savedImage = normalizedImage ? saveBase64Image(normalizedImage) : null;
+      createdUpload =
+        normalizedImage && savedImage ? savedUploadPath(normalizedImage, savedImage) : null;
       const info = db.transaction(() => {
         const row = db
           .prepare(
@@ -732,6 +736,7 @@ inventoryRouter.post(
 
       res.json({ id: info.lastInsertRowid });
     } catch (err: any) {
+      if (createdUpload) void removeUploadedFiles([createdUpload]);
       if (err instanceof UnsupportedImageTypeError) {
         return res.status(400).json({ error: err.message });
       }
@@ -843,6 +848,13 @@ export function updateInventoryItem(
     .get(itemId, storeId) as { item_name: string; upc: string | null } | undefined;
   if (!existingItem) return { status: 404, body: { error: 'Item not found' } };
 
+  // A new image is written to disk before the update runs. If the update then fails, no row
+  // points at that file, so it is removed rather than left behind.
+  let createdUpload: string | null = null;
+  const discardUpload = () => {
+    if (createdUpload) void removeUploadedFiles([createdUpload]);
+  };
+
   try {
     const assignments = ['updated_at = CURRENT_TIMESTAMP'];
     const values: unknown[] = [];
@@ -866,7 +878,10 @@ export function updateInventoryItem(
     if (tag_names !== undefined) assign('tag_names', tag_names || null);
     if (image !== undefined) {
       const normalizedImage = image ? normalizeImageUrl(String(image)) : null;
-      assign('image', normalizedImage ? saveBase64Image(normalizedImage) : null);
+      const savedImage = normalizedImage ? saveBase64Image(normalizedImage) : null;
+      createdUpload =
+        normalizedImage && savedImage ? savedUploadPath(normalizedImage, savedImage) : null;
+      assign('image', savedImage);
     }
     if (upc !== undefined) assign('upc', upc === null ? null : String(upc).trim() || null);
     // 0 changes means either the id doesn't exist or it belongs to a different
@@ -910,7 +925,10 @@ export function updateInventoryItem(
       return r.changes;
     })();
 
-    if (changes === 0) return { status: 404, body: { error: 'Item not found' } };
+    if (changes === 0) {
+      discardUpload();
+      return { status: 404, body: { error: 'Item not found' } };
+    }
 
     // Invalidate UPC cache so mobile scanners see the updated product name immediately
     if (existingItem.upc) upcCache.delete(existingItem.upc);
@@ -918,6 +936,7 @@ export function updateInventoryItem(
 
     return { status: 200, body: { success: true } };
   } catch (err: any) {
+    discardUpload();
     if (err instanceof ItemUpdateConflict) {
       return {
         status: 409,

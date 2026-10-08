@@ -178,7 +178,11 @@ export function AdminLayout({ onLogout, children, bare = false }: Readonly<Props
             </span>
           </Link>
 
-          <StoreSwitcher stores={stores} current={currentStore} />
+          <StoreSwitcher
+            stores={stores}
+            current={currentStore}
+            onOpen={() => setIsMobileMenuOpen(false)}
+          />
 
           <div className="flex items-center gap-4">
             <button
@@ -339,7 +343,13 @@ function StoreMark({
 function StoreSwitcher({
   stores,
   current,
-}: Readonly<{ stores: StoreRow[] | null; current: StoreRow | undefined }>) {
+  onOpen,
+}: Readonly<{
+  stores: StoreRow[] | null;
+  current: StoreRow | undefined;
+  /** Called as the list opens, so the phone menu can close instead of covering it. */
+  onOpen: () => void;
+}>) {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -377,7 +387,10 @@ function StoreSwitcher({
   return (
     <div ref={ref} className="relative min-w-0">
       <button
-        onClick={() => setOpen(o => !o)}
+        onClick={() => {
+          if (!open) onOpen();
+          setOpen(o => !o);
+        }}
         aria-haspopup="true"
         aria-expanded={open}
         className="flex items-center gap-2 max-w-[16rem] sm:max-w-xs text-theme-text font-medium bg-theme-subtle px-4 py-2 rounded-full hover:bg-slate-200 transition-colors"
@@ -398,7 +411,9 @@ function StoreSwitcher({
       </button>
 
       {open && (
-        <div className="absolute top-full left-0 mt-2 w-72 bg-white rounded-xl shadow-lg border border-slate-200 py-1 z-50">
+        // On phones the list spans the screen under the top bar, wherever the pill starts;
+        // from md up it drops from the pill at its usual width.
+        <div className="fixed inset-x-4 top-[4.5rem] md:absolute md:inset-x-auto md:left-0 md:top-full md:mt-2 md:w-72 bg-white rounded-xl shadow-lg border border-slate-200 py-1 z-50">
           {searchable && (
             <div className="px-2 pt-1 pb-2">
               <label className="relative block">
