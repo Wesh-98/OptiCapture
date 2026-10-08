@@ -6,9 +6,10 @@ import { logError } from '../logger.js';
 
 export const categoriesRouter = express.Router();
 
-const RESERVED_CATEGORY_NAMES = ['inventory'];
+export const RESERVED_CATEGORY_NAMES = ['inventory'];
 const reservedCategoryPlaceholders = RESERVED_CATEGORY_NAMES.map(() => '?').join(', ');
-const visibleCategoryCondition = `LOWER(TRIM(c.name)) NOT IN (${reservedCategoryPlaceholders})`;
+/** SQL condition on alias `c` that hides reserved categories; bind RESERVED_CATEGORY_NAMES. */
+export const visibleCategoryCondition = `LOWER(TRIM(c.name)) NOT IN (${reservedCategoryPlaceholders})`;
 
 export function isReservedCategoryName(name: string): boolean {
   return RESERVED_CATEGORY_NAMES.includes(name.trim().toLowerCase());
@@ -76,9 +77,9 @@ categoriesRouter.get('/dashboard/stats', authenticateToken, (req: AuthRequest, r
   });
 });
 
-categoriesRouter.get('/categories', authenticateToken, (req: AuthRequest, res) => {
-  const storeId = req.user.store_id;
-  const categories = db
+/** A store's visible categories with item counts. Shared with the superadmin per-store view. */
+export function listStoreCategories(storeId: number | undefined) {
+  return db
     .prepare(
       `
     SELECT c.*,
@@ -90,7 +91,10 @@ categoriesRouter.get('/categories', authenticateToken, (req: AuthRequest, res) =
   `
     )
     .all(storeId, storeId, storeId, ...RESERVED_CATEGORY_NAMES);
-  res.json(categories);
+}
+
+categoriesRouter.get('/categories', authenticateToken, (req: AuthRequest, res) => {
+  res.json(listStoreCategories(req.user.store_id));
 });
 
 categoriesRouter.put(

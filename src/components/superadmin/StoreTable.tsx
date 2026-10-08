@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { motion } from 'motion/react';
 import {
   Store,
@@ -8,6 +9,7 @@ import {
   Trash2,
   RefreshCw,
   Search,
+  Package,
 } from 'lucide-react';
 import { cn, parseServerDate } from '../../lib/utils';
 import { StoreRow } from './types';
@@ -25,10 +27,15 @@ interface Props {
   onStatusFilter: (v: 'all' | 'active' | 'suspended') => void;
   onJoinedSort: (v: 'newest' | 'oldest') => void;
   onRefresh: () => void;
+  onInventory: (store: StoreRow) => void;
   onEdit: (store: StoreRow) => void;
   onUsers: (store: StoreRow) => void;
   onToggleStatus: (store: StoreRow) => void;
   onDelete: (store: StoreRow) => void;
+  selectedIds: ReadonlySet<number>;
+  onToggleStore: (id: number) => void;
+  onToggleAll: () => void;
+  onClearSelection: () => void;
 }
 
 export function StoreTable({
@@ -44,24 +51,49 @@ export function StoreTable({
   onStatusFilter,
   onJoinedSort,
   onRefresh,
+  onInventory,
   onEdit,
   onUsers,
   onToggleStatus,
   onDelete,
+  selectedIds,
+  onToggleStore,
+  onToggleAll,
+  onClearSelection,
 }: Props) {
+  // Select All covers the stores the filters currently show.
+  const selectedVisible = filteredStores.filter(store => selectedIds.has(store.id)).length;
+  const allVisibleSelected = filteredStores.length > 0 && selectedVisible === filteredStores.length;
+  const selectAllRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = selectedVisible > 0 && !allVisibleSelected;
+    }
+  }, [selectedVisible, allVisibleSelected]);
+
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+    <div className="bg-white rounded-xl shadow-sm border border-theme-border overflow-hidden">
       {/* Toolbar */}
-      <div className="px-4 py-3 border-b border-slate-200 bg-slate-50/50 flex flex-wrap items-center gap-3 justify-between">
-        <h2 className="font-bold text-navy-900 flex items-center gap-2 shrink-0">
-          <Store size={18} className="text-slate-400" />
-          All Stores
-          {(storeSearch || statusFilter !== 'all') && (
-            <span className="text-xs font-normal text-slate-400">
-              ({filteredStores.length} of {stores.length})
+      <div className="px-4 py-3 border-b border-theme-border bg-theme-subtle flex flex-wrap items-center gap-3 justify-between">
+        <div className="flex flex-wrap items-center gap-3">
+          <h2 className="font-bold text-theme-text flex items-center gap-2 shrink-0">
+            <Store size={18} className="text-brand-600" />
+            All Stores
+            {(storeSearch || statusFilter !== 'all') && (
+              <span className="text-xs font-normal text-slate-400">
+                ({filteredStores.length} of {stores.length})
+              </span>
+            )}
+          </h2>
+          {selectedIds.size > 0 && (
+            <span className="inline-flex items-center gap-2 rounded-full bg-brand-50 px-3 py-1 text-xs font-medium text-brand-700">
+              {selectedIds.size} selected
+              <button onClick={onClearSelection} className="font-semibold hover:text-brand-600">
+                Clear
+              </button>
             </span>
           )}
-        </h2>
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative">
             <Search
@@ -73,13 +105,13 @@ export function StoreTable({
               value={storeSearch}
               onChange={e => onSearch(e.target.value)}
               placeholder="Store name or email…"
-              className="pl-8 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-navy-700 w-44"
+              className="pl-8 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-brand-400 w-44"
             />
           </div>
           <select
             value={statusFilter}
             onChange={e => onStatusFilter(e.target.value as 'all' | 'active' | 'suspended')}
-            className="px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-navy-700"
+            className="px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-brand-400"
           >
             <option value="all">All Status</option>
             <option value="active">Active</option>
@@ -88,7 +120,7 @@ export function StoreTable({
           <select
             value={joinedSort}
             onChange={e => onJoinedSort(e.target.value as 'newest' | 'oldest')}
-            className="px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-navy-700"
+            className="px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-brand-400"
           >
             <option value="newest">Newest First</option>
             <option value="oldest">Oldest First</option>
@@ -113,12 +145,24 @@ export function StoreTable({
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-left">
-            <thead className="bg-slate-50 border-b border-slate-200">
+            <thead className="bg-theme-canvas border-b border-theme-border">
               <tr>
-                {['Store', 'Contact', 'Users', 'Items', 'Joined', 'Status', 'Actions'].map(h => (
+                <th className="px-3 py-3 whitespace-nowrap">
+                  <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-semibold uppercase tracking-wider text-black">
+                    <input
+                      ref={selectAllRef}
+                      type="checkbox"
+                      checked={allVisibleSelected}
+                      onChange={onToggleAll}
+                      className="h-4 w-4 rounded border-slate-300 accent-brand-600 focus:ring-brand-400"
+                    />
+                    Select All
+                  </label>
+                </th>
+                {['Store', 'Contact', 'Address', 'Items', 'Joined', 'Status', 'Actions'].map(h => (
                   <th
                     key={h}
-                    className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider"
+                    className="px-3 py-3 text-xs font-semibold text-black uppercase tracking-wider"
                   >
                     {h}
                   </th>
@@ -139,10 +183,19 @@ export function StoreTable({
                     animate={prefersReducedMotion ? {} : { opacity: 1 }}
                     className={cn(
                       'transition-colors',
-                      store.status === 'suspended' ? 'bg-red-50' : 'hover:bg-slate-50'
+                      store.status === 'suspended' ? 'bg-accent-50' : 'hover:bg-theme-subtle'
                     )}
                   >
-                    <td className="px-4 py-4">
+                    <td className="px-3 py-4">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(store.id)}
+                        onChange={() => onToggleStore(store.id)}
+                        aria-label={`Select ${store.name}`}
+                        className="h-4 w-4 rounded border-slate-300 accent-brand-600 focus:ring-brand-400"
+                      />
+                    </td>
+                    <td className="px-3 py-4">
                       <div className="flex items-center gap-3">
                         {store.logo ? (
                           <img
@@ -155,29 +208,17 @@ export function StoreTable({
                             {store.name.charAt(0).toUpperCase()}
                           </div>
                         )}
-                        <div>
-                          <p
-                            className={cn(
-                              'font-medium',
-                              store.status === 'suspended' ? 'text-slate-700' : 'text-navy-900'
-                            )}
-                          >
-                            {store.name}
-                          </p>
-                          {(store.street || store.address) && (
-                            <p
-                              className={cn(
-                                'text-xs mt-0.5',
-                                store.status === 'suspended' ? 'text-slate-700' : 'text-slate-600'
-                              )}
-                            >
-                              {addressLine}
-                            </p>
+                        <p
+                          className={cn(
+                            'font-medium whitespace-nowrap',
+                            store.status === 'suspended' ? 'text-brand-700' : 'text-brand-600'
                           )}
-                        </div>
+                        >
+                          {store.name}
+                        </p>
                       </div>
                     </td>
-                    <td className="px-4 py-4 text-sm">
+                    <td className="px-3 py-4 text-sm">
                       {store.email && <p className="text-slate-700">{store.email}</p>}
                       {store.phone && (
                         <p
@@ -189,32 +230,38 @@ export function StoreTable({
                         </p>
                       )}
                     </td>
-                    <td className="px-4 py-4 text-sm text-slate-700 font-mono">
-                      {store.user_count}
+                    <td className="px-3 py-4 text-sm text-slate-600 min-w-[12rem]">
+                      {addressLine || <span className="text-slate-400">—</span>}
                     </td>
-                    <td className="px-4 py-4 text-sm text-slate-700 font-mono">
+                    <td className="px-3 py-4 text-sm text-slate-700 font-mono">
                       {store.item_count}
                     </td>
-                    <td className="px-4 py-4 text-sm text-slate-600">
+                    <td className="px-3 py-4 text-sm text-slate-600">
                       {parseServerDate(store.created_at).toLocaleDateString()}
                     </td>
-                    <td className="px-4 py-4">
+                    <td className="px-3 py-4">
                       <span
                         className={cn(
                           'inline-flex items-center rounded-md border bg-white px-2.5 py-1 text-xs font-medium capitalize',
                           store.status === 'active'
-                            ? 'border-emerald-600 text-emerald-700'
-                            : 'border-red-600 text-red-600'
+                            ? 'border-brand-600 text-brand-700'
+                            : 'border-accent-600 text-accent-600'
                         )}
                       >
                         {store.status}
                       </span>
                     </td>
-                    <td className="px-4 py-4">
+                    <td className="px-3 py-4">
                       <div className="flex items-center gap-2">
                         <button
+                          onClick={() => onInventory(store)}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-theme-subtle text-brand-600 hover:bg-slate-200 transition-colors"
+                        >
+                          <Package size={13} /> Inventory
+                        </button>
+                        <button
                           onClick={() => onEdit(store)}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors"
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-theme-canvas text-theme-text hover:bg-navy-200 transition-colors"
                         >
                           <Pencil size={13} /> Edit
                         </button>
@@ -227,28 +274,32 @@ export function StoreTable({
                         <button
                           onClick={() => onToggleStatus(store)}
                           disabled={togglingId === store.id}
+                          title={store.status === 'active' ? 'Suspend store' : 'Activate store'}
+                          aria-label={`${store.status === 'active' ? 'Suspend' : 'Activate'} ${store.name}`}
                           className={cn(
-                            'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors disabled:opacity-50',
+                            'flex items-center p-2 rounded-lg text-xs font-medium transition-colors disabled:opacity-50',
                             store.status === 'active'
-                              ? 'bg-red-50 text-red-600 hover:bg-red-100'
-                              : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                              ? 'bg-accent-50 text-accent-600 hover:bg-accent-100'
+                              : 'bg-brand-50 text-brand-700 hover:bg-brand-100'
                           )}
                         >
                           {store.status === 'active' ? (
                             <>
-                              <ShieldOff size={13} /> Suspend
+                              <ShieldOff size={14} />
                             </>
                           ) : (
                             <>
-                              <ShieldCheck size={13} /> Activate
+                              <ShieldCheck size={14} />
                             </>
                           )}
                         </button>
                         <button
                           onClick={() => onDelete(store)}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-red-50 text-red-600 hover:bg-red-100 transition-colors"
+                          title="Delete store"
+                          aria-label={`Delete ${store.name}`}
+                          className="flex items-center p-2 rounded-lg text-xs font-medium bg-accent-50 text-accent-600 hover:bg-accent-100 transition-colors"
                         >
-                          <Trash2 size={13} /> Delete
+                          <Trash2 size={14} />
                         </button>
                       </div>
                     </td>

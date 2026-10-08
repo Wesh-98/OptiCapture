@@ -13,6 +13,12 @@ import {
 } from '../helpers.js';
 import type { AuthRequest } from '../types.js';
 import { logError } from '../logger.js';
+import { listStoreInventory } from './inventory.js';
+import {
+  listStoreCategories,
+  RESERVED_CATEGORY_NAMES,
+  visibleCategoryCondition,
+} from './categories.js';
 
 export const adminRouter = express.Router();
 const HQ_STORE_ID = 0;
@@ -64,6 +70,17 @@ function writeAdminLog(details: string, userId: number, storeId: number) {
   );
 }
 
+// Per-store inventory figures shown on the superadmin pages. Bind RESERVED_CATEGORY_NAMES
+// first, before the query's own parameters.
+const STORE_INVENTORY_STATS = `
+  (SELECT COUNT(*) FROM inventory i WHERE i.store_id = s.id) AS item_count,
+  (SELECT COUNT(*) FROM categories c WHERE c.store_id = s.id AND ${visibleCategoryCondition}) AS category_count,
+  (SELECT COUNT(*) FROM inventory i
+    WHERE i.store_id = s.id AND i.created_at >= datetime('now', '-7 days')) AS items_added_week,
+  (SELECT MAX(i.created_at) FROM inventory i WHERE i.store_id = s.id) AS last_item_added_at,
+  (SELECT COUNT(*) FROM inventory i
+    WHERE i.store_id = s.id AND (i.upc IS NULL OR TRIM(i.upc) = '')) AS missing_upc_count`;
+
 // Super admin — list all stores
 adminRouter.get('/stores', authenticateToken, requireSuperadmin, (_req: AuthRequest, res) => {
   const stores = db
@@ -71,15 +88,128 @@ adminRouter.get('/stores', authenticateToken, requireSuperadmin, (_req: AuthRequ
       `
     SELECT s.*,
       (SELECT COUNT(*) FROM user_stores us WHERE us.store_id = s.id) AS user_count,
-      (SELECT COUNT(*) FROM inventory i WHERE i.store_id = s.id) AS item_count
+      ${STORE_INVENTORY_STATS}
     FROM stores s
     WHERE s.id != ?
     ORDER BY s.created_at DESC
   `
     )
-    .all(HQ_STORE_ID);
+    .all(...RESERVED_CATEGORY_NAMES, HQ_STORE_ID);
   res.json(stores);
 });
+
+interface ViewedStoreSummary {
+  id: number;
+  name: string;
+  status: string;
+  logo: string | null;
+  street: string | null;
+  city: string | null;
+  state: string | null;
+  zipcode: string | null;
+  item_count: number;
+  category_count: number;
+  items_added_week: number;
+  last_item_added_at: string | null;
+  missing_upc_count: number;
+}
+
+/**
+ * The store a superadmin inventory route reads, taken only from the URL. Sends the error
+ * response itself and returns null for a malformed ID, the HQ store, or a store that does
+ * not exist — it never falls back to the caller's own store.
+ */
+function resolveViewedStore(req: AuthRequest, res: express.Response) {
+  const raw = req.params.id;
+  if (!/^\d+$/.test(raw)) {
+    res.status(400).json({ error: 'Invalid store ID' });
+    return null;
+  }
+  const storeId = Number(raw);
+  if (storeId === HQ_STORE_ID) {
+    res.status(403).json({ error: 'The HQ store is managed internally' });
+    return null;
+  }
+  const store = db
+    .prepare(
+      `SELECT s.id, s.name, s.status, s.logo, s.street, s.city, s.state, s.zipcode,
+        ${STORE_INVENTORY_STATS}
+       FROM stores s WHERE s.id = ?`
+    )
+    .get(...RESERVED_CATEGORY_NAMES, storeId) as ViewedStoreSummary | undefined;
+  if (!store) {
+    res.status(404).json({ error: 'Store not found' });
+    return null;
+  }
+  return store;
+}
+
+// Super admin — one store's summary, for the header of its inventory view
+adminRouter.get('/stores/:id', authenticateToken, requireSuperadmin, (req: AuthRequest, res) => {
+  const store = resolveViewedStore(req, res);
+  if (store) res.json(store);
+});
+
+// Super admin — read-only, paged item list for one store (same filters as GET /inventory)
+adminRouter.get(
+  '/stores/:id/inventory',
+  authenticateToken,
+  requireSuperadmin,
+  (req: AuthRequest, res) => {
+    const store = resolveViewedStore(req, res);
+    if (!store) return;
+    const result = listStoreInventory(store.id, req.query);
+    if ('error' in result) return res.status(400).json(result);
+    res.json(result);
+  }
+);
+
+// Super admin — read-only category list with item counts for one store
+adminRouter.get(
+  '/stores/:id/categories',
+  authenticateToken,
+  requireSuperadmin,
+  (req: AuthRequest, res) => {
+    const store = resolveViewedStore(req, res);
+    if (store) res.json(listStoreCategories(store.id));
+  }
+);
+
+// Super admin — one item from one store, plus the other stores that carry the same UPC
+adminRouter.get(
+  '/stores/:id/items/:itemId',
+  authenticateToken,
+  requireSuperadmin,
+  (req: AuthRequest, res) => {
+    const store = resolveViewedStore(req, res);
+    if (!store) return;
+    if (!/^\d+$/.test(req.params.itemId)) {
+      return res.status(400).json({ error: 'Invalid item ID' });
+    }
+    const item = db
+      .prepare(
+        `SELECT i.*, c.name AS category_name
+         FROM inventory i LEFT JOIN categories c ON c.id = i.category_id
+         WHERE i.id = ? AND i.store_id = ?`
+      )
+      .get(Number(req.params.itemId), store.id) as { upc: string | null } | undefined;
+    if (!item) return res.status(404).json({ error: 'Item not found in this store' });
+
+    const upc = item.upc?.trim();
+    const otherStores = upc
+      ? db
+          .prepare(
+            `SELECT i.id AS item_id, i.store_id, s.name AS store_name, s.status AS store_status,
+               i.sale_price, i.status
+             FROM inventory i JOIN stores s ON s.id = i.store_id
+             WHERE TRIM(i.upc) = ? AND i.store_id NOT IN (?, ?)
+             ORDER BY s.name COLLATE NOCASE`
+          )
+          .all(upc, store.id, HQ_STORE_ID)
+      : [];
+    res.json({ item, other_stores: otherStores });
+  }
+);
 
 // Super admin — activate or suspend a store
 adminRouter.put(
@@ -263,11 +393,7 @@ adminRouter.post(
       storeId,
       role
     );
-    writeAdminLog(
-      `Granted ${role} access to "${normalizedUsername}"`,
-      req.user.id,
-      storeId
-    );
+    writeAdminLog(`Granted ${role} access to "${normalizedUsername}"`, req.user.id, storeId);
     const createdAccess = db
       .prepare(
         `
@@ -334,38 +460,38 @@ adminRouter.delete(
   authenticateToken,
   requireSuperadmin,
   asyncRoute<AuthRequest>(async (req: AuthRequest, res) => {
-  const storeId = Number(req.params.id);
-  if (storeId === HQ_STORE_ID) {
-    return res.status(403).json({ error: 'The HQ store is managed internally' });
-  }
-  const store = db.prepare('SELECT id, name FROM stores WHERE id = ?').get(storeId) as any;
-  if (!store) return res.status(404).json({ error: 'Store not found' });
+    const storeId = Number(req.params.id);
+    if (storeId === HQ_STORE_ID) {
+      return res.status(403).json({ error: 'The HQ store is managed internally' });
+    }
+    const store = db.prepare('SELECT id, name FROM stores WHERE id = ?').get(storeId) as any;
+    if (!store) return res.status(404).json({ error: 'Store not found' });
 
-  // Collect the store's own uploaded images before the rows naming them are deleted.
-  // Without this every deleted store left its product images on disk forever.
-  const uploadedImages = (
-    db
-      .prepare(
-        `SELECT image AS path FROM inventory WHERE store_id = ? AND image LIKE '/uploads/%'
+    // Collect the store's own uploaded images before the rows naming them are deleted.
+    // Without this every deleted store left its product images on disk forever.
+    const uploadedImages = (
+      db
+        .prepare(
+          `SELECT image AS path FROM inventory WHERE store_id = ? AND image LIKE '/uploads/%'
          UNION
          SELECT logo AS path FROM stores WHERE id = ? AND logo LIKE '/uploads/%'`
-      )
-      .all(storeId, storeId) as Array<{ path: string }>
-  ).map(row => row.path);
+        )
+        .all(storeId, storeId) as Array<{ path: string }>
+    ).map(row => row.path);
 
-  db.transaction(() => {
-    // Delete in dependency order
-    db.prepare(
-      `DELETE FROM session_items WHERE session_id IN (SELECT session_id FROM scan_sessions WHERE store_id = ?)`
-    ).run(storeId);
-    db.prepare(`DELETE FROM scan_sessions WHERE store_id = ?`).run(storeId);
-    db.prepare(`DELETE FROM inventory WHERE store_id = ?`).run(storeId);
-    db.prepare(`DELETE FROM categories WHERE store_id = ?`).run(storeId);
-    db.prepare(`DELETE FROM logs WHERE store_id = ?`).run(storeId);
-    // M-22: Re-home multi-store users so users.store_id no longer points at the
-    // store we're about to delete (satisfies the users.store_id FK).
-    db.prepare(
-      `
+    db.transaction(() => {
+      // Delete in dependency order
+      db.prepare(
+        `DELETE FROM session_items WHERE session_id IN (SELECT session_id FROM scan_sessions WHERE store_id = ?)`
+      ).run(storeId);
+      db.prepare(`DELETE FROM scan_sessions WHERE store_id = ?`).run(storeId);
+      db.prepare(`DELETE FROM inventory WHERE store_id = ?`).run(storeId);
+      db.prepare(`DELETE FROM categories WHERE store_id = ?`).run(storeId);
+      db.prepare(`DELETE FROM logs WHERE store_id = ?`).run(storeId);
+      // M-22: Re-home multi-store users so users.store_id no longer points at the
+      // store we're about to delete (satisfies the users.store_id FK).
+      db.prepare(
+        `
       UPDATE users
       SET
         store_id = (
@@ -384,25 +510,25 @@ adminRouter.delete(
         SELECT user_id FROM user_stores WHERE store_id != ?
       )
     `
-    ).run(storeId, storeId, storeId, storeId);
-    // Remove user_stores rows for this store BEFORE deleting users, so the
-    // user_stores.user_id FK does not block the user DELETE below.
-    db.prepare(`DELETE FROM user_stores WHERE store_id = ?`).run(storeId);
-    // Delete sole-store users (re-homed multi-store users now have store_id ≠ storeId).
-    db.prepare(`DELETE FROM users WHERE store_id = ?`).run(storeId);
-    db.prepare(`DELETE FROM stores WHERE id = ?`).run(storeId);
-  })();
+      ).run(storeId, storeId, storeId, storeId);
+      // Remove user_stores rows for this store BEFORE deleting users, so the
+      // user_stores.user_id FK does not block the user DELETE below.
+      db.prepare(`DELETE FROM user_stores WHERE store_id = ?`).run(storeId);
+      // Delete sole-store users (re-homed multi-store users now have store_id ≠ storeId).
+      db.prepare(`DELETE FROM users WHERE store_id = ?`).run(storeId);
+      db.prepare(`DELETE FROM stores WHERE id = ?`).run(storeId);
+    })();
 
-  // Only after the transaction commits — a rollback must not take the files with it — and
-  // only for files nothing else still references.
-  const stillReferenced = referencedUploadFileNames();
-  await removeUploadedFiles(
-    uploadedImages.filter(image => !stillReferenced.has(uploadFileName(image)))
-  );
+    // Only after the transaction commits — a rollback must not take the files with it — and
+    // only for files nothing else still references.
+    const stillReferenced = referencedUploadFileNames();
+    await removeUploadedFiles(
+      uploadedImages.filter(image => !stillReferenced.has(uploadFileName(image)))
+    );
 
-  writeAdminLog(`Deleted store "${store.name}" (${storeId})`, req.user.id, HQ_STORE_ID);
+    writeAdminLog(`Deleted store "${store.name}" (${storeId})`, req.user.id, HQ_STORE_ID);
 
-  res.json({ ok: true, deleted: store.name });
+    res.json({ ok: true, deleted: store.name });
   })
 );
 
