@@ -189,7 +189,10 @@ export function AdminLayout({ onLogout, children, bare = false }: Readonly<Props
             aria-expanded={railOpen}
             aria-label={railOpen ? 'Collapse menu' : 'Expand menu'}
             title={railOpen ? 'Collapse menu' : 'Expand menu'}
-            className="mb-1.5 w-12 h-10 flex items-center justify-center rounded-xl border border-theme-border bg-theme-subtle text-brand-600 hover:bg-brand-50 transition-colors"
+            className={cn(
+              'mb-1.5 w-12 h-10 flex items-center justify-center rounded-xl border border-theme-border bg-theme-subtle text-brand-600 hover:bg-brand-50 transition-colors',
+              railOpen && 'self-end'
+            )}
           >
             <ChevronRight
               size={18}
