@@ -1,12 +1,20 @@
 import { useMemo, useState, type ReactNode } from 'react';
-import { ArrowRight } from 'lucide-react';
+import { ArrowRight, Image as ImageIcon, RotateCcw, Trash2, Upload } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import {
+  isSupportedUploadImageType,
+  readFileAsDataUrl,
+  SUPPORTED_UPLOAD_IMAGE_ACCEPT,
+  SUPPORTED_UPLOAD_IMAGE_ERROR,
+} from '../../lib/imageUpload';
 import type { Category } from '../dashboard/types';
 import type { AdminItem } from '../../hooks/useAdminItemDetail';
 import { FILTER_INPUT } from './AdminUi';
 import { formatPrice } from './format';
 
 const MAX_REASON = 500;
+// The server's cap on a decoded upload.
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
 type Field =
   | 'item_name'
@@ -16,7 +24,8 @@ type Field =
   | 'tax_percent'
   | 'unit'
   | 'status'
-  | 'description';
+  | 'description'
+  | 'image';
 
 interface FormValues {
   item_name: string;
@@ -27,6 +36,8 @@ interface FormValues {
   unit: string;
   status: string;
   description: string;
+  /** The current image path, a new upload as a data URL, or '' for none. */
+  image: string;
 }
 
 interface Change {
@@ -35,6 +46,8 @@ interface Change {
   from: string;
   to: string;
   value: unknown;
+  /** Image changes show thumbnails in the review instead of text. */
+  images?: { from: string; to: string };
 }
 
 const text = (value: unknown) => (value == null ? '' : String(value));
@@ -51,6 +64,7 @@ function initialValues(item: AdminItem): FormValues {
     unit: text(item.unit),
     status: item.status === 'Inactive' ? 'Inactive' : 'Active',
     description: text(item.description),
+    image: text(item.image),
   };
 }
 
@@ -107,6 +121,16 @@ function diffValues(item: AdminItem, values: FormValues, categories: Category[])
       value: values.description || null,
     });
   }
+  if (start.image !== values.image) {
+    changes.push({
+      field: 'image',
+      label: 'Image',
+      from: start.image ? 'Current image' : 'No image',
+      to: values.image ? 'New image' : 'No image',
+      value: values.image || null,
+      images: { from: start.image, to: values.image },
+    });
+  }
   return changes;
 }
 
@@ -152,6 +176,26 @@ export function ItemEditForm({
   const changes = useMemo(() => diffValues(item, values, categories), [item, values, categories]);
   const set = (field: keyof FormValues) => (value: string) =>
     setValues(prev => ({ ...prev, [field]: value }));
+
+  // Checked here first so a wrong file is caught before the review step; the server checks
+  // the type, size and actual bytes again.
+  const pickImage = async (file: File | undefined) => {
+    if (!file) return;
+    if (!isSupportedUploadImageType(file)) {
+      setError(SUPPORTED_UPLOAD_IMAGE_ERROR);
+      return;
+    }
+    if (file.size > MAX_IMAGE_BYTES) {
+      setError('Image too large. Maximum size is 5 MB.');
+      return;
+    }
+    try {
+      set('image')(await readFileAsDataUrl(file));
+      setError('');
+    } catch {
+      setError('Could not read that file.');
+    }
+  };
 
   const review = () => {
     const problem = validate(values);
@@ -215,11 +259,19 @@ export function ItemEditForm({
           {changes.map(change => (
             <li key={change.field} className="px-3.5 py-2.5 text-sm">
               <p className="text-xs text-theme-muted">{change.label}</p>
-              <p className="mt-0.5 flex flex-wrap items-center gap-1.5">
-                <span className="text-theme-muted line-through">{change.from}</span>
-                <ArrowRight size={14} className="text-brand-600 shrink-0" aria-label="to" />
-                <span className="font-semibold text-black">{change.to}</span>
-              </p>
+              {change.images ? (
+                <p className="mt-1 flex items-center gap-2">
+                  <Thumb src={change.images.from} faded />
+                  <ArrowRight size={14} className="text-brand-600 shrink-0" aria-label="to" />
+                  <Thumb src={change.images.to} />
+                </p>
+              ) : (
+                <p className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                  <span className="text-theme-muted line-through">{change.from}</span>
+                  <ArrowRight size={14} className="text-brand-600 shrink-0" aria-label="to" />
+                  <span className="font-semibold text-black">{change.to}</span>
+                </p>
+              )}
             </li>
           ))}
         </ul>
@@ -255,6 +307,51 @@ export function ItemEditForm({
       }}
     >
       <h2 className="text-lg font-bold text-black">Edit item</h2>
+      <div>
+        <span className="text-xs text-theme-muted">Image</span>
+        <div className="mt-1 w-full h-40 rounded-xl overflow-hidden border border-theme-border bg-theme-canvas flex items-center justify-center text-slate-400">
+          {values.image ? (
+            <img src={values.image} alt="" className="w-full h-full object-cover" />
+          ) : (
+            <ImageIcon size={28} aria-label="No image" />
+          )}
+        </div>
+        <div className="mt-2 flex flex-wrap gap-2">
+          <label className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-lg border border-brand-400 bg-white px-3 text-sm font-semibold text-brand-600 hover:bg-brand-50 focus-within:ring-2 focus-within:ring-brand-400">
+            <Upload size={15} />
+            {values.image ? 'Replace image' : 'Add image'}
+            <input
+              type="file"
+              accept={SUPPORTED_UPLOAD_IMAGE_ACCEPT}
+              className="sr-only"
+              onChange={e => {
+                void pickImage(e.target.files?.[0]);
+                e.target.value = '';
+              }}
+            />
+          </label>
+          {values.image && (
+            <button
+              type="button"
+              onClick={() => set('image')('')}
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-accent-100 bg-white px-3 text-sm font-semibold text-accent-600 hover:bg-accent-50"
+            >
+              <Trash2 size={15} />
+              Remove
+            </button>
+          )}
+          {values.image !== text(item.image) && (
+            <button
+              type="button"
+              onClick={() => set('image')(text(item.image))}
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg px-2 text-sm font-semibold text-theme-muted hover:text-theme-text"
+            >
+              <RotateCcw size={14} />
+              Undo
+            </button>
+          )}
+        </div>
+      </div>
       <FormField label="Name">
         <input
           value={values.item_name}
@@ -345,6 +442,23 @@ export function ItemEditForm({
         </PrimaryButton>
       </div>
     </form>
+  );
+}
+
+function Thumb({ src, faded = false }: Readonly<{ src: string; faded?: boolean }>) {
+  return (
+    <span
+      className={cn(
+        'w-16 h-16 shrink-0 rounded-lg overflow-hidden border border-theme-border bg-theme-canvas flex items-center justify-center text-slate-400',
+        faded && 'opacity-60'
+      )}
+    >
+      {src ? (
+        <img src={src} alt="" className="w-full h-full object-cover" />
+      ) : (
+        <span className="text-xs">None</span>
+      )}
+    </span>
   );
 }
 

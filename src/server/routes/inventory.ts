@@ -757,6 +757,7 @@ export interface InventoryRowSnapshot {
   unit: string | null;
   status: string;
   description: string | null;
+  image: string | null;
   updated_at: string;
 }
 

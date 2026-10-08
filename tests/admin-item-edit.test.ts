@@ -97,11 +97,11 @@ describe('superadmin item edits', () => {
 
   it('only lets the superadmin change catalog fields', async () => {
     const res = await edit({
-      changes: { quantity: 99, image: 'x' },
+      changes: { quantity: 99, tag_names: 'x' },
       expected_updated_at: readItem().updated_at,
     });
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe('Cannot edit: quantity, image');
+    expect(res.body.error).toBe('Cannot edit: quantity, tag_names');
     expect(readItem().quantity).toBe(4);
   });
 
@@ -169,6 +169,36 @@ describe('superadmin item edits', () => {
     });
     expect(res.status).toBe(409);
     expect(readItem().upc).toBe('0001');
+  });
+
+  it('replaces and removes the image, saving an upload like the store does', async () => {
+    // A 1×1 transparent PNG.
+    const png =
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+    const added = await edit({
+      changes: { image: png },
+      expected_updated_at: readItem().updated_at,
+    });
+    expect(added.status).toBe(200);
+    expect(readItem().image).toMatch(/^\/uploads\/.+\.png$/);
+    expect(lastLog().details).toBe('Super Admin edited "Edit Cola": Image added');
+
+    const removed = await edit({
+      changes: { image: null },
+      expected_updated_at: readItem().updated_at,
+    });
+    expect(removed.status).toBe(200);
+    expect(readItem().image).toBeNull();
+    expect(lastLog().details).toBe('Super Admin edited "Edit Cola": Image removed');
+  });
+
+  it('refuses an image type the store could not upload either', async () => {
+    const res = await edit({
+      changes: { image: 'data:image/svg+xml;base64,PHN2Zy8+' },
+      expected_updated_at: readItem().updated_at,
+    });
+    expect(res.status).toBe(400);
+    expect(readItem().image).toBeNull();
   });
 
   it('is closed to store owners', async () => {

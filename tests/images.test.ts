@@ -3,7 +3,12 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '../src/server/db.js';
-import { normalizeImageUrl, UPLOADS_DIR } from '../src/server/helpers.js';
+import {
+  normalizeImageUrl,
+  saveBase64Image,
+  UnsupportedImageTypeError,
+  UPLOADS_DIR,
+} from '../src/server/helpers.js';
 import { createTestApp, getStoreCode, login } from './helpers.js';
 
 const request = createTestApp();
@@ -51,6 +56,24 @@ describe('normalizeImageUrl', () => {
   it('leaves non-Google URLs untouched', () => {
     const url = 'https://example.com/images/product.png';
     expect(normalizeImageUrl(url)).toBe(url);
+  });
+});
+
+describe('saveBase64Image', () => {
+  it('passes plain URLs and paths through', () => {
+    expect(saveBase64Image('https://example.com/a.png')).toBe('https://example.com/a.png');
+    expect(saveBase64Image('/uploads/a.png')).toBe('/uploads/a.png');
+  });
+
+  it('refuses any data URL that is not an allowed image instead of storing it raw', () => {
+    for (const value of [
+      'data:image/svg+xml;base64,PHN2Zy8+',
+      'data:text/html;base64,PGgxPmhpPC9oMT4=',
+      'data:image/png,not-base64',
+      ' DATA:image/svg+xml;base64,PHN2Zy8+',
+    ]) {
+      expect(() => saveBase64Image(value)).toThrow(UnsupportedImageTypeError);
+    }
   });
 });
 

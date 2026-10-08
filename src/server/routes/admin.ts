@@ -304,8 +304,8 @@ adminRouter.get(
   }
 );
 
-// What the superadmin may change on a store's item. Quantity, tags and images stay with
-// the store.
+// What the superadmin may change on a store's item. Quantity and tags stay with the store.
+// A new image arrives as a data URL and is saved like the store's own uploads.
 const EDITABLE_ITEM_FIELDS = [
   'item_name',
   'upc',
@@ -315,6 +315,7 @@ const EDITABLE_ITEM_FIELDS = [
   'unit',
   'status',
   'description',
+  'image',
 ] as const;
 const MAX_EDIT_REASON = 500;
 
@@ -347,6 +348,9 @@ export function describeItemEdit(
   diff('Status', before.status, after.status);
   // Descriptions can run to 2,000 characters, so the log only notes that it changed.
   if ((before.description ?? '') !== (after.description ?? '')) parts.push('Description updated');
+  if ((before.image ?? '') !== (after.image ?? '')) {
+    parts.push(!after.image ? 'Image removed' : before.image ? 'Image replaced' : 'Image added');
+  }
   if (parts.length === 0) return null;
   const line = `Super Admin edited "${after.item_name}": ${parts.join('; ')}`;
   return reason ? `${line}. Reason: ${reason}` : line;
