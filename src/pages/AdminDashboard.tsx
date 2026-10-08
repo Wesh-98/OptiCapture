@@ -1,8 +1,20 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, ChevronRight, Search } from 'lucide-react';
+import {
+  AlertTriangle,
+  ChevronRight,
+  History,
+  Pencil,
+  Plus,
+  ScanLine,
+  Search,
+  Trash2,
+  Upload,
+  type LucideIcon,
+} from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useAdminStores } from '../hooks/useAdminStores';
+import { useAdminActivity, type ActivityEntry } from '../hooks/useAdminActivity';
 import { AdminLayout } from '../components/superadmin/AdminLayout';
 import {
   HeaderStat,
@@ -250,41 +262,108 @@ export default function AdminDashboard() {
           )}
         </section>
 
-        {/* Needs attention */}
-        <section className="flex-[1_1_300px] min-w-0 bg-white rounded-xl border border-theme-border overflow-hidden">
-          <h2 className="px-4 py-3.5 border-b border-theme-border flex items-center gap-2 font-bold text-black">
-            <AlertTriangle size={18} className="text-accent-600" />
-            Needs attention
-          </h2>
-          {attention.length === 0 ? (
-            <p className="px-4 py-6 text-sm text-theme-muted">
-              {admin.isLoading ? 'Checking stores...' : 'Nothing needs attention right now.'}
-            </p>
-          ) : (
-            <ul className="divide-y divide-theme-border/60">
-              {attention.map(entry => (
-                <li key={entry.key}>
-                  <Link
-                    to={entry.to}
-                    className="flex gap-3 px-4 py-3 hover:bg-theme-subtle transition-colors"
-                  >
-                    <span
-                      className={cn(
-                        'mt-1.5 w-2 h-2 rounded-full shrink-0',
-                        entry.tone === 'accent' ? 'bg-accent-600' : 'bg-slate-400'
-                      )}
-                    />
-                    <span>
-                      <span className="block text-sm font-semibold text-black">{entry.title}</span>
-                      <span className="block text-sm text-theme-muted">{entry.detail}</span>
-                    </span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
+        <div className="flex-[1_1_300px] min-w-0 flex flex-col gap-4">
+          {/* Needs attention */}
+          <section className="bg-white rounded-xl border border-theme-border overflow-hidden">
+            <h2 className="px-4 py-3.5 border-b border-theme-border flex items-center gap-2 font-bold text-black">
+              <AlertTriangle size={18} className="text-accent-600" />
+              Needs attention
+            </h2>
+            {attention.length === 0 ? (
+              <p className="px-4 py-6 text-sm text-theme-muted">
+                {admin.isLoading ? 'Checking stores...' : 'Nothing needs attention right now.'}
+              </p>
+            ) : (
+              <ul className="divide-y divide-theme-border/60">
+                {attention.map(entry => (
+                  <li key={entry.key}>
+                    <Link
+                      to={entry.to}
+                      className="flex gap-3 px-4 py-3 hover:bg-theme-subtle transition-colors"
+                    >
+                      <span
+                        className={cn(
+                          'mt-1.5 w-2 h-2 rounded-full shrink-0',
+                          entry.tone === 'accent' ? 'bg-accent-600' : 'bg-slate-400'
+                        )}
+                      />
+                      <span>
+                        <span className="block text-sm font-semibold text-black">
+                          {entry.title}
+                        </span>
+                        <span className="block text-sm text-theme-muted">{entry.detail}</span>
+                      </span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          <RecentChanges />
+        </div>
       </div>
     </AdminLayout>
+  );
+}
+
+const CHANGE_ICONS: Record<ActivityEntry['action'], { icon: LucideIcon; tone: string }> = {
+  CREATE: { icon: Plus, tone: 'bg-brand-50 text-brand-600' },
+  BATCH: { icon: ScanLine, tone: 'bg-brand-50 text-brand-600' },
+  IMPORT: { icon: Upload, tone: 'bg-brand-50 text-brand-600' },
+  UPDATE: { icon: Pencil, tone: 'bg-theme-subtle text-theme-muted' },
+  DELETE: { icon: Trash2, tone: 'bg-accent-50 text-accent-600' },
+};
+
+// What changed lately across all stores: items added, edited, removed, imported or scanned in.
+function RecentChanges() {
+  const { entries, error } = useAdminActivity(10);
+
+  return (
+    <section className="bg-white rounded-xl border border-theme-border overflow-hidden">
+      <h2 className="px-4 py-3.5 border-b border-theme-border flex items-center gap-2 font-bold text-black">
+        <History size={18} className="text-brand-600" />
+        Recent changes
+      </h2>
+      {error ? (
+        <p className="px-4 py-6 text-sm text-accent-600">{error}</p>
+      ) : entries === null ? (
+        <p className="px-4 py-6 text-sm text-theme-muted">Loading changes...</p>
+      ) : entries.length === 0 ? (
+        <p className="px-4 py-6 text-sm text-theme-muted">No changes yet.</p>
+      ) : (
+        <ul className="divide-y divide-theme-border/60">
+          {entries.map(entry => {
+            const { icon: Icon, tone } = CHANGE_ICONS[entry.action] ?? CHANGE_ICONS.UPDATE;
+            return (
+              <li key={entry.id}>
+                <Link
+                  to={`/admin/stores/${entry.store_id}`}
+                  className="flex gap-3 px-4 py-3 hover:bg-theme-subtle transition-colors"
+                >
+                  <span
+                    className={cn(
+                      'mt-0.5 w-7 h-7 rounded-lg shrink-0 flex items-center justify-center',
+                      tone
+                    )}
+                  >
+                    <Icon size={15} />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-sm font-semibold text-black break-words">
+                      {entry.summary}
+                    </span>
+                    <span className="block text-sm text-theme-muted">
+                      <span className="text-brand-600">{entry.store_name}</span>
+                      {entry.username && ` · ${entry.username}`} · {timeAgo(entry.timestamp)}
+                    </span>
+                  </span>
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
   );
 }

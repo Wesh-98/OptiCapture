@@ -82,6 +82,50 @@ const STORE_INVENTORY_STATS = `
     WHERE i.store_id = s.id AND (i.upc IS NULL OR TRIM(i.upc) = '')) AS missing_upc_count`;
 
 // Super admin — list all stores
+// Inventory changes shown in the dashboard's Recent changes card. Logins, password
+// changes, exports and admin actions are left out on purpose.
+const ACTIVITY_ACTIONS = ['CREATE', 'UPDATE', 'DELETE', 'IMPORT', 'BATCH'] as const;
+
+/** A short line for one change. Scan commits are logged in a raw form, so they get reworded. */
+export function describeActivity(action: string, details: string | null): string {
+  const text = details?.trim() ?? '';
+  if (action !== 'BATCH') return text || action.toLowerCase();
+  const inserted = Number(/inserted=(\d+)/.exec(text)?.[1] ?? Number.NaN);
+  const verified = Number(/verified=(\d+)/.exec(text)?.[1] ?? Number.NaN);
+  if (Number.isNaN(inserted)) return 'Committed a scan session';
+  const added = `Captured ${inserted} new ${inserted === 1 ? 'item' : 'items'} from a scan`;
+  return verified > 0 ? `${added}, confirmed ${verified} existing` : added;
+}
+
+adminRouter.get('/activity', authenticateToken, requireSuperadmin, (req: AuthRequest, res) => {
+  const requested = Number.parseInt(String(req.query.limit ?? ''), 10);
+  const limit = Number.isFinite(requested) ? Math.min(Math.max(requested, 1), 50) : 10;
+  const rows = db
+    .prepare(
+      `SELECT l.id, l.action, l.details, l.timestamp, l.store_id, s.name AS store_name,
+              u.username
+         FROM logs l
+         JOIN stores s ON s.id = l.store_id
+         LEFT JOIN users u ON u.id = l.user_id
+        WHERE l.action IN (${ACTIVITY_ACTIONS.map(() => '?').join(', ')})
+          AND l.store_id != ?
+        ORDER BY l.timestamp DESC, l.id DESC
+        LIMIT ?`
+    )
+    .all(...ACTIVITY_ACTIONS, HQ_STORE_ID, limit) as Array<{
+    id: number;
+    action: string;
+    details: string | null;
+    timestamp: string;
+    store_id: number;
+    store_name: string;
+    username: string | null;
+  }>;
+  res.json(
+    rows.map(({ details, ...row }) => ({ ...row, summary: describeActivity(row.action, details) }))
+  );
+});
+
 adminRouter.get('/stores', authenticateToken, requireSuperadmin, (_req: AuthRequest, res) => {
   const stores = db
     .prepare(

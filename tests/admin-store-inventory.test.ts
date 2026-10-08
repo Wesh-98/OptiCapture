@@ -210,3 +210,38 @@ describe('superadmin per-store inventory view', () => {
     }
   });
 });
+
+describe('superadmin recent changes feed', () => {
+  function log(action: string, details: string, storeId: number) {
+    db.prepare('INSERT INTO logs (action, details, user_id, store_id) VALUES (?, ?, NULL, ?)').run(
+      action,
+      details,
+      storeId
+    );
+  }
+
+  it('lists inventory changes newest first, with scan commits reworded', async () => {
+    log('CREATE', 'Added item "Feed Soda"', viewedStoreId);
+    log('LOGIN', 'viewedowner signed in', viewedStoreId);
+    log('BATCH', 'Committed session abc | inserted=3 verified=2 | Drinks: 5', otherStoreId);
+    log('CREATE', 'Added item "HQ Only"', 0);
+
+    const res = await request.get('/api/admin/activity?limit=50').set('Cookie', superadminCookie);
+    expect(res.status).toBe(200);
+    const ours = res.body.filter((row: any) =>
+      [viewedStoreId, otherStoreId, 0].includes(row.store_id)
+    );
+    expect(ours.map((row: any) => [row.store_name, row.summary])).toEqual([
+      ['Other Store', 'Captured 3 new items from a scan, confirmed 2 existing'],
+      ['Viewed Store', 'Added item "Feed Soda"'],
+      // Registering a store is logged as a change too, and it is worth seeing.
+      ['Other Store', 'Registered store "Other Store"'],
+      ['Viewed Store', 'Registered store "Viewed Store"'],
+    ]);
+  });
+
+  it('is closed to store owners', async () => {
+    const res = await request.get('/api/admin/activity').set('Cookie', ownerCookie);
+    expect(res.status).toBe(403);
+  });
+});
