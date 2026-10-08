@@ -82,48 +82,84 @@ const STORE_INVENTORY_STATS = `
     WHERE i.store_id = s.id AND (i.upc IS NULL OR TRIM(i.upc) = '')) AS missing_upc_count`;
 
 // Super admin — list all stores
-// Inventory changes shown in the dashboard's Recent changes card. Logins, password
-// changes, exports and admin actions are left out on purpose.
-const ACTIVITY_ACTIONS = ['CREATE', 'UPDATE', 'DELETE', 'IMPORT', 'BATCH'] as const;
+// The dashboard's Recent changes card: store lifecycle events and new captures only.
+// Catalog edits (manual adds, edits, deletes, imports) belong to the store's own portal.
+export type ActivityKind =
+  | 'registered'
+  | 'suspended'
+  | 'reactivated'
+  | 'updated'
+  | 'deleted'
+  | 'capture';
 
-/** A short line for one change. Scan commits are logged in a raw form, so they get reworded. */
-export function describeActivity(action: string, details: string | null): string {
+const ACTIVITY_FILTER = `
+  (l.action = 'BATCH' AND l.store_id != ?)
+  OR (l.action = 'CREATE' AND l.details LIKE 'Registered store %')
+  OR (l.action = 'ADMIN' AND (l.details LIKE 'Set store % status to %'
+                              OR l.details LIKE 'Updated store %'
+                              OR l.details LIKE 'Deleted store %'))`;
+
+/** Turns one matching log row into a kind and a short line. Raw log text never reaches the UI. */
+export function describeActivity(
+  action: string,
+  details: string | null
+): { kind: ActivityKind; summary: string; deletedName?: string } {
   const text = details?.trim() ?? '';
-  if (action !== 'BATCH') return text || action.toLowerCase();
-  const inserted = Number(/inserted=(\d+)/.exec(text)?.[1] ?? Number.NaN);
-  const verified = Number(/verified=(\d+)/.exec(text)?.[1] ?? Number.NaN);
-  if (Number.isNaN(inserted)) return 'Committed a scan session';
-  const added = `Captured ${inserted} new ${inserted === 1 ? 'item' : 'items'} from a scan`;
-  return verified > 0 ? `${added}, confirmed ${verified} existing` : added;
+  if (action === 'BATCH') {
+    const inserted = Number(/inserted=(\d+)/.exec(text)?.[1] ?? Number.NaN);
+    const verified = Number(/verified=(\d+)/.exec(text)?.[1] ?? Number.NaN);
+    if (Number.isNaN(inserted)) return { kind: 'capture', summary: 'Committed a scan session' };
+    const added = `Captured ${inserted} new ${inserted === 1 ? 'item' : 'items'}`;
+    return {
+      kind: 'capture',
+      summary: verified > 0 ? `${added}, confirmed ${verified} existing` : added,
+    };
+  }
+  if (action === 'CREATE') return { kind: 'registered', summary: 'Store registered' };
+  if (text.startsWith('Set store ')) {
+    return text.endsWith(' active')
+      ? { kind: 'reactivated', summary: 'Store reactivated' }
+      : { kind: 'suspended', summary: 'Store suspended' };
+  }
+  if (text.startsWith('Deleted store ')) {
+    // The store's own rows are gone by now, so its name only survives in the log line.
+    const deletedName = /^Deleted store "(.*)" \(\d+\)$/.exec(text)?.[1];
+    return { kind: 'deleted', summary: 'Store deleted', deletedName };
+  }
+  return { kind: 'updated', summary: 'Store details updated' };
 }
 
 adminRouter.get('/activity', authenticateToken, requireSuperadmin, (req: AuthRequest, res) => {
   const requested = Number.parseInt(String(req.query.limit ?? ''), 10);
-  const limit = Number.isFinite(requested) ? Math.min(Math.max(requested, 1), 50) : 10;
+  const limit = Number.isFinite(requested) ? Math.min(Math.max(requested, 1), 100) : 5;
+  const { total } = db
+    .prepare(`SELECT COUNT(*) AS total FROM logs l WHERE ${ACTIVITY_FILTER}`)
+    .get(HQ_STORE_ID) as { total: number };
   const rows = db
     .prepare(
-      `SELECT l.id, l.action, l.details, l.timestamp, l.store_id, s.name AS store_name,
+      `SELECT l.id, l.action, l.details, l.timestamp, s.id AS store_id, s.name AS store_name,
               u.username
          FROM logs l
-         JOIN stores s ON s.id = l.store_id
+         LEFT JOIN stores s ON s.id = l.store_id AND s.id != ?
          LEFT JOIN users u ON u.id = l.user_id
-        WHERE l.action IN (${ACTIVITY_ACTIONS.map(() => '?').join(', ')})
-          AND l.store_id != ?
+        WHERE ${ACTIVITY_FILTER}
         ORDER BY l.timestamp DESC, l.id DESC
         LIMIT ?`
     )
-    .all(...ACTIVITY_ACTIONS, HQ_STORE_ID, limit) as Array<{
+    .all(HQ_STORE_ID, HQ_STORE_ID, limit) as Array<{
     id: number;
     action: string;
     details: string | null;
     timestamp: string;
-    store_id: number;
-    store_name: string;
+    store_id: number | null;
+    store_name: string | null;
     username: string | null;
   }>;
-  res.json(
-    rows.map(({ details, ...row }) => ({ ...row, summary: describeActivity(row.action, details) }))
-  );
+  const items = rows.map(({ action, details, store_name, ...row }) => {
+    const { deletedName, ...described } = describeActivity(action, details);
+    return { ...row, ...described, store_name: store_name ?? deletedName ?? 'Unknown store' };
+  });
+  res.json({ items, total });
 });
 
 adminRouter.get('/stores', authenticateToken, requireSuperadmin, (_req: AuthRequest, res) => {

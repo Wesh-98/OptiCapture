@@ -220,24 +220,40 @@ describe('superadmin recent changes feed', () => {
     );
   }
 
-  it('lists inventory changes newest first, with scan commits reworded', async () => {
-    log('CREATE', 'Added item "Feed Soda"', viewedStoreId);
-    log('LOGIN', 'viewedowner signed in', viewedStoreId);
+  it('shows store events and captures only, newest first', async () => {
     log('BATCH', 'Committed session abc | inserted=3 verified=2 | Drinks: 5', otherStoreId);
-    log('CREATE', 'Added item "HQ Only"', 0);
+    // Catalog changes and account events stay out of the feed.
+    log('CREATE', 'Added item "Feed Soda"', viewedStoreId);
+    log('IMPORT', 'Imported 4 rows across 1 sheet(s)', viewedStoreId);
+    log('DELETE', 'Deleted item "Feed Soda"', viewedStoreId);
+    log('LOGIN', 'viewedowner signed in', viewedStoreId);
+    log('ADMIN', 'Granted owner access to "someone"', viewedStoreId);
+    log('ADMIN', `Set store ${viewedStoreId} status to suspended`, viewedStoreId);
+    log('ADMIN', `Set store ${viewedStoreId} status to active`, viewedStoreId);
+    log('ADMIN', 'Updated store "Other Store" (999)', otherStoreId);
+    log('ADMIN', 'Deleted store "Gone Mart" (998)', 0);
 
-    const res = await request.get('/api/admin/activity?limit=50').set('Cookie', superadminCookie);
+    const res = await request.get('/api/admin/activity?limit=100').set('Cookie', superadminCookie);
     expect(res.status).toBe(200);
-    const ours = res.body.filter((row: any) =>
-      [viewedStoreId, otherStoreId, 0].includes(row.store_id)
-    );
-    expect(ours.map((row: any) => [row.store_name, row.summary])).toEqual([
-      ['Other Store', 'Captured 3 new items from a scan, confirmed 2 existing'],
-      ['Viewed Store', 'Added item "Feed Soda"'],
-      // Registering a store is logged as a change too, and it is worth seeing.
-      ['Other Store', 'Registered store "Other Store"'],
-      ['Viewed Store', 'Registered store "Viewed Store"'],
+    const rows = res.body.items.map((row: any) => [row.kind, row.store_name, row.summary]);
+    expect(rows).toEqual([
+      ['deleted', 'Gone Mart', 'Store deleted'],
+      ['updated', 'Other Store', 'Store details updated'],
+      ['reactivated', 'Viewed Store', 'Store reactivated'],
+      ['suspended', 'Viewed Store', 'Store suspended'],
+      ['capture', 'Other Store', 'Captured 3 new items, confirmed 2 existing'],
+      ['registered', 'Other Store', 'Store registered'],
+      ['registered', 'Viewed Store', 'Store registered'],
     ]);
+    expect(res.body.total).toBe(7);
+    // A deleted store has nothing left to link to.
+    expect(res.body.items[0].store_id).toBeNull();
+  });
+
+  it('returns five changes by default', async () => {
+    const res = await request.get('/api/admin/activity').set('Cookie', superadminCookie);
+    expect(res.body.items).toHaveLength(5);
+    expect(res.body.total).toBe(7);
   });
 
   it('is closed to store owners', async () => {
