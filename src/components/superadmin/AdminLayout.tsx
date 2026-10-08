@@ -137,12 +137,14 @@ export function AdminLayout({ onLogout, children, bare = false }: Readonly<Props
           )}
         </Link>
 
+        {/* Centred on the corner where the sidebar edge meets the top bar (h-16), clear of the
+            breadcrumbs that pages start with. */}
         <button
           onClick={toggleRail}
           aria-expanded={railOpen}
           aria-label={railOpen ? 'Collapse menu' : 'Expand menu'}
           title={railOpen ? 'Collapse menu' : 'Expand menu'}
-          className="absolute -right-3.5 top-20 bg-white text-brand-600 p-1.5 rounded-full shadow-md border-2 border-theme-border hover:bg-theme-subtle transition-all duration-200 z-10"
+          className="absolute -right-3.5 top-12 bg-white text-brand-600 p-1.5 rounded-full shadow-md border-2 border-theme-border hover:bg-theme-subtle transition-all duration-200 z-10"
         >
           <ChevronRight
             size={16}
