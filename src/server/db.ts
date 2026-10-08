@@ -378,12 +378,14 @@ runMigration(9, () => {
 
 // Migration 10: recreate users table with UNIQUE(username, store_id) instead of UNIQUE(username)
 // This enables store-scoped usernames — two different stores can now have a user called "admin"
-runMigration(10, () => {
-  // Disable FK enforcement so DROP TABLE users isn't blocked by user_stores referencing it
-  db.exec('PRAGMA foreign_keys = OFF');
-  try {
-    db.transaction(() => {
-      db.exec(`
+runMigration(
+  10,
+  () => {
+    // Disable FK enforcement so DROP TABLE users isn't blocked by user_stores referencing it
+    db.exec('PRAGMA foreign_keys = OFF');
+    try {
+      db.transaction(() => {
+        db.exec(`
         CREATE TABLE IF NOT EXISTS users_new (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           username TEXT NOT NULL,
@@ -407,11 +409,13 @@ runMigration(10, () => {
         DROP TABLE users;
         ALTER TABLE users_new RENAME TO users;
       `);
-    })();
-  } finally {
-    db.exec('PRAGMA foreign_keys = ON');
-  }
-}, false);
+      })();
+    } finally {
+      db.exec('PRAGMA foreign_keys = ON');
+    }
+  },
+  false
+);
 
 runMigration(11, () => {
   const cols = (db.prepare('PRAGMA table_info(session_items)').all() as any[]).map(
@@ -563,8 +567,10 @@ runMigration(19, () => {
   const cols = new Set(
     (db.prepare('PRAGMA table_info(inventory)').all() as any[]).map((c: any) => c.name)
   );
-  if (!cols.has('last_verified_at')) db.exec('ALTER TABLE inventory ADD COLUMN last_verified_at TEXT');
-  if (!cols.has('last_verified_by')) db.exec('ALTER TABLE inventory ADD COLUMN last_verified_by INTEGER');
+  if (!cols.has('last_verified_at'))
+    db.exec('ALTER TABLE inventory ADD COLUMN last_verified_at TEXT');
+  if (!cols.has('last_verified_by'))
+    db.exec('ALTER TABLE inventory ADD COLUMN last_verified_by INTEGER');
   if (!cols.has('last_verified_session_id'))
     db.exec('ALTER TABLE inventory ADD COLUMN last_verified_session_id TEXT');
 });
@@ -579,7 +585,9 @@ runMigration(20, () => {
   if (!cols.has('scan_window_started_at')) {
     db.exec('ALTER TABLE scan_sessions ADD COLUMN scan_window_started_at TEXT');
   }
-  db.exec('UPDATE scan_sessions SET scan_window_started_at = created_at WHERE scan_window_started_at IS NULL');
+  db.exec(
+    'UPDATE scan_sessions SET scan_window_started_at = created_at WHERE scan_window_started_at IS NULL'
+  );
 });
 
 // Brand found by the scan lookup is kept on the catalog item when a session commits, so it
@@ -597,7 +605,8 @@ runMigration(22, () => {
   const cols = new Set(
     (db.prepare('PRAGMA table_info(session_items)').all() as any[]).map((c: any) => c.name)
   );
-  if (!cols.has('recent_scan_ids')) db.exec('ALTER TABLE session_items ADD COLUMN recent_scan_ids TEXT');
+  if (!cols.has('recent_scan_ids'))
+    db.exec('ALTER TABLE session_items ADD COLUMN recent_scan_ids TEXT');
 });
 
 db.prepare(
@@ -620,6 +629,9 @@ db.prepare(
 ).run();
 // UNIQUE(upc, store_id) already owns an equivalent SQLite auto-index.
 db.prepare('DROP INDEX IF EXISTS idx_inventory_upc_store').run();
+// The superadmin's same-UPC lookup matches on TRIM(upc) so older rows with stray spaces
+// still match; this lets it seek instead of scanning every store's inventory.
+db.prepare('CREATE INDEX IF NOT EXISTS idx_inventory_trimmed_upc ON inventory(TRIM(upc))').run();
 db.prepare(
   'CREATE INDEX IF NOT EXISTS idx_scan_sessions_store_status ON scan_sessions(store_id, status, expires_at)'
 ).run();
@@ -628,18 +640,18 @@ db.prepare(
 // outside runMigration, so every boot re-scanned the whole inventory table. They are
 // idempotent, so wrapping them in a version is safe and makes the boot cost disappear.
 runMigration(23, () => {
-db.prepare(
-  `
+  db.prepare(
+    `
   UPDATE inventory
   SET image = '/api/drive-image/' || SUBSTR(image, INSTR(image, 'id=') + 3)
   WHERE image LIKE '%drive.google.com/uc?export=view%'
     AND image NOT LIKE '%/api/drive-image/%'
 `
-).run();
+  ).run();
 
-// One-time migration: convert /file/d/FILE_ID/view sharing links → server proxy path
-db.prepare(
-  `
+  // One-time migration: convert /file/d/FILE_ID/view sharing links → server proxy path
+  db.prepare(
+    `
   UPDATE inventory
   SET image = '/api/drive-image/' ||
               SUBSTR(image, INSTR(image, '/file/d/') + 8,
@@ -647,11 +659,11 @@ db.prepare(
   WHERE image LIKE '%drive.google.com/file/d/%'
     AND image NOT LIKE '%/api/drive-image/%'
 `
-).run();
+  ).run();
 
-// One-time migration: convert existing thumbnail?id= URLs → server proxy path
-db.prepare(
-  `
+  // One-time migration: convert existing thumbnail?id= URLs → server proxy path
+  db.prepare(
+    `
   UPDATE inventory
   SET image = '/api/drive-image/' || SUBSTR(image, INSTR(image, 'thumbnail?id=') + 13,
                 CASE WHEN INSTR(SUBSTR(image, INSTR(image, 'thumbnail?id=') + 13), '&') > 0
@@ -660,32 +672,32 @@ db.prepare(
   WHERE image LIKE '%drive.google.com/thumbnail?id=%'
     AND image NOT LIKE '%/api/drive-image/%'
 `
-).run();
+  ).run();
 
-// Normalize any remaining Google Drive/Docs image URLs through the proxy so
-// older rows created before the normalization hook still render consistently.
-{
-  const rows = db
-    .prepare(
-      `
+  // Normalize any remaining Google Drive/Docs image URLs through the proxy so
+  // older rows created before the normalization hook still render consistently.
+  {
+    const rows = db
+      .prepare(
+        `
     SELECT id, image
     FROM inventory
     WHERE image IS NOT NULL
       AND image NOT LIKE '/api/drive-image/%'
       AND (image LIKE '%drive.google.com%' OR image LIKE '%docs.google.com%')
   `
-    )
-    .all() as Array<{ id: number; image: string }>;
+      )
+      .all() as Array<{ id: number; image: string }>;
 
-  const updateImage = db.prepare('UPDATE inventory SET image = ? WHERE id = ?');
+    const updateImage = db.prepare('UPDATE inventory SET image = ? WHERE id = ?');
 
-  db.transaction(() => {
-    for (const row of rows) {
-      const normalized = normalizeImageUrl(row.image);
-      if (normalized !== row.image) updateImage.run(normalized, row.id);
-    }
-  })();
-}
+    db.transaction(() => {
+      for (const row of rows) {
+        const normalized = normalizeImageUrl(row.image);
+        if (normalized !== row.image) updateImage.run(normalized, row.id);
+      }
+    })();
+  }
 });
 
 // Migration 24: a category whose name is reserved is filtered out of GET /categories, so

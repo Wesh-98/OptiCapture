@@ -22,6 +22,16 @@ import {
 
 export const adminRouter = express.Router();
 const HQ_STORE_ID = 0;
+
+/**
+ * A route ID as plain decimal digits, or null. Number() alone accepts "1e0" and "0x1",
+ * and parseInt accepts "5abc", so either could reach a store the caller never named.
+ */
+function parseIdParam(raw: string | undefined): number | null {
+  if (!raw || !/^\d+$/.test(raw)) return null;
+  const id = Number(raw);
+  return Number.isSafeInteger(id) ? id : null;
+}
 type StoreRole = 'owner' | 'taker';
 
 function requireSuperadmin(req: AuthRequest, res: express.Response, next: express.NextFunction) {
@@ -200,12 +210,11 @@ interface ViewedStoreSummary {
  * not exist — it never falls back to the caller's own store.
  */
 function resolveViewedStore(req: AuthRequest, res: express.Response) {
-  const raw = req.params.id;
-  if (!/^\d+$/.test(raw)) {
+  const storeId = parseIdParam(req.params.id);
+  if (storeId === null) {
     res.status(400).json({ error: 'Invalid store ID' });
     return null;
   }
-  const storeId = Number(raw);
   if (storeId === HQ_STORE_ID) {
     res.status(403).json({ error: 'The HQ store is managed internally' });
     return null;
@@ -263,16 +272,15 @@ adminRouter.get(
   (req: AuthRequest, res) => {
     const store = resolveViewedStore(req, res);
     if (!store) return;
-    if (!/^\d+$/.test(req.params.itemId)) {
-      return res.status(400).json({ error: 'Invalid item ID' });
-    }
+    const itemId = parseIdParam(req.params.itemId);
+    if (itemId === null) return res.status(400).json({ error: 'Invalid item ID' });
     const item = db
       .prepare(
         `SELECT i.*, c.name AS category_name
          FROM inventory i LEFT JOIN categories c ON c.id = i.category_id
          WHERE i.id = ? AND i.store_id = ?`
       )
-      .get(Number(req.params.itemId), store.id) as { upc: string | null } | undefined;
+      .get(itemId, store.id) as { upc: string | null } | undefined;
     if (!item) return res.status(404).json({ error: 'Item not found in this store' });
 
     const upc = item.upc?.trim();
@@ -297,8 +305,8 @@ adminRouter.put(
   authenticateToken,
   requireSuperadmin,
   (req: AuthRequest, res) => {
-    const storeId = Number.parseInt(req.params.id);
-    if (Number.isNaN(storeId)) return res.status(400).json({ error: 'Invalid store ID' });
+    const storeId = parseIdParam(req.params.id);
+    if (storeId === null) return res.status(400).json({ error: 'Invalid store ID' });
     if (storeId === HQ_STORE_ID) {
       return res.status(403).json({ error: 'The HQ store is managed internally' });
     }
@@ -318,8 +326,8 @@ adminRouter.get(
   authenticateToken,
   requireSuperadmin,
   (req: AuthRequest, res) => {
-    const storeId = Number.parseInt(req.params.id);
-    if (Number.isNaN(storeId)) return res.status(400).json({ error: 'Invalid store ID' });
+    const storeId = parseIdParam(req.params.id);
+    if (storeId === null) return res.status(400).json({ error: 'Invalid store ID' });
     if (storeId === HQ_STORE_ID) {
       return res.status(403).json({ error: 'The HQ store is managed internally' });
     }
@@ -345,8 +353,8 @@ adminRouter.post(
   requireSuperadmin,
   asyncRoute<AuthRequest>(async (req: AuthRequest, res) => {
     const { username, role, mode, email } = req.body ?? {};
-    const storeId = Number.parseInt(req.params.id);
-    if (Number.isNaN(storeId)) return res.status(400).json({ error: 'Invalid store ID' });
+    const storeId = parseIdParam(req.params.id);
+    if (storeId === null) return res.status(400).json({ error: 'Invalid store ID' });
     if (storeId === HQ_STORE_ID) {
       return res.status(403).json({ error: 'The HQ store is managed internally' });
     }
@@ -498,9 +506,9 @@ adminRouter.delete(
   authenticateToken,
   requireSuperadmin,
   (req: AuthRequest, res) => {
-    const storeId = Number.parseInt(req.params.id);
-    const userId = Number.parseInt(req.params.userId);
-    if (Number.isNaN(storeId) || Number.isNaN(userId)) {
+    const storeId = parseIdParam(req.params.id);
+    const userId = parseIdParam(req.params.userId);
+    if (storeId === null || userId === null) {
       return res.status(400).json({ error: 'Invalid store or user ID' });
     }
     if (storeId === HQ_STORE_ID) {
@@ -540,7 +548,8 @@ adminRouter.delete(
   authenticateToken,
   requireSuperadmin,
   asyncRoute<AuthRequest>(async (req: AuthRequest, res) => {
-    const storeId = Number(req.params.id);
+    const storeId = parseIdParam(req.params.id);
+    if (storeId === null) return res.status(400).json({ error: 'Invalid store ID' });
     if (storeId === HQ_STORE_ID) {
       return res.status(403).json({ error: 'The HQ store is managed internally' });
     }
@@ -614,8 +623,8 @@ adminRouter.delete(
 
 // Super admin — edit store details
 adminRouter.put('/stores/:id', authenticateToken, requireSuperadmin, (req: AuthRequest, res) => {
-  const storeId = Number.parseInt(req.params.id);
-  if (Number.isNaN(storeId)) return res.status(400).json({ error: 'Invalid store ID' });
+  const storeId = parseIdParam(req.params.id);
+  if (storeId === null) return res.status(400).json({ error: 'Invalid store ID' });
   if (storeId === HQ_STORE_ID) {
     return res.status(403).json({ error: 'The HQ store is managed internally' });
   }
@@ -694,8 +703,8 @@ adminRouter.post(
   authenticateToken,
   requireSuperadmin,
   asyncRoute<AuthRequest>(async (req: AuthRequest, res) => {
-    const userId = Number.parseInt(req.params.userId);
-    if (Number.isNaN(userId)) return res.status(400).json({ error: 'Invalid user ID' });
+    const userId = parseIdParam(req.params.userId);
+    if (userId === null) return res.status(400).json({ error: 'Invalid user ID' });
 
     const user = db
       .prepare('SELECT id, username, store_id FROM users WHERE id = ?')

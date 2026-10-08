@@ -201,6 +201,20 @@ describe('superadmin per-store inventory view', () => {
     }
   });
 
+  it('refuses store IDs that are not plain digits on every admin route', async () => {
+    // Number('1e0') and parseInt('1abc') would both reach store 1.
+    const del = await request.delete('/api/admin/stores/1e0').set('Cookie', superadminCookie);
+    expect(del.status).toBe(400);
+    const status = await request
+      .put('/api/admin/stores/1abc/status')
+      .set('Cookie', superadminCookie)
+      .send({ status: 'suspended' });
+    expect(status.status).toBe(400);
+    expect(
+      (db.prepare('SELECT status FROM stores WHERE id = 1').get() as { status: string }).status
+    ).toBe('active');
+  });
+
   it('is closed to store owners', async () => {
     for (const path of ['', '/inventory', '/categories']) {
       const res = await request

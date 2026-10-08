@@ -285,9 +285,12 @@ function StoreSwitcher({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const ref = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!open) return;
+    // Opening the switcher is a request to search, so the box takes focus right away.
+    searchRef.current?.focus();
     const onPointer = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
@@ -352,7 +355,7 @@ function StoreSwitcher({
                 className="absolute left-2.5 top-1/2 -translate-y-1/2 text-theme-muted"
               />
               <input
-                autoFocus
+                ref={searchRef}
                 type="search"
                 value={query}
                 onChange={e => setQuery(e.target.value)}

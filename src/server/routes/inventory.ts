@@ -231,10 +231,9 @@ export function parseImportNumber(
 ): { value: number | null; error?: string } {
   const text = readImportedString(value);
   if (!text) return { value: null };
-  const cleaned = text
-    .replace(/^[$£€¥]\s*/, '')
-    .replace(/(?<=\d),(?=\d{3}\b)/g, '')
-    .replace(/\s*%$/, '');
+  let cleaned = text.replace(/^[$£€¥]\s*/, '').replace(/(?<=\d),(?=\d{3}\b)/g, '');
+  // Drop a trailing "%" and any space before it, without a regex that can backtrack.
+  if (cleaned.endsWith('%')) cleaned = cleaned.slice(0, -1).trimEnd();
   const parsed = Number(cleaned);
   const max = options.max ?? 1_000_000;
   if (!cleaned || !Number.isFinite(parsed) || parsed < 0) {

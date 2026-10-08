@@ -30,7 +30,7 @@ export function useAdminItemDetail(storeId: string | undefined, itemId: string |
     let cancelled = false;
     setLoading(true);
     setError('');
-    (async () => {
+    void (async () => {
       try {
         const res = await fetch(`/api/admin/stores/${storeId}/items/${itemId}`, {
           credentials: 'include',

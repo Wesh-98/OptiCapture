@@ -91,7 +91,7 @@ export function useAdminStoreInventory(storeId: string | undefined) {
     setStore(null);
     setCategories([]);
     setLoadError('');
-    (async () => {
+    void (async () => {
       try {
         const [storeRes, categoriesRes] = await Promise.all([
           fetch(`/api/admin/stores/${storeId}`, { credentials: 'include' }),
@@ -163,7 +163,7 @@ export function useAdminStoreInventory(storeId: string | undefined) {
 
     setItemsLoading(true);
     setItemsError('');
-    (async () => {
+    void (async () => {
       try {
         const res = await fetch(`/api/admin/stores/${storeId}/inventory?${params}`, {
           credentials: 'include',

@@ -156,7 +156,7 @@ export function StoreTable({
                       onChange={onToggleAll}
                       className="h-4 w-4 rounded border-slate-300 accent-brand-600 focus:ring-brand-400"
                     />
-                    Select All
+                    <span>Select All</span>
                   </label>
                 </th>
                 {['Store', 'Contact', 'Address', 'Items', 'Joined', 'Status', 'Actions'].map(h => (

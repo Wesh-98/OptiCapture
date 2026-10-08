@@ -36,7 +36,7 @@ export function useAdminActivity() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    (async () => {
+    void (async () => {
       try {
         const res = await fetch(`/api/admin/activity?limit=${expanded ? EXPANDED : COLLAPSED}`, {
           credentials: 'include',
