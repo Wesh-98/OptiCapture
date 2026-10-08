@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import express from 'express';
 import multer from 'multer';
 import ExcelJS from 'exceljs';
@@ -767,8 +768,8 @@ export interface InventoryRowSnapshot {
 }
 
 export interface ItemUpdateOptions {
-  /** Refuse with 409 when the row's updated_at no longer matches (the superadmin's edits). */
-  expectedUpdatedAt?: string;
+  /** Refuse with 409 when the row's revision (itemRevision) no longer matches. */
+  expectedRevision?: string;
   /**
    * The log line for the change, from the row before and after. Returning null means nothing
    * visible changed, and the update is rolled back with a 400. Without it the store's usual
@@ -795,6 +796,32 @@ export function readItemSnapshot(itemId: unknown, storeId: number | undefined) {
  * the store's own PUT /inventory/:id and the superadmin's edit route so both follow the same
  * rules. Returns the status and body to send.
  */
+// Everything a person could see or change on an item. A save is checked against these, not
+// just updated_at: that is whole seconds, so an edit in the same second as the form was
+// opened left it unchanged and the stale save went through.
+const REVISION_COLUMNS = [
+  'item_name',
+  'upc',
+  'number',
+  'brand',
+  'category_id',
+  'quantity',
+  'status',
+  'unit',
+  'sale_price',
+  'tax_percent',
+  'description',
+  'tag_names',
+  'image',
+  'updated_at',
+] as const;
+
+/** A short fingerprint of an item's contents; any change to the item changes it. */
+export function itemRevision(row: object): string {
+  const values = REVISION_COLUMNS.map(column => (row as Record<string, unknown>)[column] ?? null);
+  return createHash('sha256').update(JSON.stringify(values)).digest('hex').slice(0, 24);
+}
+
 export function updateInventoryItem(
   storeId: number | undefined,
   userId: number,
@@ -891,12 +918,13 @@ export function updateInventoryItem(
       // Read inside the transaction so the conflict check and the "before" values
       // describe exactly the row this update replaces.
       const before =
-        options.describe || options.expectedUpdatedAt !== undefined
+        options.describe || options.expectedRevision !== undefined
           ? readItemSnapshot(itemId, storeId)
           : undefined;
       if (
-        options.expectedUpdatedAt !== undefined &&
-        before?.updated_at !== options.expectedUpdatedAt
+        options.expectedRevision !== undefined &&
+        before &&
+        itemRevision(before) !== options.expectedRevision
       ) {
         throw new ItemUpdateConflict();
       }

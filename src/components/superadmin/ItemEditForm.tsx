@@ -213,7 +213,7 @@ export function ItemEditForm({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           changes: Object.fromEntries(changes.map(c => [c.field, c.value])),
-          expected_updated_at: item.updated_at,
+          expected_revision: item.revision,
           reason: reason.trim() || undefined,
         }),
       });

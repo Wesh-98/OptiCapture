@@ -2,6 +2,7 @@ import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import { db } from '../src/server/db.js';
 import { UPLOADS_DIR } from '../src/server/helpers.js';
+import { itemRevision, readItemSnapshot } from '../src/server/routes/inventory.js';
 import { createTestApp, getStoreCode, login, registerStore } from './helpers.js';
 
 const request = createTestApp();
@@ -26,6 +27,10 @@ function categoryName(): string {
   return (
     db.prepare('SELECT name FROM categories WHERE id = ?').get(categoryId) as { name: string }
   ).name;
+}
+
+function revision(): string {
+  return itemRevision(readItemSnapshot(itemId, storeId)!);
 }
 
 function readItem() {
@@ -70,7 +75,7 @@ describe('superadmin item edits', () => {
   it('applies the change and logs every before → after to the store', async () => {
     const res = await edit({
       changes: { sale_price: 2.49, status: 'Inactive' },
-      expected_updated_at: readItem().updated_at,
+      expected_revision: revision(),
       reason: 'Price list from head office',
     });
     expect(res.status).toBe(200);
@@ -91,16 +96,39 @@ describe('superadmin item edits', () => {
   it('refuses a save when the item changed since the form opened', async () => {
     const res = await edit({
       changes: { sale_price: 9 },
-      expected_updated_at: '2000-01-01 00:00:00',
+      expected_revision: 'stale',
     });
     expect(res.status).toBe(409);
     expect(readItem().sale_price).toBe(1.99);
   });
 
+  it('refuses a stale save even when the other edit leaves updated_at unchanged', async () => {
+    // updated_at is whole seconds, so a store edit in the same second as the form opened
+    // leaves it as it was. That edit must still make the superadmin's save stale.
+    const opened = revision();
+    const stamp = readItem().updated_at;
+    db.prepare('UPDATE inventory SET sale_price = 7 WHERE id = ?').run(itemId);
+    expect(readItem().updated_at).toBe(stamp);
+
+    const res = await edit({ changes: { status: 'Inactive' }, expected_revision: opened });
+    expect(res.status).toBe(409);
+    expect(readItem()).toMatchObject({ sale_price: 7, status: 'Active' });
+  });
+
+  it('returns the item with a fresh revision for the next edit', async () => {
+    const res = await edit({ changes: { sale_price: 2.25 }, expected_revision: revision() });
+    expect(res.status).toBe(200);
+    expect(res.body.item.revision).toBe(revision());
+    const detail = await request
+      .get(`/api/admin/stores/${storeId}/items/${itemId}`)
+      .set('Cookie', superadminCookie);
+    expect(detail.body.item.revision).toBe(revision());
+  });
+
   it('only lets the superadmin change catalog fields', async () => {
     const res = await edit({
       changes: { quantity: 99, tag_names: 'x' },
-      expected_updated_at: readItem().updated_at,
+      expected_revision: revision(),
     });
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('Cannot edit: quantity, tag_names');
@@ -111,7 +139,7 @@ describe('superadmin item edits', () => {
     db.prepare("UPDATE stores SET status = 'suspended' WHERE id = ?").run(storeId);
     const res = await edit({
       changes: { sale_price: 3 },
-      expected_updated_at: readItem().updated_at,
+      expected_revision: revision(),
     });
     expect(res.status).toBe(403);
     expect(readItem().sale_price).toBe(1.99);
@@ -120,7 +148,7 @@ describe('superadmin item edits', () => {
   it("rejects another store's category", async () => {
     const res = await edit({
       changes: { category_id: otherCategoryId },
-      expected_updated_at: readItem().updated_at,
+      expected_revision: revision(),
     });
     expect(res.status).toBe(400);
     expect(readItem().category_id).toBe(categoryId);
@@ -131,16 +159,18 @@ describe('superadmin item edits', () => {
     const logsBefore = db.prepare('SELECT COUNT(*) AS n FROM logs').get() as { n: number };
     const res = await edit({
       changes: { sale_price: 1.99 },
-      expected_updated_at: before.updated_at,
+      expected_revision: revision(),
     });
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('Nothing to change');
     expect(db.prepare('SELECT COUNT(*) AS n FROM logs').get()).toEqual(logsBefore);
+    // Rolled back whole: updated_at did not move either.
+    expect(readItem()).toEqual(before);
   });
 
   it('does not reach an item through another store', async () => {
     const res = await edit(
-      { changes: { sale_price: 3 }, expected_updated_at: readItem().updated_at },
+      { changes: { sale_price: 3 }, expected_revision: revision() },
       superadminCookie,
       otherStoreId
     );
@@ -151,7 +181,7 @@ describe('superadmin item edits', () => {
   it('can clear the price, UPC and category', async () => {
     const res = await edit({
       changes: { sale_price: null, upc: null, category_id: null },
-      expected_updated_at: readItem().updated_at,
+      expected_revision: revision(),
     });
     expect(res.status).toBe(200);
     expect(readItem()).toMatchObject({ sale_price: null, upc: null, category_id: null });
@@ -167,7 +197,7 @@ describe('superadmin item edits', () => {
     ).run(categoryId, storeId);
     const res = await edit({
       changes: { upc: '0002' },
-      expected_updated_at: readItem().updated_at,
+      expected_revision: revision(),
     });
     expect(res.status).toBe(409);
     expect(readItem().upc).toBe('0001');
@@ -179,7 +209,7 @@ describe('superadmin item edits', () => {
       'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
     const added = await edit({
       changes: { image: png },
-      expected_updated_at: readItem().updated_at,
+      expected_revision: revision(),
     });
     expect(added.status).toBe(200);
     expect(readItem().image).toMatch(/^\/uploads\/.+\.png$/);
@@ -187,7 +217,7 @@ describe('superadmin item edits', () => {
 
     const removed = await edit({
       changes: { image: null },
-      expected_updated_at: readItem().updated_at,
+      expected_revision: revision(),
     });
     expect(removed.status).toBe(200);
     expect(readItem().image).toBeNull();
@@ -197,7 +227,7 @@ describe('superadmin item edits', () => {
   it('refuses an image type the store could not upload either', async () => {
     const res = await edit({
       changes: { image: 'data:image/svg+xml;base64,PHN2Zy8+' },
-      expected_updated_at: readItem().updated_at,
+      expected_revision: revision(),
     });
     expect(res.status).toBe(400);
     expect(readItem().image).toBeNull();
@@ -214,7 +244,7 @@ describe('superadmin item edits', () => {
       const before = uploadCount();
       const res = await edit({
         changes: { image: png },
-        expected_updated_at: '2000-01-01 00:00:00',
+        expected_revision: 'stale',
       });
       expect(res.status).toBe(409);
       await settle();
@@ -241,7 +271,7 @@ describe('superadmin item edits', () => {
 
   it('is closed to store owners', async () => {
     const res = await edit(
-      { changes: { sale_price: 3 }, expected_updated_at: readItem().updated_at },
+      { changes: { sale_price: 3 }, expected_revision: revision() },
       ownerCookie
     );
     expect(res.status).toBe(403);

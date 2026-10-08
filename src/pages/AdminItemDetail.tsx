@@ -337,8 +337,8 @@ export default function AdminItemDetail() {
             <div className="flex-1 overflow-y-auto p-5">
               {editing && viewedItem && id ? (
                 <ItemEditForm
-                  // A reload after a refused save brings a new updated_at: start from it.
-                  key={`${viewedItem.id}-${viewedItem.updated_at}`}
+                  // A reload after a refused save brings a new revision: start from it.
+                  key={`${viewedItem.id}-${viewedItem.revision}`}
                   storeId={id}
                   item={viewedItem}
                   categories={view.categories}

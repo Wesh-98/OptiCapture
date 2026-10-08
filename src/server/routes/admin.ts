@@ -15,6 +15,7 @@ import type { AuthRequest } from '../types.js';
 import { logError } from '../logger.js';
 import {
   listStoreInventory,
+  itemRevision,
   readItemSnapshot,
   updateInventoryItem,
   type InventoryRowSnapshot,
@@ -300,7 +301,7 @@ adminRouter.get(
           )
           .all(upc, store.id, HQ_STORE_ID)
       : [];
-    res.json({ item, other_stores: otherStores });
+    res.json({ item: { ...item, revision: itemRevision(item) }, other_stores: otherStores });
   }
 );
 
@@ -372,7 +373,7 @@ adminRouter.put(
     const itemId = parseIdParam(req.params.itemId);
     if (itemId === null) return res.status(400).json({ error: 'Invalid item ID' });
 
-    const { changes, expected_updated_at, reason } = req.body ?? {};
+    const { changes, expected_revision, reason } = req.body ?? {};
     if (!changes || typeof changes !== 'object' || Array.isArray(changes)) {
       return res.status(400).json({ error: 'changes must be an object' });
     }
@@ -384,8 +385,8 @@ adminRouter.put(
       return res.status(400).json({ error: `Cannot edit: ${notEditable.join(', ')}` });
     }
     if (fields.length === 0) return res.status(400).json({ error: 'Nothing to change' });
-    if (typeof expected_updated_at !== 'string' || !expected_updated_at) {
-      return res.status(400).json({ error: 'expected_updated_at is required' });
+    if (typeof expected_revision !== 'string' || !expected_revision) {
+      return res.status(400).json({ error: 'expected_revision is required' });
     }
     if (reason != null && typeof reason !== 'string') {
       return res.status(400).json({ error: 'reason must be a string' });
@@ -398,11 +399,12 @@ adminRouter.put(
     }
 
     const result = updateInventoryItem(store.id, req.user.id, itemId, changes, {
-      expectedUpdatedAt: expected_updated_at,
+      expectedRevision: expected_revision,
       describe: (before, after) => describeItemEdit(before, after, note),
     });
     if (result.status !== 200) return res.status(result.status).json(result.body);
-    res.json({ item: readItemSnapshot(itemId, store.id) });
+    const saved = readItemSnapshot(itemId, store.id);
+    res.json({ item: saved && { ...saved, revision: itemRevision(saved) } });
   }
 );
 

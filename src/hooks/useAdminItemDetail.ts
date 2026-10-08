@@ -5,6 +5,8 @@ import type { InventoryItem } from '../components/dashboard/types';
 export interface AdminItem extends InventoryItem {
   store_id: number;
   created_at: string;
+  /** Fingerprint of the item as loaded; an edit sends it back so a stale save is refused. */
+  revision: string;
 }
 
 /** The same UPC as carried by another store. */
