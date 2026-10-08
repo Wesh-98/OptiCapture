@@ -343,10 +343,13 @@ export default function AdminItemDetail() {
                   item={viewedItem}
                   categories={view.categories}
                   onSaved={(saved, otherStores) => {
+                    // This can arrive after the superadmin has opened another item, so every
+                    // update is tied to the saved item, not to whatever is on screen.
+                    const savedId = String(saved.id);
                     detail.applyEdit(saved, otherStores);
                     view.refresh();
-                    setEditingItemId(null);
-                    setSavedFor(itemId ?? null);
+                    setEditingItemId(current => (current === savedId ? null : current));
+                    setSavedFor(savedId);
                   }}
                   onCancel={() => setEditingItemId(null)}
                   onReload={detail.reload}

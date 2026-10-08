@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { InventoryItem } from '../components/dashboard/types';
 
@@ -27,6 +27,12 @@ export function useAdminItemDetail(storeId: string | undefined, itemId: string |
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
+  // The item on screen now. A save can finish after the superadmin has moved to another
+  // item, and its result must not land on that one.
+  const shownItemId = useRef(itemId);
+  useEffect(() => {
+    shownItemId.current = itemId;
+  }, [itemId]);
 
   useEffect(() => {
     if (!storeId || !itemId) return;
@@ -70,7 +76,8 @@ export function useAdminItemDetail(storeId: string | undefined, itemId: string |
     reload: () => setReloadKey(key => key + 1),
     /** Show a saved edit without another round trip, with matches for its saved UPC. */
     applyEdit: (next: Partial<AdminItem>, nextOtherStores: SameUpcEntry[]) => {
-      setItem(prev => (prev ? { ...prev, ...next } : prev));
+      if (String(next.id) !== shownItemId.current) return;
+      setItem(prev => (prev && prev.id === next.id ? { ...prev, ...next } : prev));
       setOtherStores(nextOtherStores);
     },
   };

@@ -132,6 +132,7 @@ describe('superadmin item edits', () => {
     ).run(otherCategoryId, otherStoreId);
     const res = await edit({ changes: { upc: 'MATCH-9' }, expected_revision: revision() });
     expect(res.status).toBe(200);
+    expect(readItem().upc).toBe('MATCH-9');
     expect(res.body.other_stores.map((row: any) => row.store_id)).toEqual([otherStoreId]);
   });
 
