@@ -157,7 +157,7 @@ function normalizeImportedCellValue(value: unknown): string | number | boolean {
       return value.text.trim();
     }
   }
-  return String(value);
+  return typeof value === 'bigint' ? value.toString() : (JSON.stringify(value) ?? '');
 }
 
 function readImportedString(value: unknown): string {
@@ -331,14 +331,13 @@ function validateInventoryStrings(values: {
       return `${labels[field]} must be a string`;
     }
   }
-  if (values.upc !== undefined && String(values.upc).length > 128)
-    return 'UPC must be 128 characters or fewer';
-  if (values.unit !== undefined && String(values.unit).length > 50)
-    return 'Unit must be 50 characters or fewer';
-  if (values.tag_names !== undefined && String(values.tag_names).length > 1000)
-    return 'Tags must be 1000 characters or fewer';
-  if (values.image !== undefined && String(values.image).length > 7_000_000)
-    return 'Image payload is too large';
+  // Everything left is a string, null or undefined.
+  const longerThan = (value: unknown, max: number) =>
+    typeof value === 'string' && value.length > max;
+  if (longerThan(values.upc, 128)) return 'UPC must be 128 characters or fewer';
+  if (longerThan(values.unit, 50)) return 'Unit must be 50 characters or fewer';
+  if (longerThan(values.tag_names, 1000)) return 'Tags must be 1000 characters or fewer';
+  if (longerThan(values.image, 7_000_000)) return 'Image payload is too large';
   return null;
 }
 
@@ -590,7 +589,7 @@ inventoryRouter.get(
       // leading tab/CR) as a formula. An item named `=cmd|'/c calc'!A0` would then
       // execute when an owner opens the export. Prefix those cells with a single
       // quote so the spreadsheet renders them as literal text.
-      const csvCell = (v: unknown) => {
+      const csvCell = (v: string | number | null | undefined) => {
         const raw = String(v ?? '');
         const escaped = /^[=+\-@\t\r]/.test(raw) ? `'${raw}` : raw;
         return `"${escaped.replaceAll('"', '""')}"`;

@@ -50,7 +50,7 @@ interface Change {
   images?: { from: string; to: string };
 }
 
-const text = (value: unknown) => (value == null ? '' : String(value));
+const text = (value: string | number | null | undefined) => (value == null ? '' : String(value));
 const shown = (value: string) => value.trim() || '—';
 const numberOrNull = (value: string) => (value.trim() === '' ? null : Number(value));
 

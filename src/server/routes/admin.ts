@@ -12,6 +12,7 @@ import {
   UnsupportedImageTypeError,
   upcVariants,
 } from '../helpers.js';
+import { isEmailShaped } from '../../lib/emailFormat.js';
 import { discardUploads, removeUnreferencedUploads } from '../uploads.js';
 import type { AuthRequest } from '../types.js';
 import { logError } from '../logger.js';
@@ -52,10 +53,6 @@ function requireSuperadmin(req: AuthRequest, res: express.Response, next: expres
 
 function isStoreRole(value: unknown): value is StoreRole {
   return value === 'owner' || value === 'taker';
-}
-
-function isValidEmail(value: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
 function writeAdminLog(details: string, userId: number, storeId: number) {
@@ -589,7 +586,7 @@ adminRouter.post(
     if (normalizedEmail.length > 200) {
       return res.status(400).json({ error: 'Email must be 200 characters or fewer' });
     }
-    if (normalizedEmail && !isValidEmail(normalizedEmail)) {
+    if (normalizedEmail && !isEmailShaped(normalizedEmail)) {
       return res.status(400).json({ error: 'Invalid email address' });
     }
 
@@ -859,7 +856,7 @@ adminRouter.put('/stores/:id', authenticateToken, requireSuperadmin, (req: AuthR
   if (email && email.length > 200) {
     return res.status(400).json({ error: 'Email must be 200 characters or fewer' });
   }
-  if (email && !isValidEmail(email)) {
+  if (email && !isEmailShaped(email)) {
     return res.status(400).json({ error: 'Invalid email address' });
   }
   if (phone && !/^\d{10}$/.test(String(phone).replaceAll(/\D/g, ''))) {

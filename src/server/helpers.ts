@@ -131,17 +131,14 @@ export function uploadFileName(value: string): string {
  * loop while it walks a long list.
  */
 export async function removeUploadedFiles(paths: Iterable<string>): Promise<number> {
-  let removed = 0;
-  for (const value of paths) {
-    if (typeof value !== 'string' || !value.startsWith('/uploads/')) continue;
-    try {
-      await fs.promises.unlink(path.join(UPLOADS_DIR, uploadFileName(value)));
-      removed++;
-    } catch {
-      // Already gone, or never written — nothing to clean up.
-    }
-  }
-  return removed;
+  const owned = [...paths].filter(
+    value => typeof value === 'string' && value.startsWith('/uploads/')
+  );
+  // A rejection means already gone, or never written — nothing to clean up.
+  const results = await Promise.allSettled(
+    owned.map(value => fs.promises.unlink(path.join(UPLOADS_DIR, uploadFileName(value))))
+  );
+  return results.filter(result => result.status === 'fulfilled').length;
 }
 
 // Normalize Google Drive sharing URLs to embeddable thumbnail URLs
@@ -239,6 +236,13 @@ export function searchKey(text: unknown): string {
     .normalize('NFKD')
     .toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, '');
+}
+
+/** Drops every trailing "/" without a regular expression (the pattern backtracks). */
+export function stripTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === '/') end--;
+  return value.slice(0, end);
 }
 
 /** Escapes LIKE metacharacters so "%" and "_" match literally. Pair with LIKE_ESCAPE. */

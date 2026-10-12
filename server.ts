@@ -25,6 +25,7 @@ import express from 'express';
 // schema is ready when routes try to query it.
 import './src/server/db.js';
 import { createApp } from './src/server/app.js';
+import { stripTrailingSlashes } from './src/server/helpers.js';
 import { logError, logInfo, logWarn } from './src/server/logger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -33,7 +34,7 @@ const isProduction = process.env.NODE_ENV === 'production';
 export const PORT = Number.parseInt(process.env.PORT ?? '', 10) || 3000;
 // The public origin phones reach (e.g. https://scan.example.com). Without it the QR link
 // falls back to the tunnel or LAN.
-const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL?.trim().replace(/\/+$/, '') || null;
+const PUBLIC_BASE_URL = stripTrailingSlashes(process.env.PUBLIC_BASE_URL?.trim() ?? '') || null;
 if (PUBLIC_BASE_URL && !PUBLIC_BASE_URL.startsWith('https://')) {
   logWarn('startup', 'PUBLIC_BASE_URL is not HTTPS; phone cameras will not open on it', {
     publicBaseUrl: PUBLIC_BASE_URL,

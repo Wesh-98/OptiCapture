@@ -19,6 +19,7 @@ import {
   toSqliteUtc,
   UnsupportedImageTypeError,
 } from '../helpers.js';
+import { isEmailShaped } from '../../lib/emailFormat.js';
 import type { AuthRequest } from '../types.js';
 import { logError } from '../logger.js';
 import { discardUploads } from '../uploads.js';
@@ -174,12 +175,10 @@ authRouter.post(
         .all(normalizedUsername, store.id) as any[];
 
       if (matchingUsers.length > 1) {
-        const matchedUsers: any[] = [];
-        for (const candidate of matchingUsers) {
-          const matchesPassword = await bcrypt.compare(password, candidate.password ?? DUMMY_HASH);
-          if (!matchesPassword) continue;
-          matchedUsers.push(candidate);
-        }
+        const passwordChecks = await Promise.all(
+          matchingUsers.map(candidate => bcrypt.compare(password, candidate.password ?? DUMMY_HASH))
+        );
+        const matchedUsers = matchingUsers.filter((_, index) => passwordChecks[index]);
 
         if (matchedUsers.length > 1) {
           return res.status(409).json({
@@ -428,7 +427,7 @@ authRouter.post(
       return res.status(400).json({
         error: 'Password must be at least 8 characters with 1 uppercase letter and 1 number',
       });
-    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+    if (email && !isEmailShaped(email))
       return res.status(400).json({ error: 'Invalid email address' });
     if (phone && !/^\d{10}$/.test(phone.replaceAll(/\D/g, '')))
       return res.status(400).json({ error: 'Phone must be 10 digits' });
@@ -694,7 +693,7 @@ authRouter.put('/store/settings', authenticateToken, requireOwner, (req: AuthReq
     return res.status(400).json({ error: 'City/Town must be 100 characters or fewer' });
   if (email && email.length > 200)
     return res.status(400).json({ error: 'Email must be 200 characters or fewer' });
-  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+  if (email && !isEmailShaped(email))
     return res.status(400).json({ error: 'Invalid email address' });
   if (phone && !/^\d{10}$/.test(phone.replaceAll(/\D/g, '')))
     return res.status(400).json({ error: 'Phone must be 10 digits' });

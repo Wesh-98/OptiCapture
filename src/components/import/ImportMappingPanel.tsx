@@ -18,7 +18,7 @@ import {
   isIdentifierDestination,
   projectMappedRow,
 } from './mapping';
-import type { MappingIssue } from './mapping';
+import { cellText, type MappingIssue } from './mapping';
 import { DEST_FIELDS, IDENTIFIER_DESTINATIONS } from './types';
 import type { DestinationField, RowData, SheetData } from './types';
 
@@ -116,9 +116,7 @@ function MappingIssueNotices({ issues }: Readonly<{ issues: MappingIssue[] }>) {
 
 function readCellAsLabel(row: RowData, header: string): string | null {
   const value = row[header];
-  if (value === null || value === undefined) return null;
-
-  const label = String(value).trim();
+  const label = cellText(value).trim();
   return label.length > 0 ? label : null;
 }
 
@@ -401,14 +399,14 @@ export function ImportMappingPanel({
                 const currentValue = activeSheet.mapping[header] ?? '__ignore__';
                 const sampleValue = activeSheet.preview
                   .map(row => row[header])
-                  .find(value => value !== null && value !== undefined && String(value).trim());
+                  .find(value => cellText(value).trim());
 
                 return (
                   <tr key={header} className="hover:bg-slate-50">
                     <td className="px-4 py-2.5">
                       <p className="font-mono text-sm text-slate-700">{header}</p>
                       <p className="mt-0.5 max-w-[280px] truncate text-xs text-slate-400">
-                        Example: {sampleValue === undefined ? '-' : String(sampleValue)}
+                        Example: {sampleValue === undefined ? '-' : cellText(sampleValue)}
                       </p>
                     </td>
                     <td className="border-x border-slate-200 bg-slate-50/70 px-2 py-2.5 text-center">
@@ -492,18 +490,16 @@ export function ImportMappingPanel({
               <tbody>
                 {activeSheet.preview.map((row, index) => (
                   <tr
-                    key={
-                      activeSheet.headers.map(header => String(row[header] ?? '')).join('|') + index
-                    }
+                    key={activeSheet.headers.map(header => cellText(row[header])).join('|') + index}
                     className="border-t border-slate-100"
                   >
                     {activeSheet.headers.map(header => (
                       <td
                         key={header}
                         className="max-w-[180px] truncate px-3 py-2 text-slate-600 whitespace-nowrap"
-                        title={String(row[header] ?? '')}
+                        title={cellText(row[header])}
                       >
-                        {String(row[header] ?? '') || '-'}
+                        {cellText(row[header]) || '-'}
                       </td>
                     ))}
                   </tr>

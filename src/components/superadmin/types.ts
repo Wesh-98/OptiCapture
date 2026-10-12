@@ -1,3 +1,5 @@
+import { isEmailShaped } from '../../lib/emailFormat';
+
 export interface StoreRow {
   id: number;
   name: string;
@@ -30,4 +32,4 @@ export type StoreStatusFilter = 'all' | 'active' | 'suspended';
 
 export const validateZipcode = (v: string) => !v || /^\d{5}(-\d{4})?$/.test(v);
 export const validatePhone = (v: string) => !v || /^\d{10}$/.test(v.replaceAll(/\D/g, ''));
-export const validateEmail = (v: string) => !v || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+export const validateEmail = (v: string) => !v || isEmailShaped(v);
