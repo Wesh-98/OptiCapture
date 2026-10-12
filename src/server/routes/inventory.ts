@@ -744,14 +744,19 @@ function newItemTextError(body: any): string | null {
   return null;
 }
 
-function parseNewItemNumbers(
-  body: any
-): { error: string } | { quantity: number | null; salePrice: number | null; tax: number | null } {
+interface ItemNumbers {
+  quantity: number | null;
+  salePrice: number | null;
+  tax: number | null;
+}
+
+/** `quantityFallback` is the quantity of a new item that names none; an update has no fallback. */
+function parseItemNumbers(body: any, quantityFallback?: number): { error: string } | ItemNumbers {
   if (body.quantity === null) return { error: 'quantity must be a number' };
   const quantity = parseInventoryNumber(body.quantity, 'quantity', {
     integer: true,
     max: 1_000_000,
-    fallback: 0,
+    fallback: quantityFallback,
   });
   if (quantity.error) return { error: quantity.error };
   const salePrice = parseInventoryNumber(body.sale_price, 'sale_price', { max: 1_000_000 });
@@ -783,7 +788,7 @@ inventoryRouter.post(
 
     const textError = newItemTextError(req.body);
     if (textError) return res.status(400).json({ error: textError });
-    const numbers = parseNewItemNumbers(req.body);
+    const numbers = parseItemNumbers(req.body, 0);
     if ('error' in numbers) return res.status(400).json({ error: numbers.error });
     const attributeError = newItemAttributeError(req.body, user.store_id);
     if (attributeError) return res.status(400).json({ error: attributeError });
@@ -916,71 +921,182 @@ export function itemRevision(row: object): string {
   return createHash('sha256').update(JSON.stringify(values)).digest('hex').slice(0, 24);
 }
 
+type ItemUpdateResult = { status: number; body: Record<string, unknown> };
+
+/** How each plain column's value is read from an update. A column the body omits is left alone. */
+const UPDATE_COLUMNS: Record<string, (value: any, numbers: ItemNumbers) => unknown> = {
+  item_name: value => value.trim(),
+  quantity: (_value, numbers) => numbers.quantity,
+  category_id: categoryIdOrNull,
+  status: value => value,
+  unit: value => (value === '' || value === null ? null : String(value)),
+  sale_price: (_value, numbers) => numbers.salePrice,
+  tax_percent: (_value, numbers) => numbers.tax,
+  description: value => value || null,
+  tag_names: value => value || null,
+  upc: value => (value === null ? null : String(value).trim() || null),
+};
+
+function updateTextError(body: Record<string, any>): string | null {
+  const { item_name, description } = body;
+  // An edit that names no field used to answer 200 and write an "Updated item" audit row.
+  if (body.image === undefined && Object.keys(UPDATE_COLUMNS).every(c => body[c] === undefined))
+    return 'Nothing to change';
+  // Reject blank strings — the POST route already guards this but PUT skipped the trim check
+  if (
+    item_name !== undefined &&
+    (typeof item_name !== 'string' || item_name.trim().length === 0 || item_name.length > 500)
+  )
+    return 'Item name must be a non-empty string of 500 characters or fewer';
+  if (description !== undefined && description !== null && typeof description !== 'string')
+    return 'Description must be a string';
+  if (description && description.length > 2000)
+    return 'Description must be 2000 characters or fewer';
+  return null;
+}
+
+function updateAttributeError(
+  body: Record<string, any>,
+  storeId: number | undefined
+): string | null {
+  const { upc, unit, tag_names, image, status, category_id } = body;
+  const stringError = validateInventoryStrings({ upc, unit, tag_names, image });
+  if (stringError) return stringError;
+  if (status !== undefined && !['Active', 'Inactive'].includes(status))
+    return 'status must be Active or Inactive';
+  if (!isCategoryInStore(category_id, storeId)) return 'Invalid category';
+  return null;
+}
+
+// A UPC can be changed but not removed: scans, import matching and the cross-store view
+// all find the item by it. Items that never had one can still be edited without one.
+function upcChangeError(
+  upc: unknown,
+  currentUpc: string | null,
+  itemId: unknown,
+  storeId: number | undefined
+): ItemUpdateResult | null {
+  const newUpc = typeof upc === 'string' ? upc.trim() : '';
+  if (upc !== undefined && currentUpc?.trim() && !newUpc) {
+    return { status: 400, body: { error: 'UPC can be changed but not removed' } };
+  }
+  if (!newUpc) return null;
+  const holder = findItemIdByUpc(newUpc, storeId);
+  if (holder !== null && holder !== Number(itemId)) {
+    return { status: 409, body: { error: 'An item with that UPC already exists' } };
+  }
+  return null;
+}
+
+// Builds the SET list from the fields the client sent. A new image is written to disk here,
+// before the update runs; `createdUpload` names that file so it can be removed if the update
+// then fails and no row points at it.
+function buildItemUpdate(body: Record<string, any>, numbers: ItemNumbers) {
+  const assignments = ['updated_at = CURRENT_TIMESTAMP'];
+  const values: unknown[] = [];
+  const assign = (column: string, value: unknown) => {
+    assignments.push(`${column} = ?`);
+    values.push(value);
+  };
+
+  for (const [column, toValue] of Object.entries(UPDATE_COLUMNS)) {
+    if (body[column] !== undefined) assign(column, toValue(body[column], numbers));
+  }
+  let createdUpload: string | null = null;
+  if (body.image !== undefined) {
+    const normalizedImage = body.image ? normalizeImageUrl(String(body.image)) : null;
+    const savedImage = normalizedImage ? saveBase64Image(normalizedImage) : null;
+    createdUpload =
+      normalizedImage && savedImage ? savedUploadPath(normalizedImage, savedImage) : null;
+    assign('image', savedImage);
+  }
+  return { assignments, values, createdUpload };
+}
+
+// Runs the UPDATE and its log line in one transaction and returns the rows changed.
+// 0 changes means either the id doesn't exist or it belongs to a different
+// store. The caller answers 404 either way — this prevents cross-tenant writes from
+// silently succeeding with a 200 while actually touching nothing.
+function applyItemUpdate(
+  target: { itemId: unknown; storeId: number | undefined; userId: number },
+  update: { assignments: string[]; values: unknown[] },
+  defaultDetails: string,
+  options: ItemUpdateOptions
+): number {
+  const { itemId, storeId, userId } = target;
+  return db.transaction(() => {
+    // Read inside the transaction so the conflict check and the "before" values
+    // describe exactly the row this update replaces.
+    const before =
+      options.describe || options.expectedRevision !== undefined
+        ? readItemSnapshot(itemId, storeId)
+        : undefined;
+    if (
+      options.expectedRevision !== undefined &&
+      before &&
+      itemRevision(before) !== options.expectedRevision
+    ) {
+      throw new ItemUpdateConflict();
+    }
+    const r = db
+      .prepare(
+        `UPDATE inventory
+           SET ${update.assignments.join(', ')}
+           WHERE id = ? AND store_id = ?`
+      )
+      .run(...update.values, itemId, storeId);
+    if (r.changes === 0) return 0;
+
+    let details = defaultDetails;
+    if (options.describe && before) {
+      const after = readItemSnapshot(itemId, storeId);
+      const described = after ? options.describe(before, after) : null;
+      if (described === null) throw new ItemUpdateNoChange();
+      details = described;
+    }
+    db.prepare('INSERT INTO logs (action, details, user_id, store_id) VALUES (?, ?, ?, ?)').run(
+      'UPDATE',
+      details,
+      userId,
+      storeId
+    );
+    return r.changes;
+  })();
+}
+
+function itemUpdateFailure(err: any, itemId: unknown): ItemUpdateResult {
+  if (err instanceof ItemUpdateConflict) {
+    return {
+      status: 409,
+      body: { error: 'This item was changed since you opened it. Reload it and try again.' },
+    };
+  }
+  if (err instanceof ItemUpdateNoChange)
+    return { status: 400, body: { error: 'Nothing to change' } };
+  if (err instanceof UnsupportedImageTypeError)
+    return { status: 400, body: { error: err.message } };
+  if (err.message?.includes('UNIQUE')) {
+    return { status: 409, body: { error: 'An item with that UPC or number already exists' } };
+  }
+  logError('inventory:update', err, 'Failed to update inventory item', { itemId });
+  return { status: 500, body: { error: 'An internal error occurred' } };
+}
+
 export function updateInventoryItem(
   storeId: number | undefined,
   userId: number,
   itemId: unknown,
   body: Record<string, any>,
   options: ItemUpdateOptions = {}
-): { status: number; body: Record<string, unknown> } {
-  const {
-    item_name,
-    quantity,
-    category_id,
-    status,
-    unit,
-    sale_price,
-    tax_percent,
-    description,
-    tag_names,
-    image,
-    upc,
-  } = body;
+): ItemUpdateResult {
   const bad = (error: string) => ({ status: 400, body: { error } });
 
-  // An edit that names no field used to answer 200 and write an "Updated item" audit row.
-  if (
-    [
-      item_name,
-      quantity,
-      category_id,
-      status,
-      unit,
-      sale_price,
-      tax_percent,
-      description,
-      tag_names,
-      image,
-      upc,
-    ].every(value => value === undefined)
-  )
-    return bad('Nothing to change');
-
-  // Reject blank strings — the POST route already guards this but PUT skipped the trim check
-  if (
-    item_name !== undefined &&
-    (typeof item_name !== 'string' || item_name.trim().length === 0 || item_name.length > 500)
-  )
-    return bad('Item name must be a non-empty string of 500 characters or fewer');
-  if (description !== undefined && description !== null && typeof description !== 'string')
-    return bad('Description must be a string');
-  if (description && description.length > 2000)
-    return bad('Description must be 2000 characters or fewer');
-  if (quantity === null) return bad('quantity must be a number');
-  const quantityValue = parseInventoryNumber(quantity, 'quantity', {
-    integer: true,
-    max: 1_000_000,
-  });
-  if (quantityValue.error) return bad(quantityValue.error);
-  const salePriceValue = parseInventoryNumber(sale_price, 'sale_price', { max: 1_000_000 });
-  if (salePriceValue.error) return bad(salePriceValue.error);
-  const taxValue = parseInventoryNumber(tax_percent, 'tax_percent', { max: 100 });
-  if (taxValue.error) return bad(taxValue.error);
-  const stringError = validateInventoryStrings({ upc, unit, tag_names, image });
-  if (stringError) return bad(stringError);
-  if (status !== undefined && !['Active', 'Inactive'].includes(status))
-    return bad('status must be Active or Inactive');
-  if (!isCategoryInStore(category_id, storeId)) return bad('Invalid category');
+  const textError = updateTextError(body);
+  if (textError) return bad(textError);
+  const numbers = parseItemNumbers(body);
+  if ('error' in numbers) return bad(numbers.error);
+  const attributeError = updateAttributeError(body, storeId);
+  if (attributeError) return bad(attributeError);
 
   const existingItem = db
     .prepare('SELECT item_name, upc, image FROM inventory WHERE id = ? AND store_id = ?')
@@ -988,119 +1104,31 @@ export function updateInventoryItem(
     | { item_name: string; upc: string | null; image: string | null }
     | undefined;
   if (!existingItem) return { status: 404, body: { error: 'Item not found' } };
-  // A UPC can be changed but not removed: scans, import matching and the cross-store view
-  // all find the item by it. Items that never had one can still be edited without one.
-  if (upc !== undefined && existingItem.upc?.trim() && !(typeof upc === 'string' && upc.trim()))
-    return bad('UPC can be changed but not removed');
-  if (typeof upc === 'string' && upc.trim()) {
-    const holder = findItemIdByUpc(upc.trim(), storeId);
-    if (holder !== null && holder !== Number(itemId)) {
-      return { status: 409, body: { error: 'An item with that UPC already exists' } };
-    }
-  }
+  const upcError = upcChangeError(body.upc, existingItem.upc, itemId, storeId);
+  if (upcError) return upcError;
 
-  // A new image is written to disk before the update runs. If the update then fails, no row
-  // points at that file, so it is removed rather than left behind.
   let createdUpload: string | null = null;
   const discardUpload = () => {
     if (createdUpload) void removeUploadedFiles([createdUpload]);
   };
 
   try {
-    const assignments = ['updated_at = CURRENT_TIMESTAMP'];
-    const values: unknown[] = [];
-    const assign = (column: string, value: unknown) => {
-      assignments.push(`${column} = ?`);
-      values.push(value);
-    };
-
-    if (item_name !== undefined) assign('item_name', item_name.trim());
-    if (quantity !== undefined) assign('quantity', quantityValue.value);
-    if (category_id !== undefined)
-      assign(
-        'category_id',
-        category_id === '' || category_id === null ? null : Number(category_id)
-      );
-    if (status !== undefined) assign('status', status);
-    if (unit !== undefined) assign('unit', unit === '' || unit === null ? null : String(unit));
-    if (sale_price !== undefined) assign('sale_price', salePriceValue.value);
-    if (tax_percent !== undefined) assign('tax_percent', taxValue.value);
-    if (description !== undefined) assign('description', description || null);
-    if (tag_names !== undefined) assign('tag_names', tag_names || null);
-    if (image !== undefined) {
-      const normalizedImage = image ? normalizeImageUrl(String(image)) : null;
-      const savedImage = normalizedImage ? saveBase64Image(normalizedImage) : null;
-      createdUpload =
-        normalizedImage && savedImage ? savedUploadPath(normalizedImage, savedImage) : null;
-      assign('image', savedImage);
-    }
-    if (upc !== undefined) assign('upc', upc === null ? null : String(upc).trim() || null);
-    // 0 changes means either the id doesn't exist or it belongs to a different
-    // store. Return 404 either way — this prevents cross-tenant writes from
-    // silently succeeding with a 200 while actually touching nothing.
-    const changes = db.transaction(() => {
-      // Read inside the transaction so the conflict check and the "before" values
-      // describe exactly the row this update replaces.
-      const before =
-        options.describe || options.expectedRevision !== undefined
-          ? readItemSnapshot(itemId, storeId)
-          : undefined;
-      if (
-        options.expectedRevision !== undefined &&
-        before &&
-        itemRevision(before) !== options.expectedRevision
-      ) {
-        throw new ItemUpdateConflict();
-      }
-      const r = db
-        .prepare(
-          `UPDATE inventory
-           SET ${assignments.join(', ')}
-           WHERE id = ? AND store_id = ?`
-        )
-        .run(...values, itemId, storeId);
-      if (r.changes > 0) {
-        let details = `Updated item "${item_name?.trim() || existingItem.item_name}"`;
-        if (options.describe && before) {
-          const after = readItemSnapshot(itemId, storeId);
-          const described = after ? options.describe(before, after) : null;
-          if (described === null) throw new ItemUpdateNoChange();
-          details = described;
-        }
-        db.prepare('INSERT INTO logs (action, details, user_id, store_id) VALUES (?, ?, ?, ?)').run(
-          'UPDATE',
-          details,
-          userId,
-          storeId
-        );
-      }
-      return r.changes;
-    })();
-
+    const update = buildItemUpdate(body, numbers);
+    createdUpload = update.createdUpload;
+    const defaultDetails = `Updated item "${body.item_name?.trim() || existingItem.item_name}"`;
+    const changes = applyItemUpdate({ itemId, storeId, userId }, update, defaultDetails, options);
     if (changes === 0) {
       discardUpload();
       return { status: 404, body: { error: 'Item not found' } };
     }
 
     // A replaced or cleared image is removed unless something still points at it.
-    if (image !== undefined) discardUploads([existingItem.image]);
+    if (body.image !== undefined) discardUploads([existingItem.image]);
 
     return { status: 200, body: { success: true } };
   } catch (err: any) {
     discardUpload();
-    if (err instanceof ItemUpdateConflict) {
-      return {
-        status: 409,
-        body: { error: 'This item was changed since you opened it. Reload it and try again.' },
-      };
-    }
-    if (err instanceof ItemUpdateNoChange) return bad('Nothing to change');
-    if (err instanceof UnsupportedImageTypeError) return bad(err.message);
-    if (err.message?.includes('UNIQUE')) {
-      return { status: 409, body: { error: 'An item with that UPC or number already exists' } };
-    }
-    logError('inventory:update', err, 'Failed to update inventory item', { itemId });
-    return { status: 500, body: { error: 'An internal error occurred' } };
+    return itemUpdateFailure(err, itemId);
   }
 }
 
