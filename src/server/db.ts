@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
-import { normalizeImageUrl } from './helpers.js';
+import { normalizeImageUrl, searchKey } from './helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // DATABASE_PATH env var overrides the default file path.
@@ -18,6 +18,8 @@ db.pragma('journal_mode = WAL');
 db.pragma('busy_timeout = 5000');
 // SQLite disables foreign key enforcement by default — enable it per-connection
 db.pragma('foreign_keys = ON');
+// Item search matches on text with spaces and punctuation removed (see searchCondition)
+db.function('search_key', { deterministic: true }, searchKey);
 
 // Audit log retention — delete entries older than 90 days; run on startup and daily
 export function pruneAuditLogs() {

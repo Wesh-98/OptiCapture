@@ -13,6 +13,7 @@ import {
   firstQueryValue,
   removeUploadedFiles,
   savedUploadPath,
+  searchCondition,
   upcVariants,
   UnsupportedImageTypeError,
 } from '../helpers.js';
@@ -440,15 +441,9 @@ export function listStoreInventory(
   }
 
   if (q) {
-    // Escape LIKE metacharacters so user input like "%" or "_" matches literally
-    const escaped = String(q)
-      .toLowerCase()
-      .replace(/[%_\\]/g, '\\$&');
-    const pattern = `%${escaped}%`;
-    conditions.push(
-      "(LOWER(i.item_name) LIKE ? ESCAPE '\\' OR LOWER(i.upc) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(c.name,'')) LIKE ? ESCAPE '\\')"
-    );
-    params.push(pattern, pattern, pattern);
+    const text = searchCondition(['i.item_name', 'i.upc', 'c.name', 'i.tag_names'], String(q));
+    conditions.push(text.sql);
+    params.push(...text.params);
   }
 
   const from = `FROM inventory i LEFT JOIN categories c ON i.category_id = c.id WHERE ${conditions.join(' AND ')}`;

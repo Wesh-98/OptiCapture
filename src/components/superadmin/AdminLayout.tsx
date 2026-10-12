@@ -104,6 +104,14 @@ export function AdminLayout({ onLogout, children, bare = false }: Readonly<Props
       active: location.pathname === '/admin/recent',
     },
     {
+      key: 'search',
+      label: 'Search items',
+      icon: Search,
+      // From a store's pages it opens already limited to that store.
+      to: onStorePage ? `/admin/search?store=${viewedStoreId}` : '/admin/search',
+      active: location.pathname === '/admin/search',
+    },
+    {
       key: 'inventory',
       label: 'Store inventory',
       icon: Package,

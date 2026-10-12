@@ -231,6 +231,34 @@ export function toIsoUtc(value: unknown): unknown {
   return Number.isNaN(ms) ? value : new Date(ms).toISOString();
 }
 
+// Search compares text with case, accents, spaces and punctuation removed, so "coca cola",
+// "Coca-Cola" and "cocacola" all find each other. SQLite calls it as search_key() (db.ts).
+export function searchKey(text: unknown): string {
+  if (typeof text !== 'string' && typeof text !== 'number') return '';
+  return String(text)
+    .normalize('NFKD')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, '');
+}
+
+/** A WHERE fragment, with its parameters, matching `q` anywhere in any of `columns`. */
+export function searchCondition(columns: string[], q: string): { sql: string; params: string[] } {
+  const key = searchKey(q);
+  if (key) {
+    return {
+      sql: `(${columns.map(column => `instr(search_key(${column}), ?) > 0`).join(' OR ')})`,
+      params: columns.map(() => key),
+    };
+  }
+  // Only punctuation was typed, so look for it as written. Escape LIKE metacharacters so
+  // "%" and "_" match literally.
+  const pattern = `%${q.toLowerCase().replace(/[%_\\]/g, '\\$&')}%`;
+  return {
+    sql: `(${columns.map(column => `LOWER(COALESCE(${column}, '')) LIKE ? ESCAPE '\\'`).join(' OR ')})`,
+    params: columns.map(() => pattern),
+  };
+}
+
 // UPC/EAN barcodes sometimes arrive with or without a leading zero.
 // EAN-13 = 13 digits; UPC-A = 12 digits (EAN-13 with leading 0 dropped).
 // Try both variants so a scan of "012345678905" also matches "12345678905".

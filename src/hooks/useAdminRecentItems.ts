@@ -35,7 +35,7 @@ export const RECENT_PAGE_SIZE = 50;
 export const STORE_PARAM = 'store';
 const DAYS_PARAM = 'days';
 
-function parseStore(raw: string | null): number | null {
+export function parseStore(raw: string | null): number | null {
   return raw && /^\d+$/.test(raw) && Number(raw) > 0 ? Number(raw) : null;
 }
 
