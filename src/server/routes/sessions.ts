@@ -67,7 +67,7 @@ function getSessionAccessError(
   const store = db.prepare('SELECT status FROM stores WHERE id = ?').get(sessionStoreId) as
     | { status: string }
     | undefined;
-  if (!store || store.status !== 'active') {
+  if (store?.status !== 'active') {
     return { error: 'Store account suspended', status: 403 };
   }
 
@@ -144,7 +144,9 @@ function stagedUploads(sessionId: string, itemId?: string): string[] {
   const rows = (
     itemId === undefined
       ? db
-          .prepare("SELECT image FROM session_items WHERE session_id = ? AND image LIKE '/uploads/%'")
+          .prepare(
+            "SELECT image FROM session_items WHERE session_id = ? AND image LIKE '/uploads/%'"
+          )
           .all(sessionId)
       : db
           .prepare(
@@ -797,7 +799,7 @@ sessionsRouter.patch('/session/:id/items/:itemId', authenticateToken, (req: Auth
   const barcodeInvalid = isValidGtin(resultingUpc) === false;
   // Coerce sale_price to a non-negative finite number — raw strings like "9.99abc"
   // would otherwise be stored as text and silently evaluate to 0 at commit time.
-  const rawPrice = sale_price != null ? Number.parseFloat(String(sale_price)) : NaN;
+  const rawPrice = sale_price != null ? Number.parseFloat(String(sale_price)) : Number.NaN;
   const sanitizedPrice = Number.isFinite(rawPrice) && rawPrice >= 0 ? rawPrice : null;
   const rawImage = typeof image === 'string' ? image.trim() : '';
 

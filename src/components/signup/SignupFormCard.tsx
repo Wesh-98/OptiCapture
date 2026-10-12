@@ -32,7 +32,7 @@ export function SignupFormCard({
   onPhoneChange,
   onSubmit,
   onZipcodeChange,
-}: SignupFormCardProps) {
+}: Readonly<SignupFormCardProps>) {
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
       <div className="mb-6">

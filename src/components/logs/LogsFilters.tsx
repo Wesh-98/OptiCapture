@@ -36,7 +36,7 @@ export function LogsFilters({
   onSearchChange,
   onSelectActionFilter,
   onToggleFilter,
-}: LogsFiltersProps) {
+}: Readonly<LogsFiltersProps>) {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">

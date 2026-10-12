@@ -25,12 +25,16 @@ export const item = {
 
 /** Stubs fetch so the store list and any item list answer; returns the mock. */
 export function stubItemListFetch(items = [item]) {
-  const fetchMock = vi.fn(async (url: string) => ({
-    ok: true,
-    status: 200,
-    json: async () =>
-      url.startsWith('/api/admin/stores') ? stores : { items, total: items.length, page: 1 },
-  }));
+  const fetchMock = vi.fn((url: string) =>
+    Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve(
+          url.startsWith('/api/admin/stores') ? stores : { items, total: items.length, page: 1 }
+        ),
+    })
+  );
   vi.stubGlobal('fetch', fetchMock);
   return fetchMock;
 }

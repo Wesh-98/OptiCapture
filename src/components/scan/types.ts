@@ -49,4 +49,6 @@ export interface Toast {
   message: string;
 }
 
+export type SessionStatus = 'active' | 'draft' | 'completed';
+
 export type UiStatus = 'idle' | 'loading' | 'ready' | 'error' | 'committing';

@@ -12,7 +12,7 @@ import OneDReader from '@zxing/library/esm/core/oned/OneDReader.js';
 const FALLBACK_SCAN_INTERVAL_MS = 150;
 
 class StoreBarcodeReader extends OneDReader {
-  private readers: Array<{ decodeRow: (...args: any[]) => any; reset: () => void }> = [];
+  private readonly readers: Array<{ decodeRow: (...args: any[]) => any; reset: () => void }> = [];
 
   constructor(hints?: Map<any, any>) {
     super();
@@ -42,9 +42,11 @@ class StoreBarcodeReader extends OneDReader {
     }
 
     if (this.readers.length === 0) {
-      this.readers.push(new MultiFormatUPCEANReader(hints));
-      this.readers.push(new Code39Reader(useCode39CheckDigit, useCode39ExtendedMode));
-      this.readers.push(new Code128Reader());
+      this.readers.push(
+        new MultiFormatUPCEANReader(hints),
+        new Code39Reader(useCode39CheckDigit, useCode39ExtendedMode),
+        new Code128Reader()
+      );
     }
   }
 

@@ -1,12 +1,12 @@
 import { useState } from 'react';
-import type { InventoryItem, ItemForm } from '../components/dashboard/types';
+import type { CategoryStatusFilter, InventoryItem, ItemForm } from '../components/dashboard/types';
 import { emptyForm } from '../components/dashboard/types';
 import { readFileAsDataUrl } from '../lib/imageUpload';
 
 export function useItemManagement(
   viewMode: 'categories' | 'items',
   selectedCategoryId: number | null,
-  selectedStatus: '' | 'Active' | 'Inactive',
+  selectedStatus: CategoryStatusFilter,
   onStatsChange: () => void,
   addToast: (type: 'success' | 'error' | 'warning', message: string) => void
 ) {

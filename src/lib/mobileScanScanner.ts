@@ -61,15 +61,13 @@ let scannerDependenciesPromise: Promise<{
 }> | null = null;
 
 async function loadScannerDependencies() {
-  if (!scannerDependenciesPromise) {
-    scannerDependenciesPromise = import('./zxingStoreScanner').then(scanner => ({
-      BrowserStoreBarcodeReader: scanner.BrowserStoreBarcodeReader as unknown as new (
-        hints?: Map<unknown, unknown>
-      ) => ScannerReader,
-      BarcodeFormat: scanner.BarcodeFormat as Record<string, unknown>,
-      DecodeHintType: scanner.DecodeHintType as Record<string, unknown>,
-    }));
-  }
+  scannerDependenciesPromise ??= import('./zxingStoreScanner').then(scanner => ({
+    BrowserStoreBarcodeReader: scanner.BrowserStoreBarcodeReader as unknown as new (
+      hints?: Map<unknown, unknown>
+    ) => ScannerReader,
+    BarcodeFormat: scanner.BarcodeFormat as Record<string, unknown>,
+    DecodeHintType: scanner.DecodeHintType as Record<string, unknown>,
+  }));
 
   return scannerDependenciesPromise;
 }

@@ -25,14 +25,14 @@ export default function SuperAdmin() {
 
   // Selected store IDs. The live selection is read through the current store list, so a
   // store that is deleted or refreshed away stops counting as selected.
-  const [rawSelectedIds, setSelectedIds] = useState<ReadonlySet<number>>(new Set());
+  const [rawSelectedIds, setRawSelectedIds] = useState<ReadonlySet<number>>(new Set());
   const selectedIds = useMemo<ReadonlySet<number>>(
     () => new Set(admin.stores.map(store => store.id).filter(id => rawSelectedIds.has(id))),
     [admin.stores, rawSelectedIds]
   );
 
   const toggleStore = (id: number) =>
-    setSelectedIds(prev => {
+    setRawSelectedIds(prev => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -40,7 +40,7 @@ export default function SuperAdmin() {
     });
 
   const toggleAllVisible = () =>
-    setSelectedIds(prev => {
+    setRawSelectedIds(prev => {
       const visible = admin.filteredStores.map(store => store.id);
       const next = new Set(prev);
       if (visible.every(id => prev.has(id))) visible.forEach(id => next.delete(id));
@@ -93,7 +93,7 @@ export default function SuperAdmin() {
           selectedIds={selectedIds}
           onToggleStore={toggleStore}
           onToggleAll={toggleAllVisible}
-          onClearSelection={() => setSelectedIds(new Set())}
+          onClearSelection={() => setRawSelectedIds(new Set())}
         />
       </div>
 

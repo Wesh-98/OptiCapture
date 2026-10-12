@@ -10,7 +10,7 @@ import {
   ScanBarcode,
 } from 'lucide-react';
 import { cn, formatServerTime } from '../../lib/utils';
-import type { SessionItem, UiStatus } from './types';
+import type { SessionItem, SessionStatus, UiStatus } from './types';
 
 function StatusBadge({ item }: Readonly<{ item: SessionItem }>) {
   if (item.exists_in_inventory === 1) {
@@ -67,7 +67,7 @@ interface Props {
   selectedIds: Set<number>;
   uiStatus: UiStatus;
   statusMessage: string;
-  sessionStatus: 'active' | 'draft' | 'completed' | null;
+  sessionStatus: SessionStatus | null;
   sessionLabel: string | null;
   pollError: string | null;
   draftAlert: { message: string; visible: boolean };

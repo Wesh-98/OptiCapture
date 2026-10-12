@@ -13,7 +13,7 @@ export function ResetPasswordModal({
   tempPassword,
   prefersReducedMotion,
   onClose,
-}: Props) {
+}: Readonly<Props>) {
   return (
     <AnimatePresence>
       <motion.div

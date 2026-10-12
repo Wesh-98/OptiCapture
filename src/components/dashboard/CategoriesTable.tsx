@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { Package, MoreHorizontal, Eye, EyeOff, Pencil, Trash2, AlertTriangle } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import type { Category } from './types';
+import type { Category, CategoryStatusFilter } from './types';
 import { iconMap, colorMap } from './types';
 import type { PendingCategoryAction } from '../../hooks/useCategoryManagement';
 import {
@@ -14,7 +14,7 @@ import {
 interface Props {
   categories: Category[];
   search: string;
-  statusFilter: '' | 'Active' | 'Inactive';
+  statusFilter: CategoryStatusFilter;
   isOwner: boolean;
   activeActionMenu: number | null;
   setActiveActionMenu: (id: number | null) => void;
@@ -58,8 +58,7 @@ export function CategoriesTable({
   // but the open-menu and armed state live above this table and would outlive it: the page
   // would keep an invisible click-catcher, and the row would come back already armed,
   // skipping the arming step. Close and disarm as soon as the row is gone.
-  const openRowGone =
-    activeActionMenu !== null && !filtered.some(c => c.id === activeActionMenu);
+  const openRowGone = activeActionMenu !== null && !filtered.some(c => c.id === activeActionMenu);
   useEffect(() => {
     if (!openRowGone) return;
     setActiveActionMenu(null);
@@ -163,9 +162,7 @@ export function CategoriesTable({
                       <Eye size={18} />
                     </button>
                     <button
-                      onClick={() =>
-                        dispatchMenuEvent({ type: 'toggleMenu', categoryId: cat.id })
-                      }
+                      onClick={() => dispatchMenuEvent({ type: 'toggleMenu', categoryId: cat.id })}
                       className="p-2 hover:bg-slate-200 rounded-full text-slate-400 hover:text-navy-900 transition-colors"
                       title="More actions"
                     >

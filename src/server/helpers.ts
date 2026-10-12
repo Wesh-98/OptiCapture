@@ -241,22 +241,24 @@ export function searchKey(text: unknown): string {
     .replace(/[^\p{L}\p{N}]+/gu, '');
 }
 
+/** Escapes LIKE metacharacters so "%" and "_" match literally. Pair with LIKE_ESCAPE. */
+export function escapeLike(value: string): string {
+  return value.replace(/[%_\\]/g, String.raw`\$&`);
+}
+
+export const LIKE_ESCAPE = String.raw`ESCAPE '\'`;
+
 /** A WHERE fragment, with its parameters, matching `q` anywhere in any of `columns`. */
 export function searchCondition(columns: string[], q: string): { sql: string; params: string[] } {
   const key = searchKey(q);
   if (key) {
-    return {
-      sql: `(${columns.map(column => `instr(search_key(${column}), ?) > 0`).join(' OR ')})`,
-      params: columns.map(() => key),
-    };
+    const matches = columns.map(column => `instr(search_key(${column}), ?) > 0`);
+    return { sql: `(${matches.join(' OR ')})`, params: columns.map(() => key) };
   }
-  // Only punctuation was typed, so look for it as written. Escape LIKE metacharacters so
-  // "%" and "_" match literally.
-  const pattern = `%${q.toLowerCase().replace(/[%_\\]/g, '\\$&')}%`;
-  return {
-    sql: `(${columns.map(column => `LOWER(COALESCE(${column}, '')) LIKE ? ESCAPE '\\'`).join(' OR ')})`,
-    params: columns.map(() => pattern),
-  };
+  // Only punctuation was typed, so look for it as written.
+  const pattern = `%${escapeLike(q.toLowerCase())}%`;
+  const matches = columns.map(column => `LOWER(COALESCE(${column}, '')) LIKE ? ${LIKE_ESCAPE}`);
+  return { sql: `(${matches.join(' OR ')})`, params: columns.map(() => pattern) };
 }
 
 // UPC/EAN barcodes sometimes arrive with or without a leading zero.

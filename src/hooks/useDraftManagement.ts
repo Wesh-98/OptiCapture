@@ -1,6 +1,6 @@
 import type { MutableRefObject } from 'react';
 import { useState } from 'react';
-import type { SessionItem } from '../components/scan/types';
+import type { SessionItem, SessionStatus } from '../components/scan/types';
 
 function defaultDraftName(): string {
   const now = new Date();
@@ -12,7 +12,7 @@ function defaultDraftName(): string {
 interface DraftManagementDeps {
   sessionId: string | null;
   sessionLabel: string | null;
-  setSessionStatus: (s: 'active' | 'draft' | 'completed') => void;
+  setSessionStatus: (s: SessionStatus) => void;
   setSessionLabel: (l: string | null) => void;
   setDraftAlert: (a: { message: string; visible: boolean }) => void;
   setItems: (items: SessionItem[]) => void;

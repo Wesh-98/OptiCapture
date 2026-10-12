@@ -43,7 +43,7 @@ export function LogsTable({
   onPageSizeChange,
   onPreviousPage,
   onRetry,
-}: LogsTableProps) {
+}: Readonly<LogsTableProps>) {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-16 gap-3 text-slate-500">
@@ -138,8 +138,7 @@ export function LogsTable({
             <>
               Showing{' '}
               <span className="font-semibold text-slate-700">
-                {(currentPage - 1) * pageSize + 1}-
-                {Math.min(currentPage * pageSize, totalCount)}
+                {(currentPage - 1) * pageSize + 1}-{Math.min(currentPage * pageSize, totalCount)}
               </span>{' '}
               of <span className="font-semibold text-slate-700">{totalCount}</span> logs
             </>

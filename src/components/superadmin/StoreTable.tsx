@@ -12,7 +12,7 @@ import {
   Package,
 } from 'lucide-react';
 import { cn, parseServerDate } from '../../lib/utils';
-import { StoreRow } from './types';
+import { StoreRow, type StoreStatusFilter } from './types';
 
 interface Props {
   stores: StoreRow[];
@@ -20,11 +20,11 @@ interface Props {
   isLoading: boolean;
   togglingId: number | null;
   storeSearch: string;
-  statusFilter: 'all' | 'active' | 'suspended';
+  statusFilter: StoreStatusFilter;
   joinedSort: 'newest' | 'oldest';
   prefersReducedMotion: boolean | null;
   onSearch: (v: string) => void;
-  onStatusFilter: (v: 'all' | 'active' | 'suspended') => void;
+  onStatusFilter: (v: StoreStatusFilter) => void;
   onJoinedSort: (v: 'newest' | 'oldest') => void;
   onRefresh: () => void;
   onInventory: (store: StoreRow) => void;
@@ -60,7 +60,7 @@ export function StoreTable({
   onToggleStore,
   onToggleAll,
   onClearSelection,
-}: Props) {
+}: Readonly<Props>) {
   // Select All covers the stores the filters currently show.
   const selectedVisible = filteredStores.filter(store => selectedIds.has(store.id)).length;
   const allVisibleSelected = filteredStores.length > 0 && selectedVisible === filteredStores.length;
@@ -110,7 +110,7 @@ export function StoreTable({
           </div>
           <select
             value={statusFilter}
-            onChange={e => onStatusFilter(e.target.value as 'all' | 'active' | 'suspended')}
+            onChange={e => onStatusFilter(e.target.value as StoreStatusFilter)}
             className="px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-brand-400"
           >
             <option value="all">All Status</option>
@@ -284,13 +284,9 @@ export function StoreTable({
                           )}
                         >
                           {store.status === 'active' ? (
-                            <>
-                              <ShieldOff size={14} />
-                            </>
+                            <ShieldOff size={14} />
                           ) : (
-                            <>
-                              <ShieldCheck size={14} />
-                            </>
+                            <ShieldCheck size={14} />
                           )}
                         </button>
                         <button

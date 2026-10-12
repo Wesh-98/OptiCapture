@@ -306,10 +306,9 @@ function parseInventoryNumber(
     (options.integer === true && !Number.isInteger(parsed)) ||
     (options.max !== undefined && parsed > options.max)
   ) {
-    return {
-      value: null,
-      error: `${field} must be a non-negative${options.integer ? ' integer' : ' number'}${options.max !== undefined ? ` no greater than ${options.max}` : ''}`,
-    };
+    const kind = options.integer ? 'integer' : 'number';
+    const ceiling = options.max === undefined ? '' : ` no greater than ${options.max}`;
+    return { value: null, error: `${field} must be a non-negative ${kind}${ceiling}` };
   }
 
   return { value: parsed };

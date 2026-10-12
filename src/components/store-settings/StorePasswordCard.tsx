@@ -30,7 +30,7 @@ export function StorePasswordCard({
   passwordSuccess,
   onFieldChange,
   onSubmit,
-}: StorePasswordCardProps) {
+}: Readonly<StorePasswordCardProps>) {
   const passwordTitle = mustResetPassword ? 'Reset Required' : 'Change Password';
   const passwordDescription = mustResetPassword
     ? 'Use your temporary password once, then set a permanent one.'

@@ -52,7 +52,7 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [myStores, setMyStores] = useState<StoreAccess[]>([]);
-  const [activeStoreId, setActiveStoreIdState] = useState<number | null>(() => getActiveStoreId());
+  const [activeStoreId, setActiveStoreId] = useState<number | null>(() => getActiveStoreId());
   const navigate = useNavigate();
 
   const loadMyStores = useCallback(async () => {
@@ -76,14 +76,14 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
     if ((res.status === 403 || res.status === 409) && getActiveStoreId() != null) {
       clearActiveStoreId();
       clearStoreScopedSessionState();
-      setActiveStoreIdState(null);
+      setActiveStoreId(null);
       res = await fetch('/api/auth/me', { credentials: 'include' });
     }
 
     if (!res.ok) {
       setUser(null);
       setMyStores([]);
-      setActiveStoreIdState(getActiveStoreId());
+      setActiveStoreId(getActiveStoreId());
       return null;
     }
 
@@ -92,10 +92,10 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
     await loadMyStores();
 
     if (userData.store_id != null) {
-      setActiveStoreIdState(userData.store_id);
+      setActiveStoreId(userData.store_id);
     } else if (userData.needs_store_selection) {
       clearActiveStoreId();
-      setActiveStoreIdState(null);
+      setActiveStoreId(null);
     }
 
     return userData;
@@ -121,7 +121,7 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
 
       if (userData.role !== 'superadmin' && userData.store_id != null) {
         persistActiveStoreId(userData.store_id);
-        setActiveStoreIdState(userData.store_id);
+        setActiveStoreId(userData.store_id);
       }
 
       const refreshedUser = await refreshUser().catch(() => null);
@@ -158,7 +158,7 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
       if (!res.ok) throw new Error('Failed to switch store');
 
       persistActiveStoreId(storeId);
-      setActiveStoreIdState(storeId);
+      setActiveStoreId(storeId);
       // Scan session state is store-scoped, so clear it before the next view
       // hydrates under the newly selected store.
       clearStoreScopedSessionState();
@@ -172,7 +172,7 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
     // only clears the tab's active store selection.
     clearActiveStoreId();
     clearStoreScopedSessionState();
-    setActiveStoreIdState(null);
+    setActiveStoreId(null);
     await refreshUser().catch(() => null);
     navigate('/choose-store');
   }, [navigate, refreshUser]);
@@ -183,7 +183,7 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
     clearStoreScopedSessionState();
     setUser(null);
     setMyStores([]);
-    setActiveStoreIdState(null);
+    setActiveStoreId(null);
     navigate('/login');
   }, [navigate]);
 

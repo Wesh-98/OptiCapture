@@ -16,7 +16,7 @@ export function MobileScanManualForm({
   onItemNameChange,
   onInputChange,
   onSubmit,
-}: MobileScanManualFormProps) {
+}: Readonly<MobileScanManualFormProps>) {
   return (
     <div className="shrink-0 mx-4 mt-3 space-y-3">
       <form onSubmit={onSubmit} className="space-y-3">

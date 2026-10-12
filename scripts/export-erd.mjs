@@ -48,10 +48,14 @@ const indexDescription = index => {
     .map(column => `${column.name}${column.desc ? ' DESC' : ''}`)
     .join(', ');
   const sql = db.prepare('SELECT sql FROM sqlite_master WHERE name = ?').get(index.name)?.sql;
-  const predicate = sql?.match(/\bWHERE\s+([\s\S]+)$/i)?.[1]?.trim();
-  const kind = index.origin === 'pk' ? 'PRIMARY KEY' : index.unique ? 'UNIQUE' : 'INDEX';
+  const where = sql ? /\bWHERE\s/i.exec(sql) : null;
+  const predicate = where ? sql.slice(where.index + where[0].length).trim() : '';
+  let kind = 'INDEX';
+  if (index.origin === 'pk') kind = 'PRIMARY KEY';
+  else if (index.unique) kind = 'UNIQUE';
   const name = index.origin === 'c' ? ` ${index.name}` : '';
-  return `${kind}${name} (${columns})${predicate ? ` WHERE ${predicate}` : ''}`;
+  const filter = predicate ? ` WHERE ${predicate}` : '';
+  return `${kind}${name} (${columns})${filter}`;
 };
 
 const cards = new Map();
@@ -150,59 +154,65 @@ const svg = [
 ];
 
 for (const item of cards.values()) {
-  svg.push(`<g id="table-${escape(item.table)}">`);
-  svg.push(`<rect x="${item.x}" y="${item.y}" width="${item.width}" height="${item.height}" rx="12" fill="#ffffff" stroke="#b7e9ed" stroke-width="1.5"/>`);
-  svg.push(`<path d="M ${item.x + 12} ${item.y} H ${item.x + item.width - 12} Q ${item.x + item.width} ${item.y} ${item.x + item.width} ${item.y + 12} V ${item.y + headerHeight} H ${item.x} V ${item.y + 12} Q ${item.x} ${item.y} ${item.x + 12} ${item.y}" fill="${TEAL}"/>`);
-  svg.push(`<text x="${item.x + 18}" y="${item.y + 32}" class="table">${escape(item.table)}</text>`);
-  svg.push(`<text x="${item.x + item.width - 18}" y="${item.y + 31}" text-anchor="end" class="count">${item.columns.length} columns</text>`);
-  svg.push(`<rect x="${item.x + 1}" y="${item.y + headerHeight}" width="${item.width - 2}" height="${fieldsHeaderHeight}" fill="#e9f7f8"/>`);
-  svg.push(`<text x="${item.x + 16}" y="${item.y + headerHeight + 19}" class="section">COLUMN</text>`);
-  svg.push(`<text x="${item.x + 305}" y="${item.y + headerHeight + 19}" class="section">TYPE</text>`);
-  svg.push(`<text x="${item.x + 405}" y="${item.y + headerHeight + 19}" class="section">NULL?</text>`);
-  svg.push(`<text x="${item.x + item.width - 16}" y="${item.y + headerHeight + 19}" text-anchor="end" class="section">KEY</text>`);
+  svg.push(
+    `<g id="table-${escape(item.table)}">`,
+    `<rect x="${item.x}" y="${item.y}" width="${item.width}" height="${item.height}" rx="12" fill="#ffffff" stroke="#b7e9ed" stroke-width="1.5"/>`,
+    `<path d="M ${item.x + 12} ${item.y} H ${item.x + item.width - 12} Q ${item.x + item.width} ${item.y} ${item.x + item.width} ${item.y + 12} V ${item.y + headerHeight} H ${item.x} V ${item.y + 12} Q ${item.x} ${item.y} ${item.x + 12} ${item.y}" fill="${TEAL}"/>`,
+    `<text x="${item.x + 18}" y="${item.y + 32}" class="table">${escape(item.table)}</text>`,
+    `<text x="${item.x + item.width - 18}" y="${item.y + 31}" text-anchor="end" class="count">${item.columns.length} columns</text>`,
+    `<rect x="${item.x + 1}" y="${item.y + headerHeight}" width="${item.width - 2}" height="${fieldsHeaderHeight}" fill="#e9f7f8"/>`,
+    `<text x="${item.x + 16}" y="${item.y + headerHeight + 19}" class="section">COLUMN</text>`,
+    `<text x="${item.x + 305}" y="${item.y + headerHeight + 19}" class="section">TYPE</text>`,
+    `<text x="${item.x + 405}" y="${item.y + headerHeight + 19}" class="section">NULL?</text>`,
+    `<text x="${item.x + item.width - 16}" y="${item.y + headerHeight + 19}" text-anchor="end" class="section">KEY</text>`,
+  );
   for (const [index, column] of item.columns.entries()) {
     const y = item.y + headerHeight + fieldsHeaderHeight + index * rowHeight;
-    if (index % 2 === 1) svg.push(`<rect x="${item.x + 1}" y="${y}" width="${item.width - 2}" height="${rowHeight}" fill="#f5fbfb"/>`);
     const fk = item.fkByColumn.get(column.name);
     const badges = [column.pk ? 'PK' : '', fk ? 'FK' : ''].filter(Boolean).join(' / ');
     const defaultValue = column.dflt_value === null ? 'none' : column.dflt_value;
-    const detail = `${fk ? `references ${fk.table}.${fk.to}  ·  ` : ''}default: ${defaultValue}`;
-    svg.push(`<text x="${item.x + 16}" y="${y + 17}" class="field">${escape(column.name)}</text>`);
-    svg.push(`<text x="${item.x + 305}" y="${y + 17}" class="type">${escape(column.type || 'ANY')}</text>`);
+    const reference = fk ? `references ${fk.table}.${fk.to}  ·  ` : '';
+    const detail = `${reference}default: ${defaultValue}`;
     const nonNull = column.notnull || (column.pk && column.type.trim().toUpperCase() === 'INTEGER');
-    svg.push(`<text x="${item.x + 405}" y="${y + 17}" class="type">${nonNull ? 'NOT NULL' : 'NULLABLE'}</text>`);
-    if (badges) svg.push(`<text x="${item.x + item.width - 16}" y="${y + 17}" class="badge" text-anchor="end">${badges}</text>`);
-    svg.push(`<text x="${item.x + 16}" y="${y + 33}" class="detail">${escape(detail)}</text>`);
+    svg.push(
+      ...(index % 2 === 1 ? [`<rect x="${item.x + 1}" y="${y}" width="${item.width - 2}" height="${rowHeight}" fill="#f5fbfb"/>`] : []),
+      `<text x="${item.x + 16}" y="${y + 17}" class="field">${escape(column.name)}</text>`,
+      `<text x="${item.x + 305}" y="${y + 17}" class="type">${escape(column.type || 'ANY')}</text>`,
+      `<text x="${item.x + 405}" y="${y + 17}" class="type">${nonNull ? 'NOT NULL' : 'NULLABLE'}</text>`,
+      ...(badges ? [`<text x="${item.x + item.width - 16}" y="${y + 17}" class="badge" text-anchor="end">${badges}</text>`] : []),
+      `<text x="${item.x + 16}" y="${y + 33}" class="detail">${escape(detail)}</text>`,
+    );
   }
   const indexY = item.y + headerHeight + fieldsHeaderHeight + item.columns.length * rowHeight;
-  svg.push(`<rect x="${item.x + 1}" y="${indexY}" width="${item.width - 2}" height="31" fill="#e9f7f8"/>`);
-  svg.push(`<text x="${item.x + 16}" y="${indexY + 21}" class="section">INDEXES AND UNIQUE CONSTRAINTS</text>`);
-  item.indexRows.forEach((line, index) => {
-    svg.push(`<text x="${item.x + 16}" y="${indexY + 51 + index * 20}" class="index">${escape(line)}</text>`);
-  });
-  svg.push('</g>');
+  svg.push(
+    `<rect x="${item.x + 1}" y="${indexY}" width="${item.width - 2}" height="31" fill="#e9f7f8"/>`,
+    `<text x="${item.x + 16}" y="${indexY + 21}" class="section">INDEXES AND UNIQUE CONSTRAINTS</text>`,
+    ...item.indexRows.map((line, index) => `<text x="${item.x + 16}" y="${indexY + 51 + index * 20}" class="index">${escape(line)}</text>`),
+    '</g>',
+  );
 }
 
-svg.push(`<rect x="${note.x}" y="${noteY}" width="${cardWidth}" height="${noteHeight}" rx="12" fill="#fff5f4" stroke="#edc9c6"/>`);
-svg.push(`<text x="${note.x + 18}" y="${noteY + 31}" class="note-title">Relationship details</text>`);
-svg.push(`<text x="${note.x + 18}" y="${noteY + 53}" class="detail">Each child row points to at most one parent; a parent can have many children.</text>`);
-for (const [index, [parent, child, from]] of edges.entries()) {
+const relationLabels = edges.map(([parent, child, from]) => {
   const key = db.pragma(`foreign_key_list(${child})`).find(entry => entry.from === from);
   const required = card(child).columns.find(column => column.name === from).notnull ? 'required' : 'optional';
-  const label = `${child}.${from} → ${parent}.${key.to}  (${required})`;
-  svg.push(`<text x="${note.x + 18}" y="${noteY + 82 + index * 23}" class="note">${escape(label)}</text>`);
-}
-svg.push(`<text x="${note.x + 18}" y="${noteY + 264}" class="note-title">App associations without FK constraints</text>`);
-for (const [index, label] of [
+  return `${child}.${from} → ${parent}.${key.to}  (${required})`;
+});
+const associationLabels = [
   'scan_sessions.user_id → users.id',
   'scan_sessions.store_id → stores.id',
   'logs.user_id → users.id',
   'logs.store_id → stores.id',
-].entries()) {
-  svg.push(`<text x="${note.x + 18}" y="${noteY + 291 + index * 22}" class="note">${escape(label)}</text>`);
-}
-svg.push(`<text x="56" y="${height - 38}" class="subtitle">PK = primary key · FK = enforced foreign key · All FK delete actions are NO ACTION · Source: docs/database-schema.sql</text>`);
-svg.push('</svg>');
+];
+svg.push(
+  `<rect x="${note.x}" y="${noteY}" width="${cardWidth}" height="${noteHeight}" rx="12" fill="#fff5f4" stroke="#edc9c6"/>`,
+  `<text x="${note.x + 18}" y="${noteY + 31}" class="note-title">Relationship details</text>`,
+  `<text x="${note.x + 18}" y="${noteY + 53}" class="detail">Each child row points to at most one parent; a parent can have many children.</text>`,
+  ...relationLabels.map((label, index) => `<text x="${note.x + 18}" y="${noteY + 82 + index * 23}" class="note">${escape(label)}</text>`),
+  `<text x="${note.x + 18}" y="${noteY + 264}" class="note-title">App associations without FK constraints</text>`,
+  ...associationLabels.map((label, index) => `<text x="${note.x + 18}" y="${noteY + 291 + index * 22}" class="note">${escape(label)}</text>`),
+  `<text x="56" y="${height - 38}" class="subtitle">PK = primary key · FK = enforced foreign key · All FK delete actions are NO ACTION · Source: docs/database-schema.sql</text>`,
+  '</svg>',
+);
 db.close();
 
 const content = `${svg.join('\n')}\n`;

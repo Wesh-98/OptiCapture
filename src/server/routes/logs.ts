@@ -1,7 +1,7 @@
 import express from 'express';
 import { db } from '../db.js';
 import { authenticateToken, requireOwner } from '../middleware.js';
-import { firstQueryValue, toSqliteUtc } from '../helpers.js';
+import { escapeLike, firstQueryValue, LIKE_ESCAPE, toSqliteUtc } from '../helpers.js';
 import type { AuthRequest } from '../types.js';
 
 export const logsRouter = express.Router();
@@ -54,7 +54,9 @@ logsRouter.get('/logs', authenticateToken, requireOwner, (req: AuthRequest, res)
     ['to_utc', toInstant],
   ] as const) {
     if (value === undefined) continue;
-    const ms = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/.test(value) ? Date.parse(value) : NaN;
+    const ms = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/.test(value)
+      ? Date.parse(value)
+      : Number.NaN;
     if (Number.isNaN(ms)) {
       return res.status(400).json({ error: `${name} must be an ISO 8601 UTC timestamp` });
     }
@@ -70,21 +72,19 @@ logsRouter.get('/logs', authenticateToken, requireOwner, (req: AuthRequest, res)
   }
   if (q?.trim()) {
     if (q.length > 200) return res.status(400).json({ error: 'q is too long' });
-    const escaped = q
-      .trim()
-      .toLowerCase()
-      .replace(/[%_\\]/g, '\\$&');
-    const pattern = `%${escaped}%`;
+    const pattern = `%${escapeLike(q.trim().toLowerCase())}%`;
     conditions.push(
-      `(LOWER(COALESCE(logs.details, '')) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(users.username, '')) LIKE ? ESCAPE '\\')`
+      `(LOWER(COALESCE(logs.details, '')) LIKE ? ${LIKE_ESCAPE} OR LOWER(COALESCE(users.username, '')) LIKE ? ${LIKE_ESCAPE})`
     );
     params.push(pattern, pattern);
   }
 
   const fromSql = `FROM logs LEFT JOIN users ON logs.user_id = users.id WHERE ${conditions.join(' AND ')}`;
-  const total = (db.prepare(`SELECT COUNT(*) AS count ${fromSql}`).get(...params) as {
-    count: number;
-  }).count;
+  const total = (
+    db.prepare(`SELECT COUNT(*) AS count ${fromSql}`).get(...params) as {
+      count: number;
+    }
+  ).count;
   const storeTotal = (
     db.prepare('SELECT COUNT(*) AS count FROM logs WHERE store_id = ?').get(storeId) as {
       count: number;

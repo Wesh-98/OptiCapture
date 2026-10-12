@@ -13,7 +13,7 @@ function isSameOriginApiRequest(url: URL): boolean {
 function buildPatchedRequest(
   input: FetchInput | URL,
   init?: FetchInit
-): { input: FetchInput | URL; init?: FetchInit } {
+): { input: FetchInput | URL; init: FetchInit } {
   if (!isBrowser()) {
     return { input, init };
   }

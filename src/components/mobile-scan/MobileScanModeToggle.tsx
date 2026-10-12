@@ -6,7 +6,7 @@ interface MobileScanModeToggleProps {
   onChange: (mode: MobileScanInputMode) => void;
 }
 
-export function MobileScanModeToggle({ inputMode, onChange }: MobileScanModeToggleProps) {
+export function MobileScanModeToggle({ inputMode, onChange }: Readonly<MobileScanModeToggleProps>) {
   return (
     <div className="shrink-0 mx-4 mt-3 flex bg-white/5 rounded-2xl p-1">
       <button

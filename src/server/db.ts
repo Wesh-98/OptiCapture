@@ -217,21 +217,23 @@ runMigration(2, () => {
 runMigration(3, () => {
   // Use PRAGMA instead of bare catch {} — bare catch swallows all errors including
   // SQLITE_CORRUPT and SQLITE_FULL, not just the 'duplicate column' case.
-  const cols = (db.prepare('PRAGMA table_info(scan_sessions)').all() as any[]).map(
-    (c: any) => c.name
+  const cols = new Set(
+    (db.prepare('PRAGMA table_info(scan_sessions)').all() as any[]).map((c: any) => c.name)
   );
-  if (!cols.includes('otp_attempts'))
+  if (!cols.has('otp_attempts'))
     db.prepare('ALTER TABLE scan_sessions ADD COLUMN otp_attempts INTEGER DEFAULT 0').run();
-  if (!cols.includes('expires_at'))
+  if (!cols.has('expires_at'))
     db.prepare('ALTER TABLE scan_sessions ADD COLUMN expires_at TEXT').run();
 });
 
 // Schema migrations for users table — add account lockout columns
 runMigration(4, () => {
-  const cols = (db.prepare('PRAGMA table_info(users)').all() as any[]).map((c: any) => c.name);
-  if (!cols.includes('failed_login_attempts'))
+  const cols = new Set(
+    (db.prepare('PRAGMA table_info(users)').all() as any[]).map((c: any) => c.name)
+  );
+  if (!cols.has('failed_login_attempts'))
     db.prepare('ALTER TABLE users ADD COLUMN failed_login_attempts INTEGER DEFAULT 0').run();
-  if (!cols.includes('locked_until'))
+  if (!cols.has('locked_until'))
     db.prepare('ALTER TABLE users ADD COLUMN locked_until TEXT DEFAULT NULL').run();
 });
 

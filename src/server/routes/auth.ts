@@ -224,7 +224,7 @@ authRouter.post(
 
     // Check if account is locked. locked_until is stored UTC; a malformed value parses to
     // NaN, which is treated as not locked.
-    const lockedUntilMs = user.locked_until ? parseSqliteUtc(user.locked_until) : NaN;
+    const lockedUntilMs = user.locked_until ? parseSqliteUtc(user.locked_until) : Number.NaN;
     if (!Number.isNaN(lockedUntilMs) && lockedUntilMs > Date.now()) {
       const minutesLeft = Math.ceil((lockedUntilMs - Date.now()) / 60000);
       return res
@@ -526,13 +526,11 @@ authRouter.post(
           redirect: '/',
         });
       }
-      res
-        .status(201)
-        .json({
-          message: 'Store registered successfully',
-          store_id: storeId,
-          store_code: storeCode,
-        });
+      res.status(201).json({
+        message: 'Store registered successfully',
+        store_id: storeId,
+        store_code: storeCode,
+      });
     } catch (err: any) {
       logError('auth:register', err);
       res.status(500).json({ error: 'An internal error occurred' });

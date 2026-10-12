@@ -2,6 +2,7 @@ import { useCallback, useState, type ChangeEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   StoreRow,
+  type StoreStatusFilter,
   validateEmail,
   validatePhone,
   validateZipcode,
@@ -47,7 +48,7 @@ export function useAdminStores() {
 
   // --- Filter / sort ---
   const [storeSearch, setStoreSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'suspended'>('all');
+  const [statusFilter, setStatusFilter] = useState<StoreStatusFilter>('all');
   const [joinedSort, setJoinedSort] = useState<'newest' | 'oldest'>('newest');
 
   const fetchStores = useCallback(async () => {

@@ -43,13 +43,13 @@ export const apiLimiter = isTest
       skip: req => isOtpScanRequest(req),
     });
 
+const DEFAULT_SCAN_LIMITS = { perDevice: 150, perSession: 600, perIp: 1200, windowMs: 60 * 1000 };
+
 // The OTP scan endpoints (phone scan + phone sync) are limited per session and per device,
 // not per IP: every phone on a store's Wi-Fi shares one public IP, and each phone syncs
 // every 3 s on top of its scans. OTP guessing is already capped at 5 attempts per session;
 // a generous per-IP backstop stops one client spraying random session IDs.
-export function buildScanLimiters(
-  limits = { perDevice: 150, perSession: 600, perIp: 1200, windowMs: 60 * 1000 }
-): express.RequestHandler[] {
+export function buildScanLimiters(limits = DEFAULT_SCAN_LIMITS): express.RequestHandler[] {
   const sessionKey = (req: express.Request) => String(req.params.id ?? '').slice(0, 64);
   const deviceKey = (req: express.Request) => {
     const header = req.headers['x-device-id'];
@@ -58,10 +58,19 @@ export function buildScanLimiters(
     return device || `ip:${ipKeyGenerator(req.ip ?? '')}`;
   };
   const message = { error: 'Too many scan requests. Please wait a moment.' };
-  const common = { windowMs: limits.windowMs, standardHeaders: true, legacyHeaders: false, message };
+  const common = {
+    windowMs: limits.windowMs,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message,
+  };
   return [
     rateLimit({ ...common, max: limits.perIp }),
-    rateLimit({ ...common, max: limits.perSession, keyGenerator: req => `session:${sessionKey(req)}` }),
+    rateLimit({
+      ...common,
+      max: limits.perSession,
+      keyGenerator: req => `session:${sessionKey(req)}`,
+    }),
     rateLimit({
       ...common,
       max: limits.perDevice,

@@ -26,7 +26,7 @@ export function EditStoreModal({
   onRemoveLogo,
   onSave,
   onClose,
-}: Props) {
+}: Readonly<Props>) {
   const field = (id: string, label: string, content: React.ReactNode, errorKey?: string) => (
     <div>
       <label htmlFor={id} className="block text-sm font-medium text-slate-700 mb-1">

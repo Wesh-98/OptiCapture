@@ -7,7 +7,7 @@ interface MobileScanToastProps {
   prefersReducedMotion: boolean;
 }
 
-export function MobileScanToast({ toast, prefersReducedMotion }: MobileScanToastProps) {
+export function MobileScanToast({ toast, prefersReducedMotion }: Readonly<MobileScanToastProps>) {
   return (
     <AnimatePresence>
       {toast && (

@@ -49,7 +49,7 @@ export function StoreInfoCard({
   onRemoveLogo,
   onSubmit,
   onZipcodeChange,
-}: StoreInfoCardProps) {
+}: Readonly<StoreInfoCardProps>) {
   const inputClass = (disabled: boolean): string =>
     `w-full px-3 py-2 border rounded-lg text-sm ${
       disabled

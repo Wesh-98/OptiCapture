@@ -224,9 +224,11 @@ describe('session item retrieval', () => {
       storeName: 'Revoked OTP Browser Store',
       username: 'revokedotpowner',
     });
-    const delegatedUserId = (db
-      .prepare('SELECT id FROM users WHERE store_id = ?')
-      .get(delegatedStore.storeId) as { id: number }).id;
+    const delegatedUserId = (
+      db.prepare('SELECT id FROM users WHERE store_id = ?').get(delegatedStore.storeId) as {
+        id: number;
+      }
+    ).id;
     db.prepare('INSERT OR IGNORE INTO user_stores (user_id, store_id, role) VALUES (?, ?, ?)').run(
       delegatedUserId,
       1,
@@ -474,7 +476,7 @@ describe('session input validation', () => {
     const row = db
       .prepare('SELECT product_name FROM session_items WHERE session_id = ? AND upc = ?')
       .get(session.sessionId, 'validation-1') as any;
-    expect(row.product_name.length).toBe(500);
+    expect(row.product_name).toHaveLength(500);
 
     // Non-numeric sinceId should fall back to returning all items (no frozen feed)
     const pollRes = await request
@@ -542,10 +544,10 @@ describe('session input validation', () => {
     const row = db
       .prepare('SELECT product_name, brand, sale_price, unit FROM session_items WHERE id = ?')
       .get(itemId) as any;
-    expect(row.product_name.length).toBe(500);
-    expect(row.brand.length).toBe(200);
+    expect(row.product_name).toHaveLength(500);
+    expect(row.brand).toHaveLength(200);
     expect(row.sale_price).toBeNull();
-    expect(row.unit.length).toBe(50);
+    expect(row.unit).toHaveLength(50);
   });
 
   it('rejects oversized UPC edits and stores uploaded session-item images as files', async () => {
@@ -815,7 +817,9 @@ describe('session item editing and commit flow', () => {
       .set('Cookie', adminCookie)
       .send({ assignments: [{ id: unknownId, category_id: categoryId }] });
     expect(blocked.body).toMatchObject({ inserted: 0, skipped: 1, status: 'active' });
-    expect(db.prepare('SELECT 1 FROM inventory WHERE upc = ?').get('unnamed-unknown-1')).toBeUndefined();
+    expect(
+      db.prepare('SELECT 1 FROM inventory WHERE upc = ?').get('unnamed-unknown-1')
+    ).toBeUndefined();
 
     const named = await request
       .patch(`/api/session/${session.sessionId}/items/${unknownId}`)
@@ -862,7 +866,12 @@ describe('session item editing and commit flow', () => {
       .set('Cookie', adminCookie)
       .send({ verifyIds: [stagedId] });
     expect(commitRes.status).toBe(200);
-    expect(commitRes.body).toMatchObject({ inserted: 0, verified: 1, skipped: 0, status: 'completed' });
+    expect(commitRes.body).toMatchObject({
+      inserted: 0,
+      verified: 1,
+      skipped: 0,
+      status: 'completed',
+    });
     expect(
       db
         .prepare(
