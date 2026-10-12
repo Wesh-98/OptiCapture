@@ -382,7 +382,7 @@ UPC lookup lives in `src/server/helpers.ts` and currently uses:
 - UPCitemDB
 - Go-UPC when `GO_UPC_API_KEY` is configured; a successful Go-UPC result is preferred
 
-Results are cached in memory for 7 days in `upcCache` to avoid repeated external lookups for the same barcode.
+Results are cached in memory for 7 days in `upcCache` to avoid repeated external lookups for the same barcode. A lookup that found nothing because a provider failed, timed out or rate-limited is cached for 5 minutes only, so the barcode is looked up again once the provider recovers.
 
 ### Batch import
 

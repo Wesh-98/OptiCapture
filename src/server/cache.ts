@@ -7,6 +7,17 @@ import type { UpcCacheEntry } from './types.js';
 export const UPC_CACHE_MAX = 5000;
 export const upcCache = new Map<string, UpcCacheEntry>();
 export const UPC_CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
+// A lookup that found nothing because a provider was down, slow or rate-limited is only
+// remembered this long: enough to stop a burst of rescans hammering a failing provider, short
+// enough that the barcode resolves once the provider is back. It used to be kept the full
+// seven days, so one outage left every barcode scanned during it "unknown" for a week.
+export const UPC_CACHE_FAILED_TTL = 5 * 60 * 1000;
+export function upcCacheFresh(
+  entry: UpcCacheEntry | undefined,
+  now = Date.now()
+): entry is UpcCacheEntry {
+  return entry !== undefined && now - entry.ts < (entry.ttl ?? UPC_CACHE_TTL);
+}
 export function upcCacheSet(key: string, value: UpcCacheEntry) {
   if (upcCache.size >= UPC_CACHE_MAX) upcCache.delete(upcCache.keys().next().value!);
   upcCache.set(key, value);

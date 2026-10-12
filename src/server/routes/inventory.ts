@@ -86,6 +86,41 @@ const upload = multer({
   limits: { fileSize: 20 * 1024 * 1024, fieldSize: 10 * 1024 }, // 20 MB file, 10 KB per non-file field
 });
 
+const IMPORT_FORMAT_BY_EXTENSION: Record<string, 'xlsx' | 'csv' | 'json'> = {
+  '.xlsx': 'xlsx',
+  '.csv': 'csv',
+  '.json': 'json',
+};
+const IMPORT_FORMAT_BY_MIME: Record<string, 'xlsx' | 'csv' | 'json'> = {
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+  'text/csv': 'csv',
+  'application/csv': 'csv',
+  'application/json': 'json',
+};
+
+/**
+ * Which parser an uploaded import file gets, or null when it is not one we read. The file
+ * name decides first: the type a browser reports depends on the machine, and Windows with
+ * Excel installed sends a .csv as application/vnd.ms-excel (or as nothing at all), which the
+ * old type-only check turned away. The reported type is the fallback for a file with no
+ * recognised extension. Either way the parser still has to accept the contents.
+ */
+export function importFileFormat(
+  filename: string | undefined,
+  mimetype: string | undefined
+): 'xlsx' | 'csv' | 'json' | null {
+  const dot = filename?.lastIndexOf('.') ?? -1;
+  const extension = dot >= 0 ? filename!.slice(dot).toLowerCase() : '';
+  if (Object.hasOwn(IMPORT_FORMAT_BY_EXTENSION, extension)) {
+    return IMPORT_FORMAT_BY_EXTENSION[extension];
+  }
+  // A recognisable but unsupported extension (.xls, .txt, .exe) is refused outright.
+  if (extension) return null;
+  return Object.hasOwn(IMPORT_FORMAT_BY_MIME, mimetype ?? '')
+    ? IMPORT_FORMAT_BY_MIME[mimetype ?? '']
+    : null;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -1038,22 +1073,13 @@ inventoryRouter.post(
   asyncRoute<AuthRequest>(async (req: AuthRequest, res) => {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-    // After receiving the uploaded file, check MIME type
-    const allowedUploadTypes = [
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // xlsx
-      'text/csv',
-      'application/csv',
-      'application/json',
-    ];
-    if (!allowedUploadTypes.includes(req.file.mimetype)) {
+    const format = importFileFormat(req.file.originalname, req.file.mimetype);
+    if (!format) {
       return res
         .status(400)
         .json({ error: 'Invalid file type. Only XLSX, CSV, and JSON files are allowed.' });
     }
-
-    const isJson =
-      req.file.originalname?.toLowerCase().endsWith('.json') ||
-      req.file.mimetype === 'application/json';
+    const isJson = format === 'json';
 
     try {
       if (isJson) {
@@ -1078,12 +1104,7 @@ inventoryRouter.post(
         ]);
       }
 
-      const isCsv =
-        req.file.mimetype === 'text/csv' ||
-        req.file.mimetype === 'application/csv' ||
-        req.file.originalname?.toLowerCase().endsWith('.csv');
-
-      if (isCsv) {
+      if (format === 'csv') {
         const { data, errors } = Papa.parse<Record<string, any>>(req.file.buffer.toString('utf8'), {
           header: true,
           skipEmptyLines: true,

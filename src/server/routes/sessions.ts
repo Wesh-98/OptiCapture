@@ -4,12 +4,18 @@ import { randomUUID } from 'node:crypto';
 import { db } from '../db.js';
 import { authenticateToken, requireOwner, scanLimiter, asyncRoute } from '../middleware.js';
 import type { AuthRequest } from '../types.js';
-import { isTokenRevoked, upcCache, upcCacheSet, UPC_CACHE_TTL } from '../cache.js';
+import {
+  isTokenRevoked,
+  upcCache,
+  upcCacheFresh,
+  upcCacheSet,
+  UPC_CACHE_FAILED_TTL,
+} from '../cache.js';
 import {
   UnsupportedImageTypeError,
   firstQueryValue,
   generateOTP,
-  lookupProductByUpc,
+  lookupProduct,
   normalizeImageUrl,
   saveBase64Image,
   upcVariants,
@@ -177,7 +183,28 @@ sessionsRouter.post('/session/create', authenticateToken, (req: AuthRequest, res
   }
 });
 
+/**
+ * A scanning session whose time ran out with scans still in it becomes a draft. Expiry is
+ * there to retire the OTP the phones hold, not to throw the work away: the list below used to
+ * drop every session past its expiry, drafts included, so a count saved on Friday was gone
+ * from the dashboard by Monday while its rows sat in the database unreachable. As a draft it
+ * stays listed, and resuming it starts a fresh scan window.
+ */
+function parkExpiredSessions(storeId: number | undefined) {
+  db.prepare(
+    `UPDATE scan_sessions
+        SET status = 'draft'
+      WHERE store_id = ? AND status = 'active'
+        AND expires_at IS NOT NULL AND datetime(expires_at) <= datetime('now')
+        AND EXISTS (SELECT 1 FROM session_items si WHERE si.session_id = scan_sessions.session_id)`
+  ).run(storeId);
+}
+
+// Far more than a store keeps open at once; only there so the response stays bounded.
+const MAX_LISTED_SESSIONS = 200;
+
 sessionsRouter.get('/sessions/active', authenticateToken, (req: AuthRequest, res) => {
+  parkExpiredSessions(req.user.store_id);
   const sessions = db
     .prepare(
       `
@@ -189,14 +216,13 @@ sessionsRouter.get('/sessions/active', authenticateToken, (req: AuthRequest, res
     LEFT JOIN session_items si ON si.session_id = s.session_id
     LEFT JOIN users u ON u.id = s.user_id
     WHERE s.store_id = ? AND s.status IN ('active', 'draft')
-      AND datetime(s.expires_at) > datetime('now')
     GROUP BY s.session_id
     HAVING item_count > 0
     ORDER BY s.created_at DESC
-    LIMIT 10
+    LIMIT ?
   `
     )
-    .all(req.user.store_id);
+    .all(req.user.store_id, MAX_LISTED_SESSIONS);
   res.json(sessions);
 });
 
@@ -221,9 +247,11 @@ sessionsRouter.patch('/session/:id/status', authenticateToken, (req: AuthRequest
   }
 
   if (status === SESSION_STATUS.ACTIVE) {
-    // Resume: an authenticated user reopens scanning, so a fresh 24-hour window starts
+    // Resume: an authenticated user reopens scanning, so a fresh 24-hour window starts and
+    // the wrong-OTP counter clears. Without that, five bad guesses locked the phones out of a
+    // session for good and the only way on was to abandon it.
     db.prepare(
-      "UPDATE scan_sessions SET status = 'active', expires_at = datetime('now', '+8 hours'), scan_window_started_at = datetime('now') WHERE session_id = ?"
+      "UPDATE scan_sessions SET status = 'active', otp_attempts = 0, expires_at = datetime('now', '+8 hours'), scan_window_started_at = datetime('now') WHERE session_id = ?"
     ).run(sessionId);
   } else {
     // Saving as draft — extend expiry 24 hours from now so the owner can review it later
@@ -328,6 +356,8 @@ sessionsRouter.get('/session/:id', authenticateToken, (req: AuthRequest, res) =>
   // silently freezes the live feed by causing the cursor branch to return no rows.
   const rawSinceId = typeof req.query.since_id === 'string' ? Number(req.query.since_id) : null;
   const sinceId = rawSinceId !== null && Number.isFinite(rawSinceId) ? rawSinceId : null;
+  // Opened straight from a link or a restored tab, not through the list above.
+  parkExpiredSessions(req.user.store_id);
   const session = db
     .prepare('SELECT * FROM scan_sessions WHERE session_id = ? AND store_id = ?')
     .get(id, req.user.store_id) as any;
@@ -503,7 +533,7 @@ sessionsRouter.post(
       const cached =
         upcVariants(cleanUpc)
           .map(v => upcCache.get(v))
-          .find(c => c && Date.now() - c.ts < UPC_CACHE_TTL) ?? null;
+          .find(c => upcCacheFresh(c)) ?? null;
       if (cached) {
         lookupStatus = cached.product_name ? 'new_candidate' : 'unknown';
         productName = cached.product_name;
@@ -628,21 +658,23 @@ sessionsRouter.post(
 
     // Background lookup — fires after response is sent, result visible on next poll
     if (needsBackgroundLookup && !duplicate) {
-      lookupProductByUpc(cleanUpc)
-        .then(result => {
+      lookupProduct(cleanUpc)
+        .then(({ product: result, conclusive }) => {
           const resolvedName = result?.product_name || null;
           const resolvedBrand = result?.brand || null;
           const resolvedImage = result?.image || null;
           const resolvedSource = result?.source || 'scan_only';
           const resolvedStatus = resolvedName ? 'new_candidate' : 'unknown';
 
-          // Update cache regardless of whether we found anything
+          // Remember the answer either way, but an empty one from a provider that could
+          // not answer is only kept briefly so the barcode is looked up again soon.
           upcCacheSet(cleanUpc, {
             product_name: resolvedName,
             brand: resolvedBrand,
             image: resolvedImage,
             source: resolvedSource,
             ts: Date.now(),
+            ...(conclusive ? {} : { ttl: UPC_CACHE_FAILED_TTL }),
           });
 
           // Only update DB if we actually got something useful
@@ -674,13 +706,14 @@ sessionsRouter.post(
           }
         })
         .catch(() => {
-          // External API failed — cache as unknown so we don't retry until TTL expires
+          // The lookup itself failed — hold off briefly, then let the next scan try again.
           upcCacheSet(cleanUpc, {
             product_name: null,
             brand: null,
             image: null,
             source: 'scan_only',
             ts: Date.now(),
+            ttl: UPC_CACHE_FAILED_TTL,
           });
         });
     }

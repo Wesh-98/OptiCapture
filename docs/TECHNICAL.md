@@ -368,8 +368,8 @@ Owner reviews selected items
 Session behavior:
 
 - Empty active sessions are reused for the same user and store.
-- Fresh sessions expire after 8 hours.
-- Draft sessions extend expiry to 24 hours.
+- Phone scanning on a session expires 8 hours after creation, resume, or the latest scan.
+- An expired session that holds scans becomes a draft. Drafts stay listed until committed or deleted; resuming one starts a new scan window and clears the wrong-OTP counter.
 - Completed sessions cannot be reactivated or deleted.
 - Duplicate UPC scans increment quantity.
 - Device IDs are preserved when a staged item belongs to one device; mixed-device duplicates are treated as shared.

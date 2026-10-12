@@ -289,11 +289,28 @@ export function isValidGtin(code: string): boolean | null {
   return null;
 }
 
-export async function fetchGoUpc(upc: string, signal: AbortSignal): Promise<LookupResult | null> {
+/**
+ * What one provider said about a barcode. `failed` means it could not answer (network
+ * error, timeout, rate limit, server error) — which is not the same as "no such product",
+ * and must not be remembered as one.
+ */
+export interface ProviderOutcome {
+  product: LookupResult | null;
+  failed: boolean;
+}
+
+const NOT_FOUND: ProviderOutcome = { product: null, failed: false };
+const FAILED: ProviderOutcome = { product: null, failed: true };
+
+// A provider answers 404 (or 400 for a code it will not look up) when it has no such
+// product. Anything else that is not a success means it could not answer.
+const answeredNotFound = (status: number) => status === 404 || status === 400;
+
+async function goUpcOutcome(upc: string, signal: AbortSignal): Promise<ProviderOutcome> {
   try {
     const apiKey = process.env.GO_UPC_API_KEY?.trim();
     // Go-UPC API requires an API key for lookups
-    if (!apiKey) return null;
+    if (!apiKey) return NOT_FOUND;
 
     const url = `https://go-upc.com/api/v1/code/${encodeURIComponent(upc)}`;
     const headers: Record<string, string> = {
@@ -302,133 +319,153 @@ export async function fetchGoUpc(upc: string, signal: AbortSignal): Promise<Look
     };
 
     const res = await fetch(url, { headers, signal });
-    if (!res.ok) return null;
+    if (!res.ok) return answeredNotFound(res.status) ? NOT_FOUND : FAILED;
     const data = (await res.json()) as any;
 
-    if (!data?.product?.name) return null;
-
-    const product = data.product;
-    const product_name = product.name?.trim() || null;
-    if (!product_name) return null;
+    const product = data?.product;
+    const product_name = product?.name?.trim() || null;
+    if (!product_name) return NOT_FOUND;
 
     return {
-      product_name,
-      brand: product.brand?.trim() || null,
-      image: product.imageUrl || null,
-      source: 'go_upc',
+      product: {
+        product_name,
+        brand: product.brand?.trim() || null,
+        image: product.imageUrl || null,
+        source: 'go_upc',
+      },
+      failed: false,
     };
   } catch {
-    return null;
+    return FAILED;
   }
 }
 
-export async function fetchOpenFoodFacts(
-  upc: string,
-  signal: AbortSignal
-): Promise<LookupResult | null> {
+async function openFoodFactsOutcome(upc: string, signal: AbortSignal): Promise<ProviderOutcome> {
   try {
     const res = await fetch(
       `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(upc)}.json`,
       { headers: { 'User-Agent': 'OptiCapture/1.0' }, signal }
     );
-    if (!res.ok) return null;
+    if (!res.ok) return answeredNotFound(res.status) ? NOT_FOUND : FAILED;
     const data = (await res.json()) as any;
     const p = data?.product;
-    if (!p) return null;
+    if (!p) return NOT_FOUND;
     const product_name = p.product_name?.trim() || p.product_name_en?.trim() || null;
-    if (!product_name) return null;
+    if (!product_name) return NOT_FOUND;
     const brand =
       typeof p.brands === 'string' && p.brands.trim() ? p.brands.split(',')[0].trim() : null;
     const image = p.image_front_url || p.image_url || null;
-    return { product_name, brand, image, source: 'open_food_facts' };
+    return { product: { product_name, brand, image, source: 'open_food_facts' }, failed: false };
   } catch {
-    return null;
+    return FAILED;
   }
 }
 
-export async function fetchUpcItemDb(
-  upc: string,
-  signal: AbortSignal
-): Promise<LookupResult | null> {
+async function upcItemDbOutcome(upc: string, signal: AbortSignal): Promise<ProviderOutcome> {
   try {
     const apiKey = process.env.UPCITEMDB_API_KEY?.trim();
     // Use paid /v1 endpoint when a key is configured, trial endpoint otherwise
     const url = `https://api.upcitemdb.com/prod/${apiKey ? 'v1' : 'trial'}/lookup?upc=${encodeURIComponent(upc)}`;
     const headers: Record<string, string> = apiKey ? { 'x-user-key': apiKey } : {};
     const res = await fetch(url, { headers, signal });
-    if (!res.ok) return null;
+    if (!res.ok) return answeredNotFound(res.status) ? NOT_FOUND : FAILED;
     const data = (await res.json()) as any;
     const item = data?.items?.[0];
-    if (!item?.title) return null;
+    if (!item?.title) return NOT_FOUND;
     return {
-      product_name: item.title.trim(),
-      brand: item.brand?.trim() || null,
-      image: Array.isArray(item.images) && item.images.length > 0 ? item.images[0] : null,
-      source: 'upcitemdb',
+      product: {
+        product_name: item.title.trim(),
+        brand: item.brand?.trim() || null,
+        image: Array.isArray(item.images) && item.images.length > 0 ? item.images[0] : null,
+        source: 'upcitemdb',
+      },
+      failed: false,
     };
   } catch {
-    return null;
+    return FAILED;
   }
 }
 
-export async function lookupProductByUpc(upc: string): Promise<LookupResult | null> {
+export async function fetchGoUpc(upc: string, signal: AbortSignal): Promise<LookupResult | null> {
+  return (await goUpcOutcome(upc, signal)).product;
+}
+
+export async function fetchOpenFoodFacts(
+  upc: string,
+  signal: AbortSignal
+): Promise<LookupResult | null> {
+  return (await openFoodFactsOutcome(upc, signal)).product;
+}
+
+export async function fetchUpcItemDb(
+  upc: string,
+  signal: AbortSignal
+): Promise<LookupResult | null> {
+  return (await upcItemDbOutcome(upc, signal)).product;
+}
+
+/** A lookup's product, and whether "no product" can be trusted as an answer. */
+export interface ProductLookup {
+  product: LookupResult | null;
+  /** False when nothing was found and at least one provider could not answer. */
+  conclusive: boolean;
+}
+
+export async function lookupProduct(upc: string): Promise<ProductLookup> {
   const cleanUpc = String(upc || '').trim();
-  if (!cleanUpc) return null;
+  if (!cleanUpc) return { product: null, conclusive: true };
 
   const variants = upcVariants(cleanUpc);
 
   // Run every configured provider concurrently so a slow premium provider never
   // delays the two fallbacks. Each provider has its own timeout.
-  const c0 = new AbortController();
-  const c1 = new AbortController();
-  const c2 = new AbortController();
-  const t0 = setTimeout(() => c0.abort(), 5000);
-  const t1 = setTimeout(() => c1.abort(), 5000);
-  const t2 = setTimeout(() => c2.abort(), 5000);
+  const acrossVariants = async (
+    provider: (upc: string, signal: AbortSignal) => Promise<ProviderOutcome>
+  ): Promise<ProviderOutcome> => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    try {
+      let failed = false;
+      for (const variant of variants) {
+        const outcome = await provider(variant, controller.signal);
+        if (outcome.product) return outcome;
+        failed ||= outcome.failed;
+      }
+      return { product: null, failed };
+    } finally {
+      clearTimeout(timeout);
+    }
+  };
 
-  const [goUpcResult, offResult, upcResult] = await Promise.allSettled([
-    (async () => {
-      for (const v of variants) {
-        const r = await fetchGoUpc(v, c0.signal);
-        if (r) return r;
-      }
-      return null;
-    })(),
-    (async () => {
-      for (const v of variants) {
-        const r = await fetchOpenFoodFacts(v, c1.signal);
-        if (r) return r;
-      }
-      return null;
-    })(),
-    (async () => {
-      for (const v of variants) {
-        const r = await fetchUpcItemDb(v, c2.signal);
-        if (r) return r;
-      }
-      return null;
-    })(),
+  const [goUpc, off, upcItemDb] = await Promise.all([
+    acrossVariants(goUpcOutcome),
+    acrossVariants(openFoodFactsOutcome),
+    acrossVariants(upcItemDbOutcome),
   ]);
 
-  clearTimeout(t0);
-  clearTimeout(t1);
-  clearTimeout(t2);
+  const pick = (): LookupResult | null => {
+    // Prefer the paid provider when configured and it returned a product. The
+    // concurrent execution above keeps its latency from blocking the fallbacks.
+    if (goUpc.product) return goUpc.product;
 
-  const goUpc = goUpcResult.status === 'fulfilled' ? goUpcResult.value : null;
-  const off = offResult.status === 'fulfilled' ? offResult.value : null;
-  const upc_ = upcResult.status === 'fulfilled' ? upcResult.value : null;
+    // Prefer whichever result has more complete data (name + image beats name-only).
+    // When both have an image, prefer UPCitemdb — cleaner retail labelling.
+    // When only one has a name, use that one regardless of source.
+    if (off.product && upcItemDb.product) {
+      if (upcItemDb.product.image) return upcItemDb.product; // UPCitemdb has image — use it
+      if (off.product.image) return off.product; // OFF has image, UPCitemdb doesn't
+      return upcItemDb.product; // Both name-only — UPCitemdb has cleaner names
+    }
+    return upcItemDb.product ?? off.product ?? null;
+  };
 
-  // Prefer the paid provider when configured and it returned a product. The
-  // concurrent execution above keeps its latency from blocking the fallbacks.
-  if (goUpc) return goUpc;
+  const product = pick();
+  return {
+    product,
+    conclusive: product !== null || !(goUpc.failed || off.failed || upcItemDb.failed),
+  };
+}
 
-  // Prefer whichever result has more complete data (name + image beats name-only).
-  // When both have an image, prefer UPCitemdb — cleaner retail labelling.
-  // When only one has a name, use that one regardless of source.
-  if (off && upc_) {
-    if (upc_.image) return upc_; // UPCitemdb has image — use it
-    if (off.image) return off; // OFF has image, UPCitemdb doesn't
-    return upc_; // Both name-only — UPCitemdb has cleaner names
-  }
-  return upc_ ?? off ?? null;
+export async function lookupProductByUpc(upc: string): Promise<LookupResult | null> {
+  return (await lookupProduct(upc)).product;
 }
