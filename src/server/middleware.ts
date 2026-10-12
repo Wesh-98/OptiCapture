@@ -130,6 +130,123 @@ function parseRequestedStoreId(req: express.Request): number | null {
   return Number.isNaN(storeId) ? null : storeId;
 }
 
+interface AuthUserRow {
+  id: number;
+  username: string;
+  role: string;
+  token_version: number;
+  must_reset_password: number;
+}
+
+function attachSuperadmin(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction,
+  dbUser: AuthUserRow,
+  mustResetPassword: boolean
+) {
+  // Superadmins manage stores through /api/admin and have no store of their own, so
+  // store-scoped routes would run their queries against a missing store_id.
+  if (
+    req.baseUrl !== '/api/admin' &&
+    !isStoreContextOptionalRequest(req) &&
+    !isPasswordResetAllowedRequest(req)
+  ) {
+    return res.status(403).json({ error: 'Superadmin accounts have no store context' });
+  }
+  (req as AuthRequest).user = {
+    id: dbUser.id,
+    username: dbUser.username,
+    role: 'superadmin',
+    token_version: dbUser.token_version ?? 1,
+    must_reset_password: mustResetPassword,
+  };
+  return next();
+}
+
+// Resolves which store this request acts on, then attaches the user with that store.
+function attachStoreUser(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction,
+  dbUser: AuthUserRow,
+  mustResetPassword: boolean
+) {
+  const accessibleStores = db
+    .prepare(
+      `
+        SELECT s.id, s.name, s.logo, s.status, us.role
+        FROM user_stores us
+        JOIN stores s ON s.id = us.store_id
+        WHERE us.user_id = ?
+        ORDER BY s.name ASC
+      `
+    )
+    .all(dbUser.id) as Array<{
+    id: number;
+    name: string;
+    logo: string | null;
+    status: string;
+    role: string;
+  }>;
+
+  const activeStores = accessibleStores.filter(store => store.status === 'active');
+  const requestedStoreId = parseRequestedStoreId(req);
+  let resolvedStore = null as (typeof activeStores)[number] | null;
+
+  if (requestedStoreId !== null) {
+    resolvedStore = accessibleStores.find(store => store.id === requestedStoreId) ?? null;
+    if (!resolvedStore) {
+      return res.status(403).json({ error: 'No access to that store' });
+    }
+  } else if (activeStores.length === 1) {
+    // Preserve the old simple UX for single-store users by auto-resolving
+    // the only active store when no header is present.
+    [resolvedStore] = activeStores;
+  }
+
+  const baseUser: ResolvedUser = {
+    id: dbUser.id,
+    username: dbUser.username,
+    role: dbUser.role,
+    token_version: dbUser.token_version ?? 1,
+    must_reset_password: mustResetPassword,
+    needs_store_selection: resolvedStore == null && activeStores.length > 1,
+  };
+
+  if (!resolvedStore) {
+    if (isStoreContextOptionalRequest(req)) {
+      // Let account-scoped routes return enough information for the client to
+      // render the store picker instead of failing the whole request.
+      (req as AuthRequest).user = baseUser;
+      return next();
+    }
+
+    // Nothing to pick from: every store this account can reach is suspended.
+    if (accessibleStores.length > 0 && activeStores.length === 0) {
+      return res.status(403).json({ error: 'Store account suspended' });
+    }
+    return res.status(409).json({
+      error: 'Store selection required',
+      needs_store_selection: true,
+    });
+  }
+
+  if (resolvedStore.status !== 'active') {
+    return res.status(403).json({ error: 'Store account suspended' });
+  }
+
+  (req as AuthRequest).user = {
+    ...baseUser,
+    role: resolvedStore.role,
+    store_id: resolvedStore.id,
+    store_name: resolvedStore.name,
+    store_logo: resolvedStore.logo,
+    needs_store_selection: false,
+  };
+  return next();
+}
+
 export const authenticateToken = (
   req: express.Request,
   res: express.Response,
@@ -150,15 +267,7 @@ export const authenticateToken = (
         .prepare(
           'SELECT id, username, role, token_version, must_reset_password FROM users WHERE id = ?'
         )
-        .get(user.id) as
-        | {
-            id: number;
-            username: string;
-            role: string;
-            token_version: number;
-            must_reset_password: number;
-          }
-        | undefined;
+        .get(user.id) as AuthUserRow | undefined;
       if (!dbUser || (dbUser.token_version ?? 1) !== (user.token_version ?? 1)) {
         return res.status(401).json({ error: 'Session invalidated. Please log in again.' });
       }
@@ -171,99 +280,9 @@ export const authenticateToken = (
         return res.status(403).json({ error: 'Password reset required before continuing.' });
       }
 
-      if (isSuperadmin) {
-        // Superadmins manage stores through /api/admin and have no store of their own, so
-        // store-scoped routes would run their queries against a missing store_id.
-        if (
-          req.baseUrl !== '/api/admin' &&
-          !isStoreContextOptionalRequest(req) &&
-          !isPasswordResetAllowedRequest(req)
-        ) {
-          return res.status(403).json({ error: 'Superadmin accounts have no store context' });
-        }
-        (req as AuthRequest).user = {
-          id: dbUser.id,
-          username: dbUser.username,
-          role: 'superadmin',
-          token_version: dbUser.token_version ?? 1,
-          must_reset_password: mustResetPassword,
-        };
-        return next();
-      }
+      if (isSuperadmin) return attachSuperadmin(req, res, next, dbUser, mustResetPassword);
 
-      const accessibleStores = db
-        .prepare(
-          `
-        SELECT s.id, s.name, s.logo, s.status, us.role
-        FROM user_stores us
-        JOIN stores s ON s.id = us.store_id
-        WHERE us.user_id = ?
-        ORDER BY s.name ASC
-      `
-        )
-        .all(dbUser.id) as Array<{
-        id: number;
-        name: string;
-        logo: string | null;
-        status: string;
-        role: string;
-      }>;
-
-      const activeStores = accessibleStores.filter(store => store.status === 'active');
-      const requestedStoreId = parseRequestedStoreId(req);
-      let resolvedStore = null as (typeof activeStores)[number] | null;
-
-      if (requestedStoreId !== null) {
-        resolvedStore = accessibleStores.find(store => store.id === requestedStoreId) ?? null;
-        if (!resolvedStore) {
-          return res.status(403).json({ error: 'No access to that store' });
-        }
-      } else if (activeStores.length === 1) {
-        // Preserve the old simple UX for single-store users by auto-resolving
-        // the only active store when no header is present.
-        [resolvedStore] = activeStores;
-      }
-
-      const baseUser: ResolvedUser = {
-        id: dbUser.id,
-        username: dbUser.username,
-        role: dbUser.role,
-        token_version: dbUser.token_version ?? 1,
-        must_reset_password: mustResetPassword,
-        needs_store_selection: resolvedStore == null && activeStores.length > 1,
-      };
-
-      if (!resolvedStore) {
-        if (isStoreContextOptionalRequest(req)) {
-          // Let account-scoped routes return enough information for the client to
-          // render the store picker instead of failing the whole request.
-          (req as AuthRequest).user = baseUser;
-          return next();
-        }
-
-        // Nothing to pick from: every store this account can reach is suspended.
-        if (accessibleStores.length > 0 && activeStores.length === 0) {
-          return res.status(403).json({ error: 'Store account suspended' });
-        }
-        return res.status(409).json({
-          error: 'Store selection required',
-          needs_store_selection: true,
-        });
-      }
-
-      if (resolvedStore.status !== 'active') {
-        return res.status(403).json({ error: 'Store account suspended' });
-      }
-
-      (req as AuthRequest).user = {
-        ...baseUser,
-        role: resolvedStore.role,
-        store_id: resolvedStore.id,
-        store_name: resolvedStore.name,
-        store_logo: resolvedStore.logo,
-        needs_store_selection: false,
-      };
-      return next();
+      return attachStoreUser(req, res, next, dbUser, mustResetPassword);
     }
   );
 };
