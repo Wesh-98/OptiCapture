@@ -15,7 +15,8 @@ process.on('exit', cleanup);
 process.on('SIGINT', () => { cleanup(); process.exit(0); });
 process.on('SIGTERM', () => { cleanup(); process.exit(0); });
 
-const child = spawn('cloudflared', [
+// Dev-only helper: cloudflared is whatever the developer installed, found through their PATH.
+const child = spawn('cloudflared', [ // NOSONAR
   'tunnel', '--url', 'https://localhost:3000', '--no-tls-verify'
 ], { stdio: ['ignore', 'pipe', 'pipe'] });
 

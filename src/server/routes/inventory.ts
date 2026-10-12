@@ -1280,6 +1280,65 @@ inventoryRouter.post(
 );
 
 // Batch Confirm — full sync with per-sheet column mapping
+// A sheet's chosen category, or its own name when none was chosen and the name says something.
+function sheetFallbackCategory(sheet: { sheetName: string; categoryName?: string | null }): string {
+  if (Object.hasOwn(sheet, 'categoryName')) return readImportedString(sheet.categoryName);
+  return isGenericImportSheetName(sheet.sheetName) ? '' : sheet.sheetName;
+}
+
+// True when the confirm payload is not a list of sheets shaped the way the mapping page sends them.
+function hasInvalidSheetsData(sheetsData: any): boolean {
+  return (
+    !Array.isArray(sheetsData) ||
+    sheetsData.length === 0 ||
+    sheetsData.some(
+      sheet =>
+        !isRecord(sheet) ||
+        typeof sheet.sheetName !== 'string' ||
+        (sheet.categoryName !== undefined &&
+          sheet.categoryName !== null &&
+          (typeof sheet.categoryName !== 'string' ||
+            sheet.categoryName.length > ITEM_LIMITS.category)) ||
+        !Array.isArray(sheet.rows) ||
+        !isRecord(sheet.mapping) ||
+        Object.values(sheet.mapping).some(
+          destination =>
+            typeof destination !== 'string' || !IMPORT_DESTINATION_FIELDS.has(destination)
+        ) ||
+        sheet.rows.some(row => !isRecord(row))
+    )
+  );
+}
+
+// What is wrong with one sheet's column mapping, or null.
+function sheetMappingError(sheet: {
+  sheetName: string;
+  categoryName?: string | null;
+  mapping: Record<string, string>;
+}): string | null {
+  // A sheet's own name becomes its category when none was chosen, so it is held to the
+  // category limit too.
+  if (!Object.hasOwn(sheet, 'categoryName') && sheet.sheetName.length > ITEM_LIMITS.category) {
+    return `A sheet name is longer than ${ITEM_LIMITS.category} characters. Choose a category for that sheet instead.`;
+  }
+  const destinations = Object.values(sheet.mapping).filter(
+    destination => destination !== '__ignore__'
+  );
+  const duplicateDestination = destinations.find(
+    (destination, index) => destinations.indexOf(destination) !== index
+  );
+  if (duplicateDestination) {
+    return `Sheet "${sheet.sheetName}" maps more than one column to ${duplicateDestination}.`;
+  }
+  if (!destinations.some(destination => IMPORT_IDENTIFIER_FIELDS.has(destination))) {
+    return `Sheet "${sheet.sheetName}" must map UPC, SKU / Item Number, External Item ID, or External SKU.`;
+  }
+  if (destinations.includes('external_item_id') && !destinations.includes('external_system')) {
+    return `Sheet "${sheet.sheetName}" maps External Item ID but not External System. Map the column that names the source platform, or unmap External Item ID.`;
+  }
+  return null;
+}
+
 // Accepts JSON body: { sheetsData: [{ sheetName, categoryName, rows, mapping }] }
 // M-3: Only this route needs large payloads (full sheet rows)
 inventoryRouter.post(
@@ -1295,59 +1354,12 @@ inventoryRouter.post(
         mapping: Record<string, string>;
       }[];
     };
-    if (
-      !Array.isArray(sheetsData) ||
-      sheetsData.length === 0 ||
-      sheetsData.some(
-        sheet =>
-          !isRecord(sheet) ||
-          typeof sheet.sheetName !== 'string' ||
-          (sheet.categoryName !== undefined &&
-            sheet.categoryName !== null &&
-            (typeof sheet.categoryName !== 'string' ||
-              sheet.categoryName.length > ITEM_LIMITS.category)) ||
-          !Array.isArray(sheet.rows) ||
-          !isRecord(sheet.mapping) ||
-          Object.values(sheet.mapping).some(
-            destination =>
-              typeof destination !== 'string' || !IMPORT_DESTINATION_FIELDS.has(destination)
-          ) ||
-          sheet.rows.some(row => !isRecord(row))
-      )
-    ) {
+    if (hasInvalidSheetsData(sheetsData)) {
       return res.status(400).json({ error: 'Invalid sheets data' });
     }
 
-    for (const sheet of sheetsData) {
-      // A sheet's own name becomes its category when none was chosen, so it is held to the
-      // category limit too.
-      if (!Object.hasOwn(sheet, 'categoryName') && sheet.sheetName.length > ITEM_LIMITS.category) {
-        return res.status(400).json({
-          error: `A sheet name is longer than ${ITEM_LIMITS.category} characters. Choose a category for that sheet instead.`,
-        });
-      }
-      const destinations = Object.values(sheet.mapping).filter(
-        destination => destination !== '__ignore__'
-      );
-      const duplicateDestination = destinations.find(
-        (destination, index) => destinations.indexOf(destination) !== index
-      );
-      if (duplicateDestination) {
-        return res.status(400).json({
-          error: `Sheet "${sheet.sheetName}" maps more than one column to ${duplicateDestination}.`,
-        });
-      }
-      if (!destinations.some(destination => IMPORT_IDENTIFIER_FIELDS.has(destination))) {
-        return res.status(400).json({
-          error: `Sheet "${sheet.sheetName}" must map UPC, SKU / Item Number, External Item ID, or External SKU.`,
-        });
-      }
-      if (destinations.includes('external_item_id') && !destinations.includes('external_system')) {
-        return res.status(400).json({
-          error: `Sheet "${sheet.sheetName}" maps External Item ID but not External System. Map the column that names the source platform, or unmap External Item ID.`,
-        });
-      }
-    }
+    const mappingError = sheetsData.map(sheetMappingError).find(Boolean);
+    if (mappingError) return res.status(400).json({ error: mappingError });
 
     const requestedRows = sheetsData.reduce((n, sheet) => n + sheet.rows.length, 0);
     if (requestedRows > MAX_IMPORT_ROWS) {
@@ -1581,7 +1593,9 @@ inventoryRouter.post(
       sheetCatId: number | null;
     }
 
-    const processRow = ({ sheet, row, rowIdx, sheetCatId }: ImportWorkItem) => {
+    // Reads one row through its sheet mapping and checks it. A row that cannot be imported is
+    // reported (skipped or as an error) and comes back as null.
+    const prepareRow = ({ sheet, row, rowIdx }: ImportWorkItem) => {
       const item: Record<string, any> = {};
       for (const [src, dest] of Object.entries(sheet.mapping)) {
         if (dest && dest !== '__ignore__') item[dest] = row[src];
@@ -1607,7 +1621,7 @@ inventoryRouter.post(
           sheet: sheet.sheetName,
           item_name: rawName,
         });
-        return;
+        return null;
       }
 
       // An external item ID is only an identity together with its source system;
@@ -1616,7 +1630,7 @@ inventoryRouter.post(
         addError(
           `"${itemName || upc || number || externalItemId}": External System is required when External Item ID is set`
         );
-        return;
+        return null;
       }
 
       const rowLabel = (itemName || upc || number || externalItemId || externalSku).slice(0, 80);
@@ -1639,7 +1653,7 @@ inventoryRouter.post(
       const tooLong = lengthChecks.find(([, value, max]) => value.length > max);
       if (tooLong) {
         addError(`"${rowLabel}": ${tooLong[0]} must be ${tooLong[2]} characters or fewer`);
-        return;
+        return null;
       }
       const qtyResult = parseImportNumber(item.quantity, 'Quantity', { integer: true });
       const priceResult = parseImportNumber(item.sale_price, 'Sale price');
@@ -1647,114 +1661,174 @@ inventoryRouter.post(
       const numberError = qtyResult.error ?? priceResult.error ?? taxResult.error;
       if (numberError) {
         addError(`"${rowLabel}": ${numberError}`);
+        return null;
+      }
+      return {
+        item,
+        itemName,
+        upc,
+        number,
+        externalSystem,
+        externalStoreId,
+        externalCategoryId,
+        externalItemId,
+        externalSku,
+        rowLabel,
+        qty: qtyResult.value,
+        salePrice: priceResult.value,
+        taxPct: taxResult.value,
+      };
+    };
+    type PreparedRow = NonNullable<ReturnType<typeof prepareRow>>;
+
+    // The item this row updates: matched by external ID, then UPC, then item number, then
+    // external SKU.
+    const findExistingItem = (p: PreparedRow): { id: number } | null | undefined =>
+      (p.externalItemId
+        ? checkExternalItem.get(p.externalItemId, user.store_id, p.externalSystem)
+        : null) ??
+      (p.upc ? findByUpc(p.upc) : null) ??
+      (p.number ? checkNum.get(p.number, user.store_id) : null) ??
+      (p.externalSku ? checkExternalSku.get(p.externalSku, user.store_id) : null);
+
+    // Saves the row's image and returns the value to store. `upload.path` is set to the file
+    // this import wrote, if any, before anything else can fail, so a failed write can still
+    // be cleaned up.
+    const saveRowImage = (rawImage: string, rowLabel: string, upload: { path: string | null }) => {
+      const normalizedImage = rawImage ? normalizeImageUrl(rawImage) : null;
+      const image = normalizedImage ? saveBase64Image(normalizedImage) : null;
+      // Only what this import actually wrote counts as its own, so a rollback cannot
+      // delete a file the sheet merely referenced.
+      upload.path = normalizedImage && image ? savedUploadPath(normalizedImage, image) : null;
+      if (
+        !upload.path &&
+        image?.startsWith('/uploads/') &&
+        !storeOwnsUpload.get(user.store_id, image)
+      ) {
+        addError(
+          `"${rowLabel}": image "${image}" is not an upload of this store, so it was left off the item`
+        );
+        return null;
+      }
+      return image;
+    };
+
+    interface RowFields {
+      desc: string;
+      unit: string;
+      tags: string;
+      catId: number | null;
+      status: string | null;
+      image: string | null;
+      importedAt: string;
+    }
+
+    const updateRow = (existingId: number, p: PreparedRow, fields: RowFields) =>
+      updateStmt.run(
+        p.itemName,
+        fields.desc,
+        p.qty,
+        fields.unit,
+        p.salePrice,
+        p.taxPct,
+        fields.tags,
+        fields.catId,
+        fields.status,
+        fields.image,
+        p.externalSystem,
+        p.externalStoreId,
+        p.externalCategoryId,
+        p.externalItemId,
+        p.externalSku,
+        fields.importedAt,
+        existingId,
+        user.store_id
+      );
+
+    // Quantity stays empty rather than inventing stock.
+    const insertRow = (p: PreparedRow, fields: RowFields) =>
+      insertStmt.run(
+        p.itemName,
+        fields.desc,
+        p.qty,
+        fields.unit,
+        p.salePrice,
+        p.taxPct,
+        p.upc || null,
+        p.number || null,
+        fields.tags,
+        fields.catId,
+        fields.status ?? 'Active',
+        fields.image,
+        p.externalSystem || null,
+        p.externalStoreId || null,
+        p.externalCategoryId || null,
+        p.externalItemId || null,
+        p.externalSku || null,
+        fields.importedAt,
+        'imported',
+        user.store_id
+      );
+
+    const writeRow = (
+      p: PreparedRow,
+      sheetCatId: number | null,
+      upload: { path: string | null }
+    ) => {
+      const { item } = p;
+      const statusText = readImportedString(item.status);
+      const status = statusText ? normalizeInventoryStatus(statusText) : null;
+      const desc = readImportedString(item.description);
+      const unit = readImportedString(item.unit);
+      const tags = readImportedString(item.tag_names);
+      const rowCategory = readImportedString(item.category);
+      const catId = rowCategory ? getCategoryId(rowCategory) : sheetCatId;
+
+      const existing = findExistingItem(p);
+      // A new item needs a real name; a placeholder would reach the catalog as if it were
+      // one. Checked before the image is saved, so a rejected row writes nothing to disk.
+      if (!existing && !p.itemName) {
+        addError(`"${p.rowLabel}": Item name is required for a new item`);
         return;
       }
 
+      const image = saveRowImage(readImportedString(item.image), p.rowLabel, upload);
+      const fields: RowFields = {
+        desc,
+        unit,
+        tags,
+        catId,
+        status,
+        image,
+        importedAt: toSqliteUtc(),
+      };
+      if (existing) {
+        updateRow(existing.id, p, fields);
+        results.updated++;
+      } else {
+        insertRow(p, fields);
+        results.added++;
+      }
+    };
+
+    const processRow = (workItem: ImportWorkItem) => {
+      const prepared = prepareRow(workItem);
+      if (!prepared) return;
+
       // The file this row saved, if any — known before the write so a failed write can
       // still be cleaned up.
-      let createdUpload: string | null = null;
+      const upload: { path: string | null } = { path: null };
       try {
-        const qty = qtyResult.value;
-        const salePrice = priceResult.value;
-        const taxPct = taxResult.value;
-        const statusText = readImportedString(item.status);
-        const status = statusText ? normalizeInventoryStatus(statusText) : null;
-        const desc = readImportedString(item.description);
-        const unit = readImportedString(item.unit);
-        const tags = readImportedString(item.tag_names);
-        const rowCategory = readImportedString(item.category);
-        const catId = rowCategory ? getCategoryId(rowCategory) : sheetCatId;
-
-        const existing: any =
-          (externalItemId
-            ? checkExternalItem.get(externalItemId, user.store_id, externalSystem)
-            : null) ??
-          (upc ? findByUpc(upc) : null) ??
-          (number ? checkNum.get(number, user.store_id) : null) ??
-          (externalSku ? checkExternalSku.get(externalSku, user.store_id) : null);
-
-        // A new item needs a real name; a placeholder would reach the catalog as if it were
-        // one. Checked before the image is saved, so a rejected row writes nothing to disk.
-        if (!existing && !itemName) {
-          addError(`"${rowLabel}": Item name is required for a new item`);
-          return;
-        }
-
-        const rawImage = readImportedString(item.image);
-        const normalizedImage = rawImage ? normalizeImageUrl(rawImage) : null;
-        let image = normalizedImage ? saveBase64Image(normalizedImage) : null;
-        // Only what this import actually wrote counts as its own, so a rollback cannot
-        // delete a file the sheet merely referenced.
-        createdUpload = normalizedImage && image ? savedUploadPath(normalizedImage, image) : null;
-        if (
-          !createdUpload &&
-          image?.startsWith('/uploads/') &&
-          !storeOwnsUpload.get(user.store_id, image)
-        ) {
-          addError(
-            `"${rowLabel}": image "${image}" is not an upload of this store, so it was left off the item`
-          );
-          image = null;
-        }
-        const importedAt = toSqliteUtc();
-
-        if (existing) {
-          updateStmt.run(
-            itemName,
-            desc,
-            qty,
-            unit,
-            salePrice,
-            taxPct,
-            tags,
-            catId,
-            status,
-            image,
-            externalSystem,
-            externalStoreId,
-            externalCategoryId,
-            externalItemId,
-            externalSku,
-            importedAt,
-            existing.id,
-            user.store_id
-          );
-          results.updated++;
-        } else {
-          // Quantity stays empty rather than inventing stock.
-          insertStmt.run(
-            itemName,
-            desc,
-            qty,
-            unit,
-            salePrice,
-            taxPct,
-            upc || null,
-            number || null,
-            tags,
-            catId,
-            status ?? 'Active',
-            image,
-            externalSystem || null,
-            externalStoreId || null,
-            externalCategoryId || null,
-            externalItemId || null,
-            externalSku || null,
-            importedAt,
-            'imported',
-            user.store_id
-          );
-          results.added++;
-        }
-        if (createdUpload) savedImagePaths.push(createdUpload);
+        writeRow(prepared, workItem.sheetCatId, upload);
+        if (upload.path) savedImagePaths.push(upload.path);
       } catch (err: any) {
         // The row was not written, so nothing refers to the image it saved. The chunk still
         // commits, so the rollback cleanup would never see this file.
-        if (createdUpload) rejectedUploads.push(createdUpload);
+        if (upload.path) rejectedUploads.push(upload.path);
         // A full disk or an I/O error makes SQLite roll back the whole transaction. Every
         // later row would then commit on its own, outside the chunk, so stop the chunk here.
         if (!db.inTransaction) throw err;
-        addError(`"${itemName || upc || number}": ${err.message}`);
+        addError(`"${prepared.itemName || prepared.upc || prepared.number}": ${err.message}`);
       }
     };
 
@@ -1766,11 +1840,7 @@ inventoryRouter.post(
     // the commit loop below can slice it into chunks regardless of sheet boundaries.
     const work: ImportWorkItem[] = [];
     for (const sheet of sheetsData) {
-      const fallbackCategoryName = Object.hasOwn(sheet, 'categoryName')
-        ? readImportedString(sheet.categoryName)
-        : !isGenericImportSheetName(sheet.sheetName)
-          ? sheet.sheetName
-          : '';
+      const fallbackCategoryName = sheetFallbackCategory(sheet);
       const sheetCatId = fallbackCategoryName ? getCategoryId(fallbackCategoryName) : null;
       for (const [rowIdx, row] of sheet.rows.entries()) {
         work.push({ sheet, row, rowIdx, sheetCatId });
@@ -1781,43 +1851,36 @@ inventoryRouter.post(
     // rolls back, so a failure partway through reports from this instead.
     const committed = { rows: 0, added: 0, updated: 0, skipped: 0, errors_total: 0 };
 
-    try {
-      for (let start = 0; start < work.length; start += IMPORT_CHUNK_ROWS) {
-        const chunk = work.slice(start, start + IMPORT_CHUNK_ROWS);
-        const imagesBeforeChunk = savedImagePaths.length;
-        try {
-          commitChunk(chunk);
-        } catch (chunkError) {
-          // The chunk rolled back, so the images it wrote belong to no row any more.
-          await removeUploadedFiles(savedImagePaths.splice(imagesBeforeChunk));
-          throw chunkError;
-        } finally {
-          await removeUploadedFiles(rejectedUploads.splice(0));
-        }
-        Object.assign(committed, {
-          rows: start + chunk.length,
-          added: results.added,
-          updated: results.updated,
-          skipped: results.skipped,
-          errors_total: results.errors_total,
-        });
-        // Hand the event loop a turn between chunks so health checks and phone scans are
-        // still answered while a large import runs.
-        if (start + IMPORT_CHUNK_ROWS < work.length) {
-          await new Promise(resolve => setImmediate(resolve));
-        }
+    // Commits one chunk and cleans up after it.
+    const commitChunkAt = async (start: number) => {
+      const chunk = work.slice(start, start + IMPORT_CHUNK_ROWS);
+      const imagesBeforeChunk = savedImagePaths.length;
+      try {
+        commitChunk(chunk);
+      } catch (chunkError) {
+        // The chunk rolled back, so the images it wrote belong to no row any more.
+        await removeUploadedFiles(savedImagePaths.splice(imagesBeforeChunk));
+        throw chunkError;
+      } finally {
+        await removeUploadedFiles(rejectedUploads.splice(0));
       }
+      Object.assign(committed, {
+        rows: start + chunk.length,
+        added: results.added,
+        updated: results.updated,
+        skipped: results.skipped,
+        errors_total: results.errors_total,
+      });
+      // Hand the event loop a turn between chunks so health checks and phone scans are
+      // still answered while a large import runs.
+      if (start + IMPORT_CHUNK_ROWS < work.length) {
+        await new Promise(resolve => setImmediate(resolve));
+      }
+    };
 
-      // Counts only: the full skipped-row list used to be serialised into this one column.
-      db.prepare('INSERT INTO logs (action, details, user_id, store_id) VALUES (?, ?, ?, ?)').run(
-        'IMPORT',
-        `Imported ${work.length} rows across ${sheetsData.length} sheet(s): +${results.added} new, ~${results.updated} updated, ${results.skipped} skipped, ${results.errors_total} failed`,
-        user.id,
-        user.store_id
-      );
-      res.json(results);
-    } catch (err: any) {
-      logError('inventory:batch-confirm', err);
+    // Answers a failed import. Chunks committed before the failure stay in the database, so
+    // they are logged and reported rather than passed off as a total failure.
+    const respondImportStopped = () => {
       if (committed.rows === 0) {
         res.status(500).json({ error: 'An internal error occurred' });
         return;
@@ -1847,6 +1910,24 @@ inventoryRouter.post(
         skipped: committed.skipped,
         errors_total: committed.errors_total,
       });
+    };
+
+    try {
+      for (let start = 0; start < work.length; start += IMPORT_CHUNK_ROWS) {
+        await commitChunkAt(start); // NOSONAR: chunks commit in order, one transaction each
+      }
+
+      // Counts only: the full skipped-row list used to be serialised into this one column.
+      db.prepare('INSERT INTO logs (action, details, user_id, store_id) VALUES (?, ?, ?, ?)').run(
+        'IMPORT',
+        `Imported ${work.length} rows across ${sheetsData.length} sheet(s): +${results.added} new, ~${results.updated} updated, ${results.skipped} skipped, ${results.errors_total} failed`,
+        user.id,
+        user.store_id
+      );
+      res.json(results);
+    } catch (err: any) {
+      logError('inventory:batch-confirm', err);
+      respondImportStopped();
     }
   })
 );
