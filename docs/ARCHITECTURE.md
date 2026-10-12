@@ -321,8 +321,8 @@ Special cases:
 ### Enforcement
 
 - `authenticateToken` verifies signature, issuer, audience, token revocation, token version, password-reset state, store access, and store suspension.
-- `requireOwner` allows owners and superadmins to manage categories, exports, and batch imports.
-- `requireOwnerOrTaker` allows owners, superadmins, and takers to add, edit, and delete individual inventory items.
+- `requireOwner` allows owners to manage categories, exports, and batch imports.
+- `requireOwnerOrTaker` allows owners and takers to add, edit, and delete individual inventory items.
 - Superadmin-only behavior is enforced inside admin routes with a local `requireSuperadmin` guard.
 - Users with temporary reset passwords are forced to `/settings` and can only access the small set of auth endpoints needed to complete the reset.
 

@@ -53,8 +53,8 @@ if (!JWT_SECRET) {
 }
 
 // ── Process-level error guards ────────────────────────────────────────────────
-// Unhandled rejections crash Node 18+ silently — log before exit so the failure
-// is observable in logs rather than disappearing without a trace.
+// Log an unhandled rejection and keep serving; with this handler installed Node does not
+// exit on one. An uncaught exception leaves the process in an unknown state, so that exits.
 process.on('unhandledRejection', reason => {
   logError('process', reason, 'Unhandled promise rejection');
 });

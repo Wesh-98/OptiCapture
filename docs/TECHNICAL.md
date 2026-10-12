@@ -237,8 +237,8 @@ Role guards:
 | Guard | Allows |
 |---|---|
 | `authenticateToken` | Any valid account and resolved store when required |
-| `requireOwner` | owner, superadmin |
-| `requireOwnerOrTaker` | owner, taker, superadmin |
+| `requireOwner` | owner |
+| `requireOwnerOrTaker` | owner, taker |
 | `requireSuperadmin` | superadmin |
 
 Google OAuth flow:
@@ -276,7 +276,7 @@ Google OAuth flow:
 | GET | `/api/inventory` | cookie | List/search inventory; always returns `{ items, total, page, limit }` (default 50, maximum 500) |
 | GET | `/api/inventory/export?format=xlsx|csv|json|pdf` | owner | Export inventory and mark rows exported |
 | POST | `/api/inventory` | owner/taker | Create item |
-| PUT | `/api/inventory/:id` | owner/taker | Update item and invalidate UPC cache |
+| PUT | `/api/inventory/:id` | owner/taker | Update item |
 | DELETE | `/api/inventory/:id` | owner/taker | Delete item |
 | POST | `/api/inventory/batch-upload` | owner | Parse XLSX/CSV/JSON and return preview/mapping data |
 | POST | `/api/inventory/batch-confirm` | owner | Apply mapped import in a transaction |

@@ -171,8 +171,7 @@ sessionsRouter.post('/session/create', authenticateToken, (req: AuthRequest, res
     .get(req.user.id, req.user.store_id) as any;
 
   if (existing) {
-    // Upgrade OTP if it's in the old 6-digit format
-    const otp = existing.otp.length < 8 ? generateOTP() : existing.otp;
+    const otp = existing.otp;
     db.prepare(
       `
       UPDATE scan_sessions
@@ -916,13 +915,10 @@ sessionsRouter.post(
   requireOwner,
   (req: AuthRequest, res) => {
     const { id } = req.params;
-    // assignments: per-item [{id, category_id}] for new items — new format
-    // selectedIds + category_id — legacy fallback (single category for all)
+    // assignments: per-item [{id, category_id}] for new items
     // verifyIds: existing catalog items to record as seen on the shelf
-    const { assignments, selectedIds, category_id, verifyIds } = req.body as {
+    const { assignments, verifyIds } = req.body as {
       assignments?: Array<{ id: number; category_id: number }>;
-      selectedIds?: number[];
-      category_id?: number;
       verifyIds?: number[];
     };
     const user = req.user;
@@ -932,29 +928,21 @@ sessionsRouter.post(
     // a bad request.
     if (
       (assignments !== undefined && !Array.isArray(assignments)) ||
-      (selectedIds !== undefined && !Array.isArray(selectedIds)) ||
       (verifyIds !== undefined && !Array.isArray(verifyIds))
     ) {
-      return res
-        .status(400)
-        .json({ error: 'assignments, selectedIds and verifyIds must be arrays' });
+      return res.status(400).json({ error: 'assignments and verifyIds must be arrays' });
     }
     if (assignments?.some(entry => typeof entry !== 'object' || entry === null)) {
       return res.status(400).json({ error: 'Each assignment must be an object' });
     }
 
     // Build a normalised id→category_id map
-    let assignmentMap = new Map<number, number>();
-    if (assignments?.length) {
-      assignmentMap = new Map(assignments.map(a => [Number(a.id), Number(a.category_id)]));
-    } else if (category_id && selectedIds?.length) {
-      assignmentMap = new Map(selectedIds.map(id => [Number(id), Number(category_id)]));
-    }
+    const assignmentMap = new Map<number, number>(
+      (assignments ?? []).map(a => [Number(a.id), Number(a.category_id)])
+    );
     const verifySet = new Set(Array.isArray(verifyIds) ? verifyIds.map(Number) : []);
     if (assignmentMap.size === 0 && verifySet.size === 0) {
-      return res
-        .status(400)
-        .json({ error: 'assignments (or selectedIds + category_id) or verifyIds is required' });
+      return res.status(400).json({ error: 'assignments or verifyIds is required' });
     }
 
     // Verify session belongs to this store

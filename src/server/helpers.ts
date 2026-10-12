@@ -13,16 +13,13 @@ export const UPLOADS_DIR = process.env.UPLOADS_DIR?.trim()
   : path.join(__dirname, '..', '..', 'uploads');
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
-// M-7: Only allow safe image extensions from base64 uploads
-const ALLOWED_IMAGE_TYPES: Record<string, string> = {
-  jpeg: 'jpg',
-  jpg: 'jpg',
-  png: 'png',
-  gif: 'gif',
-  webp: 'webp',
+// M-7: The only image types a base64 upload may be, and the extension each is saved under.
+const IMAGE_EXTENSIONS: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
 };
-
-const ALLOWED_IMAGE_MIME_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'] as const;
 
 export class UnsupportedImageTypeError extends Error {
   constructor(message = 'Unsupported image format. Use JPG, PNG, GIF, or WEBP.') {
@@ -54,7 +51,7 @@ export function normalizeUsername(value: unknown): string {
 // The MIME string in the data URI is attacker-controlled; magic bytes are not.
 function verifyImageMagicBytes(buffer: Buffer, mimeType: string): boolean {
   if (buffer.length < 4) return false;
-  if (mimeType === 'image/jpeg' || mimeType === 'image/jpg') {
+  if (mimeType === 'image/jpeg') {
     return buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
   }
   if (mimeType === 'image/png') {
@@ -74,20 +71,13 @@ export function saveBase64Image(base64Data: string): string {
   // Any data URL must be one of the allowed images. Anything else used to fall through and
   // be stored raw in the database (an SVG, or a non-image data URL).
   if (!/^\s*data:/i.test(base64Data)) return base64Data;
-  const match = /^data:image\/(\w+);base64,(.+)$/.exec(base64Data);
+  const match = /^data:(image\/\w+);base64,(.+)$/.exec(base64Data);
   if (!match) throw new UnsupportedImageTypeError();
 
   // Only allow safe image types
-  const mimeMatch = /^data:([^;]+);base64,/.exec(base64Data);
-  if (
-    !mimeMatch ||
-    !ALLOWED_IMAGE_MIME_TYPES.includes(mimeMatch[1] as (typeof ALLOWED_IMAGE_MIME_TYPES)[number])
-  ) {
-    throw new UnsupportedImageTypeError();
-  }
-
-  const ext = ALLOWED_IMAGE_TYPES[match[1].toLowerCase()];
-  if (!ext) throw new UnsupportedImageTypeError();
+  const mimeType = match[1];
+  if (!Object.hasOwn(IMAGE_EXTENSIONS, mimeType)) throw new UnsupportedImageTypeError();
+  const ext = IMAGE_EXTENSIONS[mimeType];
   const buffer = Buffer.from(match[2], 'base64');
 
   // Size guard — 5 MB cap before writing to disk (body-parser limit is the outer bound)
@@ -96,7 +86,7 @@ export function saveBase64Image(base64Data: string): string {
   }
 
   // Magic-byte check — validate actual binary content matches the declared MIME type
-  if (!verifyImageMagicBytes(buffer, mimeMatch[1])) {
+  if (!verifyImageMagicBytes(buffer, mimeType)) {
     throw new UnsupportedImageTypeError();
   }
 

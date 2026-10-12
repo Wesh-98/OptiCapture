@@ -270,26 +270,26 @@ export function asyncRoute<Req extends express.Request = express.Request>(
   };
 }
 
-// Role guard — only owners and superadmins may manage categories, export, or batch import
+// Role guard — only owners may manage categories, export, or batch import. Superadmins are
+// turned away from store routes by authenticateToken before a role guard is reached.
 export const requireOwner = (
   req: express.Request,
   res: express.Response,
   next: express.NextFunction
 ) => {
   const { role } = (req as AuthRequest).user;
-  if (role !== 'owner' && role !== 'superadmin')
-    return res.status(403).json({ error: 'Insufficient permissions' });
+  if (role !== 'owner') return res.status(403).json({ error: 'Insufficient permissions' });
   next();
 };
 
-// Role guard — owners, superadmins, and takers may add/edit/delete individual inventory items
+// Role guard — owners and takers may add/edit/delete individual inventory items
 export const requireOwnerOrTaker = (
   req: express.Request,
   res: express.Response,
   next: express.NextFunction
 ) => {
   const { role } = (req as AuthRequest).user;
-  if (role !== 'owner' && role !== 'superadmin' && role !== 'taker')
+  if (role !== 'owner' && role !== 'taker')
     return res.status(403).json({ error: 'Insufficient permissions' });
   next();
 };

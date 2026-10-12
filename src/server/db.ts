@@ -239,16 +239,16 @@ if (!checkHQ) {
   db.prepare("INSERT INTO stores (id, name) VALUES (0, 'OptiCapture HQ')").run();
 }
 
-// Seed store
-const checkStore = db.prepare('SELECT id FROM stores WHERE id = 1').get();
-if (!checkStore) {
-  db.prepare("INSERT INTO stores (id, name) VALUES (1, 'OptiMart Downtown')").run();
-}
-
-// Seed demo accounts only when explicitly enabled (plus tests).
+// Seed the demo store and its accounts only when explicitly enabled (plus tests).
 // This avoids accidentally creating known credentials in a deployed environment
-// that forgot to set NODE_ENV=production.
+// that forgot to set NODE_ENV=production. The store used to be created regardless, so a
+// production database started life with an ownerless "OptiMart Downtown" in the store list.
 if (process.env.NODE_ENV === 'test' || process.env.ALLOW_DEMO_SEED === 'true') {
+  const checkStore = db.prepare('SELECT id FROM stores WHERE id = 1').get();
+  if (!checkStore) {
+    db.prepare("INSERT INTO stores (id, name) VALUES (1, 'OptiMart Downtown')").run();
+  }
+
   const checkUser = db.prepare('SELECT * FROM users WHERE username = ?').get('admin');
   if (!checkUser) {
     const hashedPassword = bcrypt.hashSync('admin123', 10);

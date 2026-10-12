@@ -5,7 +5,6 @@ import ExcelJS from 'exceljs';
 import Papa from 'papaparse';
 import { db } from '../db.js';
 import { authenticateToken, requireOwner, requireOwnerOrTaker, asyncRoute } from '../middleware.js';
-import { upcCache } from '../cache.js';
 import {
   saveBase64Image,
   normalizeImageUrl,
@@ -474,7 +473,7 @@ inventoryRouter.get('/inventory', authenticateToken, (req: AuthRequest, res) => 
   res.json(result);
 });
 
-// Export inventory — XLSX, CSV, JSON, PDF
+// IDs of every item in one category, for select-all across pages
 inventoryRouter.get('/inventory/ids', authenticateToken, (req: AuthRequest, res) => {
   const categoryId = Number(req.query.category_id);
   const storeId = req.user.store_id;
@@ -493,6 +492,7 @@ inventoryRouter.get('/inventory/ids', authenticateToken, (req: AuthRequest, res)
   res.json({ ids: rows.map(row => row.id) });
 });
 
+// Export inventory — XLSX, CSV, JSON, PDF
 inventoryRouter.get(
   '/inventory/export',
   authenticateToken,
@@ -1043,9 +1043,6 @@ export function updateInventoryItem(
       return { status: 404, body: { error: 'Item not found' } };
     }
 
-    // Invalidate UPC cache so mobile scanners see the updated product name immediately
-    if (existingItem.upc) upcCache.delete(existingItem.upc);
-    if (upc) upcCache.delete(String(upc));
     // A replaced or cleared image is removed unless something still points at it.
     if (image !== undefined) discardUploads([existingItem.image]);
 

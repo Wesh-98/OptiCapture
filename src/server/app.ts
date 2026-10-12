@@ -81,15 +81,7 @@ export function createApp() {
           // unsafe-inline removed in production — Vite dev injects inline scripts/styles
           scriptSrc: isProd ? ["'self'"] : ["'self'", "'unsafe-inline'"],
           styleSrc: isProd ? ["'self'"] : ["'self'", "'unsafe-inline'"],
-          imgSrc: [
-            "'self'",
-            'data:',
-            'https:',
-            'blob:',
-            'https://drive.google.com',
-            'https://docs.google.com',
-            'https://lh3.googleusercontent.com',
-          ],
+          imgSrc: ["'self'", 'data:', 'https:', 'blob:'],
           // Dev: allow all HTTPS so Vite HMR source-map fetches through the tunnel aren't blocked.
           // Prod: lock down to only the two external APIs we actually call.
           connectSrc: isProd

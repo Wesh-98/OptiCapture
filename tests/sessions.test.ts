@@ -95,19 +95,17 @@ beforeEach(() => {
 });
 
 describe('session creation and metadata', () => {
-  it('reuses an empty active session and upgrades legacy OTPs', async () => {
+  it('reuses an empty active session, keeping its OTP and clearing the wrong-OTP count', async () => {
     const first = await createSession();
 
-    db.prepare('UPDATE scan_sessions SET otp = ?, otp_attempts = 5 WHERE session_id = ?').run(
-      'ABC123',
+    db.prepare('UPDATE scan_sessions SET otp_attempts = 5 WHERE session_id = ?').run(
       first.sessionId
     );
 
     const second = await createSession();
 
     expect(second.sessionId).toBe(first.sessionId);
-    expect(second.otp).toHaveLength(8);
-    expect(second.otp).not.toBe('ABC123');
+    expect(second.otp).toBe(first.otp);
     expect(
       (
         db
@@ -890,8 +888,7 @@ describe('session item editing and commit flow', () => {
       .post(`/api/session/${completeSession.sessionId}/commit`)
       .set('Cookie', adminCookie)
       .send({
-        selectedIds: [commitItemId],
-        category_id: categoryId,
+        assignments: [{ id: commitItemId, category_id: categoryId }],
       });
     expect(commitRes.status).toBe(200);
     expect(commitRes.body.status).toBe('completed');
