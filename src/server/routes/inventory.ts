@@ -82,9 +82,11 @@ function sendImportPreview(res: express.Response, sheets: ImportPreviewSheet[]) 
 }
 
 // Multer — memory storage for file uploads (xlsx/csv import)
+// The 20 MB ceiling is deliberate: a full 50,000-row spreadsheet import runs past Sonar's
+// 8 MB default, and the routes using this are authenticated and capped by MAX_IMPORT_ROWS.
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 20 * 1024 * 1024, fieldSize: 10 * 1024 }, // 20 MB file, 10 KB per non-file field
+  limits: { fileSize: 20 * 1024 * 1024, fieldSize: 10 * 1024 }, // NOSONAR(S5693) 20 MB file, 10 KB per non-file field
 });
 
 const IMPORT_FORMAT_BY_EXTENSION: Record<string, 'xlsx' | 'csv' | 'json'> = {
