@@ -2,7 +2,7 @@ import express from 'express';
 import jwt from 'jsonwebtoken';
 import { randomUUID } from 'node:crypto';
 import { db } from '../db.js';
-import { authenticateToken, requireOwner, scanLimiter, asyncRoute } from '../middleware.js';
+import { authenticateToken, requireOwner, scanLimiter } from '../middleware.js';
 import type { AuthRequest } from '../types.js';
 import {
   isTokenRevoked,

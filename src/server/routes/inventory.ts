@@ -128,6 +128,30 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+// ExcelJS hands back an object for hyperlink, formula and rich-text cells. Null means the
+// object has none of the fields those carry.
+function normalizeImportedCellObject(
+  value: Record<string, unknown>
+): string | number | boolean | null {
+  if (typeof value.hyperlink === 'string' && value.hyperlink.trim()) {
+    return value.hyperlink.trim();
+  }
+  if (value.result !== undefined && value.result !== null) {
+    return normalizeImportedCellValue(value.result);
+  }
+  if (Array.isArray(value.richText)) {
+    const text = value.richText
+      .map(entry => (isRecord(entry) && typeof entry.text === 'string' ? entry.text : ''))
+      .join('')
+      .trim();
+    if (text) return text;
+  }
+  if (typeof value.text === 'string' && value.text.trim()) {
+    return value.text.trim();
+  }
+  return null;
+}
+
 function normalizeImportedCellValue(value: unknown): string | number | boolean {
   if (value === null || value === undefined) return '';
   if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
@@ -140,22 +164,8 @@ function normalizeImportedCellValue(value: unknown): string | number | boolean {
     return value.map(entry => String(normalizeImportedCellValue(entry))).join(', ');
   }
   if (isRecord(value)) {
-    if (typeof value.hyperlink === 'string' && value.hyperlink.trim()) {
-      return value.hyperlink.trim();
-    }
-    if (value.result !== undefined && value.result !== null) {
-      return normalizeImportedCellValue(value.result);
-    }
-    if (Array.isArray(value.richText)) {
-      const text = value.richText
-        .map(entry => (isRecord(entry) && typeof entry.text === 'string' ? entry.text : ''))
-        .join('')
-        .trim();
-      if (text) return text;
-    }
-    if (typeof value.text === 'string' && value.text.trim()) {
-      return value.text.trim();
-    }
+    const fromCell = normalizeImportedCellObject(value);
+    if (fromCell !== null) return fromCell;
   }
   return typeof value === 'bigint' ? value.toString() : (JSON.stringify(value) ?? '');
 }
