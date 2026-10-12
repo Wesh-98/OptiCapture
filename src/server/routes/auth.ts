@@ -21,6 +21,7 @@ import {
 } from '../helpers.js';
 import type { AuthRequest } from '../types.js';
 import { logError } from '../logger.js';
+import { discardUploads } from '../uploads.js';
 
 export const authRouter = express.Router();
 
@@ -702,6 +703,11 @@ authRouter.put('/store/settings', authenticateToken, requireOwner, (req: AuthReq
   if (zipcode && !/^\d{5}(-\d{4})?$/.test(zipcode))
     return res.status(400).json({ error: 'Zipcode format: 12345 or 12345-6789' });
   try {
+    const previousLogo = (
+      db.prepare('SELECT logo FROM stores WHERE id = ?').get(req.user.store_id) as
+        | { logo: string | null }
+        | undefined
+    )?.logo;
     // An omitted logo keeps the current one; an empty string clears it.
     const savedLogo = logo === undefined ? undefined : logo ? saveBase64Image(logo) : null;
     db.prepare(
@@ -729,6 +735,7 @@ authRouter.put('/store/settings', authenticateToken, requireOwner, (req: AuthReq
       req.user.id,
       req.user.store_id
     );
+    if (savedLogo !== undefined) discardUploads([previousLogo]);
 
     const updatedStore = db
       .prepare(

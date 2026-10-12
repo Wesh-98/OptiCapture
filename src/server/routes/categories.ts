@@ -3,6 +3,7 @@ import { db } from '../db.js';
 import { authenticateToken, requireOwner } from '../middleware.js';
 import type { AuthRequest } from '../types.js';
 import { logError } from '../logger.js';
+import { discardUploads } from '../uploads.js';
 
 export const categoriesRouter = express.Router();
 
@@ -31,6 +32,17 @@ function categoryNameTaken(name: string, storeId: number | undefined, exceptId?:
       )
       .get(name.trim(), storeId, exceptId === undefined ? null : Number(exceptId))
   );
+}
+
+/** The uploaded images of a category's items, read before those items are deleted. */
+function categoryItemUploads(categoryId: unknown, storeId: number | undefined): string[] {
+  return (
+    db
+      .prepare(
+        "SELECT image FROM inventory WHERE category_id = ? AND store_id = ? AND image LIKE '/uploads/%'"
+      )
+      .all(categoryId, storeId) as Array<{ image: string }>
+  ).map(row => row.image);
 }
 
 function writeCategoryLog(
@@ -83,7 +95,7 @@ categoriesRouter.get('/dashboard/stats', authenticateToken, (req: AuthRequest, r
     .get(...inventoryParams) as any;
   const outOfStock = db
     .prepare(
-      `SELECT COUNT(*) as count FROM inventory WHERE quantity = 0 AND store_id = ?${categoryCondition}`
+      `SELECT COUNT(*) as count FROM inventory WHERE COALESCE(quantity, 0) <= 0 AND store_id = ?${categoryCondition}`
     )
     .get(...inventoryParams) as any;
 
@@ -168,6 +180,7 @@ categoriesRouter.delete(
       .prepare('SELECT name FROM categories WHERE id = ? AND store_id = ?')
       .get(id, storeId) as { name: string } | undefined;
     if (!category) return res.status(404).json({ error: 'Category not found' });
+    const images = categoryItemUploads(id, storeId);
     db.transaction(() => {
       const result = db
         .prepare('DELETE FROM inventory WHERE category_id = ? AND store_id = ?')
@@ -179,6 +192,7 @@ categoriesRouter.delete(
         storeId
       );
     })();
+    discardUploads(images);
     res.json({ success: true });
   }
 );
@@ -269,11 +283,13 @@ categoriesRouter.delete(
       .prepare('SELECT name FROM categories WHERE id = ? AND store_id = ?')
       .get(id, storeId) as { name: string } | undefined;
     if (!category) return res.status(404).json({ error: 'Category not found' });
+    const images = categoryItemUploads(id, storeId);
     db.transaction(() => {
       db.prepare('DELETE FROM inventory WHERE category_id = ? AND store_id = ?').run(id, storeId);
       db.prepare('DELETE FROM categories WHERE id = ? AND store_id = ?').run(id, storeId);
       writeCategoryLog('DELETE', `Deleted category "${category.name}"`, req.user.id, storeId);
     })();
+    discardUploads(images);
     res.json({ success: true });
   }
 );

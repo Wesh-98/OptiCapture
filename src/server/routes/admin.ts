@@ -7,11 +7,10 @@ import {
   firstQueryValue,
   generateTempPassword,
   normalizeUsername,
-  removeUploadedFiles,
   saveBase64Image,
   UnsupportedImageTypeError,
-  uploadFileName,
 } from '../helpers.js';
+import { discardUploads, removeUnreferencedUploads } from '../uploads.js';
 import type { AuthRequest } from '../types.js';
 import { logError } from '../logger.js';
 import {
@@ -55,27 +54,6 @@ function isStoreRole(value: unknown): value is StoreRole {
 
 function isValidEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
-}
-
-/**
- * The upload files some surviving row still points at. A '/uploads/...' value in a deleted
- * store's row is not proof that the store owned the file — inventory POST/PUT and imports
- * can write an arbitrary path into inventory.image — so deleting a store must never unlink
- * a file something else still points at.
- *
- * Compared by uploadFileName, the key the unlink uses, not by the stored string:
- * '/uploads/sub/x.png' and an absolute 'https://…/uploads/x.png' both name x.png. One scan
- * builds the set rather than one query per file being deleted.
- */
-function referencedUploadFileNames(): Set<string> {
-  const rows = db
-    .prepare(
-      `SELECT image AS path FROM inventory WHERE image LIKE '%/uploads/%'
-       UNION SELECT logo AS path FROM stores WHERE logo LIKE '%/uploads/%'
-       UNION SELECT image AS path FROM session_items WHERE image LIKE '%/uploads/%'`
-    )
-    .all() as Array<{ path: string }>;
-  return new Set(rows.map(row => uploadFileName(row.path)));
 }
 
 function writeAdminLog(details: string, userId: number, storeId: number) {
@@ -732,9 +710,13 @@ adminRouter.delete(
         .prepare(
           `SELECT image AS path FROM inventory WHERE store_id = ? AND image LIKE '/uploads/%'
          UNION
-         SELECT logo AS path FROM stores WHERE id = ? AND logo LIKE '/uploads/%'`
+         SELECT logo AS path FROM stores WHERE id = ? AND logo LIKE '/uploads/%'
+         UNION
+         SELECT si.image AS path FROM session_items si
+           JOIN scan_sessions ss ON ss.session_id = si.session_id
+          WHERE ss.store_id = ? AND si.image LIKE '/uploads/%'`
         )
-        .all(storeId, storeId) as Array<{ path: string }>
+        .all(storeId, storeId, storeId) as Array<{ path: string }>
     ).map(row => row.path);
 
     db.transaction(() => {
@@ -779,10 +761,7 @@ adminRouter.delete(
 
     // Only after the transaction commits — a rollback must not take the files with it — and
     // only for files nothing else still references.
-    const stillReferenced = referencedUploadFileNames();
-    await removeUploadedFiles(
-      uploadedImages.filter(image => !stillReferenced.has(uploadFileName(image)))
-    );
+    await removeUnreferencedUploads(uploadedImages);
 
     writeAdminLog(`Deleted store "${store.name}" (${storeId})`, req.user.id, HQ_STORE_ID);
 
@@ -828,6 +807,11 @@ adminRouter.put('/stores/:id', authenticateToken, requireSuperadmin, (req: AuthR
     return res.status(400).json({ error: 'Zipcode format: 12345 or 12345-6789' });
   }
   try {
+    const previousLogo = (
+      db.prepare('SELECT logo FROM stores WHERE id = ?').get(storeId) as
+        | { logo: string | null }
+        | undefined
+    )?.logo;
     // An omitted logo keeps the current one; null or an empty string clears it.
     const savedLogo = logo === undefined ? undefined : logo ? saveBase64Image(logo) : null;
     db.prepare(
@@ -847,6 +831,7 @@ adminRouter.put('/stores/:id', authenticateToken, requireSuperadmin, (req: AuthR
     );
     db.prepare('UPDATE users SET store_name = ? WHERE store_id = ?').run(name.trim(), storeId);
     writeAdminLog(`Updated store "${name.trim()}" (${storeId})`, req.user.id, storeId);
+    if (savedLogo !== undefined) discardUploads([previousLogo]);
 
     const updatedStore = db
       .prepare(

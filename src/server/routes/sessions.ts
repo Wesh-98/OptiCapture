@@ -23,6 +23,7 @@ import {
 } from '../helpers.js';
 import { SESSION_STATUS } from '../types.js';
 import { logError } from '../logger.js';
+import { discardUploads } from '../uploads.js';
 
 export const sessionsRouter = express.Router();
 
@@ -136,6 +137,22 @@ function getSessionAccessError(
   }
 
   return null;
+}
+
+/** Uploaded photos on a session's staged items (or on one of them), read before deletion. */
+function stagedUploads(sessionId: string, itemId?: string): string[] {
+  const rows = (
+    itemId === undefined
+      ? db
+          .prepare("SELECT image FROM session_items WHERE session_id = ? AND image LIKE '/uploads/%'")
+          .all(sessionId)
+      : db
+          .prepare(
+            "SELECT image FROM session_items WHERE session_id = ? AND id = ? AND image LIKE '/uploads/%'"
+          )
+          .all(sessionId, itemId)
+  ) as Array<{ image: string }>;
+  return rows.map(row => row.image);
 }
 
 sessionsRouter.post('/session/create', authenticateToken, (req: AuthRequest, res) => {
@@ -277,10 +294,12 @@ sessionsRouter.delete('/session/:id', authenticateToken, (req: AuthRequest, res)
   if (!session) return res.status(404).json({ error: 'Session not found' });
   if (session.status === SESSION_STATUS.COMPLETED)
     return res.status(403).json({ error: 'Cannot delete a committed session.' });
+  const images = stagedUploads(sessionId);
   db.transaction(() => {
     db.prepare('DELETE FROM session_items WHERE session_id = ?').run(sessionId);
     db.prepare('DELETE FROM scan_sessions WHERE session_id = ?').run(sessionId);
   })();
+  discardUploads(images);
   res.json({ success: true });
 });
 
@@ -745,6 +764,7 @@ sessionsRouter.patch('/session/:id/items/:itemId', authenticateToken, (req: Auth
     | { exists_in_inventory: number; product_name: string | null; upc: string | null }
     | undefined;
   if (!stagedItem) return res.status(404).json({ error: 'Session item not found' });
+  const previousImages = image === undefined ? [] : stagedUploads(id, itemId);
   if (stagedItem.exists_in_inventory === 1) {
     return res.status(409).json({
       error: 'This item is already in your inventory. Edit it from the dashboard instead.',
@@ -846,6 +866,8 @@ sessionsRouter.patch('/session/:id/items/:itemId', authenticateToken, (req: Auth
     `
       )
       .get(itemId, id);
+    // A replaced or cleared photo is removed unless something still points at it.
+    discardUploads(previousImages);
 
     return res.json({ success: true, item: updatedItem });
   } catch (error) {
@@ -868,7 +890,9 @@ sessionsRouter.delete('/session/:id/items', authenticateToken, (req: AuthRequest
   if (!session) return res.status(403).json({ error: 'Forbidden' });
   if (session.status === SESSION_STATUS.COMPLETED)
     return res.status(403).json({ error: 'Cannot clear a committed session' });
+  const images = stagedUploads(req.params.id);
   db.prepare('DELETE FROM session_items WHERE session_id = ?').run(req.params.id);
+  discardUploads(images);
   res.json({ success: true });
 });
 
@@ -880,7 +904,9 @@ sessionsRouter.delete('/session/:id/items/:itemId', authenticateToken, (req: Aut
   if (!session) return res.status(403).json({ error: 'Forbidden' });
   if (session.status === SESSION_STATUS.COMPLETED)
     return res.status(403).json({ error: 'Cannot delete items from a committed session' });
+  const images = stagedUploads(id, itemId);
   db.prepare('DELETE FROM session_items WHERE id = ? AND session_id = ?').run(itemId, id);
+  discardUploads(images);
   res.json({ success: true });
 });
 

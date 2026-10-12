@@ -24,6 +24,24 @@ export function pruneAuditLogs() {
   db.prepare("DELETE FROM logs WHERE timestamp < datetime('now', '-90 days')").run();
 }
 
+// Scan-session retention, run with the audit-log sweep. Sessions holding scans are never
+// touched here — those stay until someone commits or deletes them. What goes is the residue:
+// sessions opened and never scanned into, which a new one is created over every time their
+// OTP lapses, and committed sessions older than the audit log that describes them.
+export function pruneScanSessions() {
+  db.prepare(
+    `DELETE FROM scan_sessions
+      WHERE status != 'completed'
+        AND expires_at IS NOT NULL AND datetime(expires_at) < datetime('now', '-1 day')
+        AND NOT EXISTS (SELECT 1 FROM session_items si WHERE si.session_id = scan_sessions.session_id)`
+  ).run();
+  db.prepare(
+    `DELETE FROM scan_sessions
+      WHERE status = 'completed' AND datetime(created_at) < datetime('now', '-90 days')
+        AND NOT EXISTS (SELECT 1 FROM session_items si WHERE si.session_id = scan_sessions.session_id)`
+  ).run();
+}
+
 // Database Initialization
 // Migration version tracking
 db.prepare(
@@ -737,8 +755,15 @@ runMigration(25, () => {
 
 // Run after all table creation / migrations so the logs table is guaranteed to exist
 pruneAuditLogs();
+pruneScanSessions();
 // .unref() so the daily retention sweep does not keep the event loop alive on its own.
-setInterval(pruneAuditLogs, 24 * 60 * 60 * 1000).unref();
+setInterval(
+  () => {
+    pruneAuditLogs();
+    pruneScanSessions();
+  },
+  24 * 60 * 60 * 1000
+).unref();
 
 // ── Performance indexes ───────────────────────────────────────────────────────
 // Idempotent — IF NOT EXISTS means safe to re-run on every boot after migrations.

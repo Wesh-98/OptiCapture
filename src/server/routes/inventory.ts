@@ -20,6 +20,7 @@ import {
 import { isReservedCategoryName } from './categories.js';
 import type { AuthRequest } from '../types.js';
 import { logError } from '../logger.js';
+import { discardUploads } from '../uploads.js';
 
 export const inventoryRouter = express.Router();
 
@@ -943,8 +944,10 @@ export function updateInventoryItem(
   if (!isCategoryInStore(category_id, storeId)) return bad('Invalid category');
 
   const existingItem = db
-    .prepare('SELECT item_name, upc FROM inventory WHERE id = ? AND store_id = ?')
-    .get(itemId, storeId) as { item_name: string; upc: string | null } | undefined;
+    .prepare('SELECT item_name, upc, image FROM inventory WHERE id = ? AND store_id = ?')
+    .get(itemId, storeId) as
+    | { item_name: string; upc: string | null; image: string | null }
+    | undefined;
   if (!existingItem) return { status: 404, body: { error: 'Item not found' } };
   // A UPC can be changed but not removed: scans, import matching and the cross-store view
   // all find the item by it. Items that never had one can still be edited without one.
@@ -1043,6 +1046,8 @@ export function updateInventoryItem(
     // Invalidate UPC cache so mobile scanners see the updated product name immediately
     if (existingItem.upc) upcCache.delete(existingItem.upc);
     if (upc) upcCache.delete(String(upc));
+    // A replaced or cleared image is removed unless something still points at it.
+    if (image !== undefined) discardUploads([existingItem.image]);
 
     return { status: 200, body: { success: true } };
   } catch (err: any) {
@@ -1082,7 +1087,7 @@ inventoryRouter.delete(
     const user = req.user;
 
     const deletedItem = db
-      .prepare('SELECT item_name, description FROM inventory WHERE id = ? AND store_id = ?')
+      .prepare('SELECT item_name, image FROM inventory WHERE id = ? AND store_id = ?')
       .get(id, user.store_id) as any;
 
     // Item not found in this store — either it doesn't exist or it belongs to
@@ -1099,6 +1104,7 @@ inventoryRouter.delete(
         user.store_id
       );
     })();
+    discardUploads([deletedItem.image]);
 
     res.json({ success: true });
   }

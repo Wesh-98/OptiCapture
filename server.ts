@@ -136,8 +136,20 @@ if (!isProduction) {
   app.use(vite.middlewares);
 } else {
   // Resolve against this file, not the working directory the process was started from.
-  app.use(express.static(path.join(__dirname, 'dist')));
+  // Vite names everything under assets/ by content hash, so those files never change and
+  // can be cached for good. index.html names the current hashes and must always be
+  // revalidated, or a browser would keep loading a build that no longer exists.
+  app.use(
+    '/assets',
+    express.static(path.join(__dirname, 'dist', 'assets'), {
+      immutable: true,
+      maxAge: '1y',
+      fallthrough: false,
+    })
+  );
+  app.use(express.static(path.join(__dirname, 'dist'), { index: false }));
   app.get('*', (_req, res) => {
+    res.setHeader('Cache-Control', 'no-cache');
     res.sendFile(path.join(__dirname, 'dist', 'index.html'));
   });
 }
