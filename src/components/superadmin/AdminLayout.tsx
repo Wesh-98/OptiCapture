@@ -81,11 +81,8 @@ export function AdminLayout({ onLogout, children, bare = false }: Readonly<Props
 
   // "Store inventory" opens the store being viewed, else the last one viewed, else the first.
   const lastStoreId = Number(readStorage(LAST_STORE_KEY) ?? Number.NaN);
-  const inventoryStoreId = onStorePage
-    ? viewedStoreId
-    : stores?.some(s => s.id === lastStoreId)
-      ? lastStoreId
-      : stores?.[0]?.id;
+  const fallbackStoreId = stores?.some(s => s.id === lastStoreId) ? lastStoreId : stores?.[0]?.id;
+  const inventoryStoreId = onStorePage ? viewedStoreId : fallbackStoreId;
 
   const nav: NavEntry[] = [
     {
@@ -132,54 +129,7 @@ export function AdminLayout({ onLogout, children, bare = false }: Readonly<Props
   return (
     <div className="h-screen bg-theme-canvas flex flex-col md:flex-row">
       {/* Sidebar: the same shape as the store portal's. Collapsed it shows icons only. */}
-      <aside
-        className={cn(
-          'hidden md:flex flex-col shrink-0 bg-white text-theme-muted border-r border-theme-border transition-all duration-300 relative',
-          railOpen ? 'w-64' : 'w-20'
-        )}
-      >
-        <Link
-          to="/admin"
-          className="p-4 border-b border-theme-border flex items-center justify-center h-16"
-        >
-          <img
-            src="/logo.svg"
-            alt="Inventory Portal logo"
-            className="w-10 h-10 shrink-0 object-contain"
-          />
-          {railOpen && (
-            <span className="ml-3 overflow-hidden whitespace-nowrap text-lg font-bold text-theme-text tracking-tight">
-              Inventory Portal
-            </span>
-          )}
-        </Link>
-
-        {/* Centred on the corner where the sidebar edge meets the top bar (h-16), clear of the
-            breadcrumbs that pages start with. z-30 keeps it above the top bar (a z-20 flex
-            item) and below the phone menu and the store switcher list. */}
-        <button
-          onClick={toggleRail}
-          aria-expanded={railOpen}
-          aria-label={railOpen ? 'Collapse menu' : 'Expand menu'}
-          title={railOpen ? 'Collapse menu' : 'Expand menu'}
-          className="absolute -right-3.5 top-12 bg-white text-brand-600 p-1.5 rounded-full shadow-md border-2 border-theme-border hover:bg-theme-subtle transition-all duration-200 z-30"
-        >
-          <ChevronRight
-            size={16}
-            className={cn('transition-transform duration-300', railOpen && 'rotate-180')}
-          />
-        </button>
-
-        <nav aria-label="Main" className="flex-1 p-2 space-y-2 mt-4">
-          {nav.map(entry => (
-            <NavItem key={entry.key} entry={entry} expanded={railOpen} />
-          ))}
-        </nav>
-
-        <div className="p-4 border-t border-theme-border">
-          <SignOutButton onLogout={onLogout} expanded={railOpen} />
-        </div>
-      </aside>
+      <AdminSidebar nav={nav} railOpen={railOpen} toggleRail={toggleRail} onLogout={onLogout} />
 
       <div className="relative flex-1 min-w-0 flex flex-col h-screen overflow-hidden">
         {/* Top bar: the store switcher and who is signed in. Navigation stays in the sidebar. */}
@@ -256,6 +206,66 @@ export function AdminLayout({ onLogout, children, bare = false }: Readonly<Props
         </main>
       </div>
     </div>
+  );
+}
+
+function AdminSidebar({
+  nav,
+  railOpen,
+  toggleRail,
+  onLogout,
+}: Readonly<
+  Pick<Props, 'onLogout'> & { nav: NavEntry[]; railOpen: boolean; toggleRail: () => void }
+>) {
+  return (
+    <aside
+      className={cn(
+        'hidden md:flex flex-col shrink-0 bg-white text-theme-muted border-r border-theme-border transition-all duration-300 relative',
+        railOpen ? 'w-64' : 'w-20'
+      )}
+    >
+      <Link
+        to="/admin"
+        className="p-4 border-b border-theme-border flex items-center justify-center h-16"
+      >
+        <img
+          src="/logo.svg"
+          alt="Inventory Portal logo"
+          className="w-10 h-10 shrink-0 object-contain"
+        />
+        {railOpen && (
+          <span className="ml-3 overflow-hidden whitespace-nowrap text-lg font-bold text-theme-text tracking-tight">
+            Inventory Portal
+          </span>
+        )}
+      </Link>
+
+      {/* Centred on the corner where the sidebar edge meets the top bar (h-16), clear of the
+            breadcrumbs that pages start with. z-30 keeps it above the top bar (a z-20 flex
+            item) and below the phone menu and the store switcher list. */}
+      <button
+        onClick={toggleRail}
+        aria-expanded={railOpen}
+        aria-label={railOpen ? 'Collapse menu' : 'Expand menu'}
+        title={railOpen ? 'Collapse menu' : 'Expand menu'}
+        className="absolute -right-3.5 top-12 bg-white text-brand-600 p-1.5 rounded-full shadow-md border-2 border-theme-border hover:bg-theme-subtle transition-all duration-200 z-30"
+      >
+        <ChevronRight
+          size={16}
+          className={cn('transition-transform duration-300', railOpen && 'rotate-180')}
+        />
+      </button>
+
+      <nav aria-label="Main" className="flex-1 p-2 space-y-2 mt-4">
+        {nav.map(entry => (
+          <NavItem key={entry.key} entry={entry} expanded={railOpen} />
+        ))}
+      </nav>
+
+      <div className="p-4 border-t border-theme-border">
+        <SignOutButton onLogout={onLogout} expanded={railOpen} />
+      </div>
+    </aside>
   );
 }
 
@@ -400,6 +410,8 @@ function StoreSwitcher({
 
   const needle = query.trim().toLowerCase();
   const matches = (stores ?? []).filter(s => s.name.toLowerCase().includes(needle));
+  const emptyNotice = matches.length === 0 ? 'No stores match.' : null;
+  const storesNotice = stores === null ? 'Loading stores...' : emptyNotice;
 
   return (
     <div ref={ref} className="relative min-w-0">
@@ -465,10 +477,8 @@ function StoreSwitcher({
             <p className="px-3 pt-2 pb-1 text-xs font-semibold text-slate-400 uppercase tracking-wider">
               Stores
             </p>
-            {stores === null ? (
-              <p className="px-3 py-2 text-sm text-theme-muted">Loading stores...</p>
-            ) : matches.length === 0 ? (
-              <p className="px-3 py-2 text-sm text-theme-muted">No stores match.</p>
+            {storesNotice ? (
+              <p className="px-3 py-2 text-sm text-theme-muted">{storesNotice}</p>
             ) : (
               matches.map(store => (
                 <SwitcherOption
