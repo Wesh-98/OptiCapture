@@ -32,6 +32,9 @@ export function ExportModal({
       role="presentation"
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
       onClick={onClose}
+      onKeyDown={e => {
+        if (e.key === 'Escape') onClose();
+      }}
     >
       <div
         role="dialog"
