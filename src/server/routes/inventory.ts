@@ -497,6 +497,111 @@ inventoryRouter.get('/inventory/ids', authenticateToken, (req: AuthRequest, res)
   res.json({ ids: rows.map(row => row.id) });
 });
 
+const EXPORT_COLUMNS = [
+  { key: 'external_system', label: 'external_system' },
+  { key: 'external_store_id', label: 'external_store_id' },
+  { key: 'external_category_id', label: 'external_category_id' },
+  { key: 'external_item_id', label: 'external_item_id' },
+  { key: 'external_sku', label: 'external_sku' },
+  { key: 'item_name', label: 'item_name' },
+  { key: 'brand', label: 'brand' },
+  { key: 'description', label: 'description' },
+  { key: 'quantity', label: 'quantity' },
+  { key: 'unit', label: 'unit' },
+  { key: 'sale_price', label: 'sale_price' },
+  { key: 'tax_percent', label: 'tax_percent' },
+  { key: 'upc', label: 'upc' },
+  { key: 'number', label: 'sku' },
+  { key: 'tag_names', label: 'tag_names' },
+  { key: 'image', label: 'image' },
+  { key: 'category', label: 'category' },
+  { key: 'status', label: 'status' },
+  { key: 'sync_status', label: 'sync_status' },
+  { key: 'last_imported_at', label: 'last_imported_at' },
+  { key: 'last_exported_at', label: 'last_exported_at' },
+  { key: 'created_at', label: 'created_at' },
+] as const;
+
+type ExportGroups = Map<string, any[]>;
+
+function exportCsv(grouped: ExportGroups): string {
+  // Quoting alone does not stop Excel/Sheets treating a leading =, +, -, @ (or a
+  // leading tab/CR) as a formula. An item named `=cmd|'/c calc'!A0` would then
+  // execute when an owner opens the export. Prefix those cells with a single
+  // quote so the spreadsheet renders them as literal text.
+  const csvCell = (v: string | number | null | undefined) => {
+    const raw = String(v ?? '');
+    const escaped = /^[=+\-@\t\r]/.test(raw) ? `'${raw}` : raw;
+    return `"${escaped.replaceAll('"', '""')}"`;
+  };
+  // One header row and data rows only: the category is already a column, and divider
+  // rows would break any system that imports this file.
+  const lines: string[] = [EXPORT_COLUMNS.map(column => csvCell(column.label)).join(',')];
+  for (const items of grouped.values()) {
+    for (const r of items)
+      lines.push(EXPORT_COLUMNS.map(column => csvCell(r[column.key])).join(','));
+  }
+  return lines.join('\n');
+}
+
+async function writeExportPdf(
+  res: express.Response,
+  filename: string,
+  total: number,
+  grouped: ExportGroups
+) {
+  const { default: PDFDocument } = await import('pdfkit');
+  const doc = new PDFDocument({ margin: 40, size: 'A4', layout: 'landscape' });
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}.pdf"`);
+  doc.pipe(res);
+  doc.fontSize(18).font('Helvetica-Bold').text('Inventory Report', { align: 'center' });
+  doc
+    .fontSize(10)
+    .font('Helvetica')
+    .fillColor('#666')
+    .text(`Generated: ${new Date().toLocaleString()}   |   Total items: ${total}`, {
+      align: 'center',
+    });
+  doc.moveDown(1.5);
+  for (const [cat, items] of grouped) {
+    doc.fontSize(12).font('Helvetica-Bold').fillColor('#214c51').text(cat);
+    doc.moveDown(0.3);
+    for (const item of items) {
+      doc
+        .fontSize(9)
+        .font('Helvetica')
+        .fillColor('#333')
+        .text(
+          `  ${item.item_name || '—'}   UPC: ${item.upc || '—'}   Qty: ${item.quantity ?? '—'}   Price: $${item.sale_price ?? '—'}   Unit: ${item.unit || '—'}   Status: ${item.status || '—'}`
+        );
+    }
+    doc.moveDown(0.8);
+  }
+  doc.end();
+}
+
+// xlsx — one sheet per category, sheet name = category name
+function buildExportWorkbook(grouped: ExportGroups) {
+  const wb = new ExcelJS.Workbook();
+  const usedSheetNames = new Set<string>();
+  for (const [cat, items] of grouped) {
+    // Excel sheet names: max 31 chars, strip invalid characters [ ] : * ? / \
+    const baseName = cat.replace(/[[\]:*?/\\]/g, '').slice(0, 31) || 'Sheet';
+    let sheetName = baseName;
+    let suffix = 2;
+    while (usedSheetNames.has(sheetName.toLocaleLowerCase())) {
+      const suffixText = ` (${suffix++})`;
+      sheetName = `${baseName.slice(0, 31 - suffixText.length)}${suffixText}`;
+    }
+    usedSheetNames.add(sheetName.toLocaleLowerCase());
+    const ws = wb.addWorksheet(sheetName);
+    ws.addRow(EXPORT_COLUMNS.map(column => column.label));
+    for (const r of items) ws.addRow(EXPORT_COLUMNS.map(column => r[column.key] ?? ''));
+  }
+  return wb;
+}
+
 // Export inventory — XLSX, CSV, JSON, PDF
 inventoryRouter.get(
   '/inventory/export',
@@ -555,31 +660,6 @@ inventoryRouter.get(
 
     const filename = `inventory-${Date.now()}`;
 
-    const EXPORT_COLUMNS = [
-      { key: 'external_system', label: 'external_system' },
-      { key: 'external_store_id', label: 'external_store_id' },
-      { key: 'external_category_id', label: 'external_category_id' },
-      { key: 'external_item_id', label: 'external_item_id' },
-      { key: 'external_sku', label: 'external_sku' },
-      { key: 'item_name', label: 'item_name' },
-      { key: 'brand', label: 'brand' },
-      { key: 'description', label: 'description' },
-      { key: 'quantity', label: 'quantity' },
-      { key: 'unit', label: 'unit' },
-      { key: 'sale_price', label: 'sale_price' },
-      { key: 'tax_percent', label: 'tax_percent' },
-      { key: 'upc', label: 'upc' },
-      { key: 'number', label: 'sku' },
-      { key: 'tag_names', label: 'tag_names' },
-      { key: 'image', label: 'image' },
-      { key: 'category', label: 'category' },
-      { key: 'status', label: 'status' },
-      { key: 'sync_status', label: 'sync_status' },
-      { key: 'last_imported_at', label: 'last_imported_at' },
-      { key: 'last_exported_at', label: 'last_exported_at' },
-      { key: 'created_at', label: 'created_at' },
-    ] as const;
-
     const serializeExportRow = (row: any) => {
       const { number, ...rest } = row;
       return { ...rest, sku: number };
@@ -595,23 +675,7 @@ inventoryRouter.get(
     }
 
     if (fmt === 'csv') {
-      // Quoting alone does not stop Excel/Sheets treating a leading =, +, -, @ (or a
-      // leading tab/CR) as a formula. An item named `=cmd|'/c calc'!A0` would then
-      // execute when an owner opens the export. Prefix those cells with a single
-      // quote so the spreadsheet renders them as literal text.
-      const csvCell = (v: string | number | null | undefined) => {
-        const raw = String(v ?? '');
-        const escaped = /^[=+\-@\t\r]/.test(raw) ? `'${raw}` : raw;
-        return `"${escaped.replaceAll('"', '""')}"`;
-      };
-      // One header row and data rows only: the category is already a column, and divider
-      // rows would break any system that imports this file.
-      const lines: string[] = [EXPORT_COLUMNS.map(column => csvCell(column.label)).join(',')];
-      for (const items of grouped.values()) {
-        for (const r of items)
-          lines.push(EXPORT_COLUMNS.map(column => csvCell(r[column.key])).join(','));
-      }
-      const body = lines.join('\n');
+      const body = exportCsv(grouped);
       markExported();
       res.setHeader('Content-Type', 'text/csv');
       res.setHeader('Content-Disposition', `attachment; filename="${filename}.csv"`);
@@ -635,55 +699,11 @@ inventoryRouter.get(
     }
 
     if (fmt === 'pdf') {
-      const { default: PDFDocument } = await import('pdfkit');
-      const doc = new PDFDocument({ margin: 40, size: 'A4', layout: 'landscape' });
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `attachment; filename="${filename}.pdf"`);
-      doc.pipe(res);
-      doc.fontSize(18).font('Helvetica-Bold').text('Inventory Report', { align: 'center' });
-      doc
-        .fontSize(10)
-        .font('Helvetica')
-        .fillColor('#666')
-        .text(`Generated: ${new Date().toLocaleString()}   |   Total items: ${rows.length}`, {
-          align: 'center',
-        });
-      doc.moveDown(1.5);
-      for (const [cat, items] of grouped) {
-        doc.fontSize(12).font('Helvetica-Bold').fillColor('#214c51').text(cat);
-        doc.moveDown(0.3);
-        for (const item of items) {
-          doc
-            .fontSize(9)
-            .font('Helvetica')
-            .fillColor('#333')
-            .text(
-              `  ${item.item_name || '—'}   UPC: ${item.upc || '—'}   Qty: ${item.quantity ?? '—'}   Price: $${item.sale_price ?? '—'}   Unit: ${item.unit || '—'}   Status: ${item.status || '—'}`
-            );
-        }
-        doc.moveDown(0.8);
-      }
-      doc.end();
+      await writeExportPdf(res, filename, rows.length, grouped);
       return;
     }
 
-    // xlsx — one sheet per category, sheet name = category name
-    const wb = new ExcelJS.Workbook();
-    const usedSheetNames = new Set<string>();
-    for (const [cat, items] of grouped) {
-      // Excel sheet names: max 31 chars, strip invalid characters [ ] : * ? / \
-      const baseName = cat.replace(/[[\]:*?/\\]/g, '').slice(0, 31) || 'Sheet';
-      let sheetName = baseName;
-      let suffix = 2;
-      while (usedSheetNames.has(sheetName.toLocaleLowerCase())) {
-        const suffixText = ` (${suffix++})`;
-        sheetName = `${baseName.slice(0, 31 - suffixText.length)}${suffixText}`;
-      }
-      usedSheetNames.add(sheetName.toLocaleLowerCase());
-      const ws = wb.addWorksheet(sheetName);
-      ws.addRow(EXPORT_COLUMNS.map(column => column.label));
-      for (const r of items) ws.addRow(EXPORT_COLUMNS.map(column => r[column.key] ?? ''));
-    }
+    const wb = buildExportWorkbook(grouped);
     const buf = await wb.xlsx.writeBuffer();
     markExported();
     res.setHeader(
@@ -695,62 +715,83 @@ inventoryRouter.get(
   })
 );
 
+// The checks on a new item run in this order so the first problem reported is the same one
+// the form shows first: name and description, then the numbers, then everything else.
+
+function categoryIdOrNull(value: unknown): number | null {
+  return value === '' || value === null || value === undefined ? null : Number(value);
+}
+
+function createItemFailure(err: any): { status: number; error: string } {
+  if (err instanceof UnsupportedImageTypeError) return { status: 400, error: err.message };
+  // A concurrent insert can still hit the unique (upc, store_id) or item-number index.
+  if (err.message?.includes('UNIQUE')) {
+    return { status: 409, error: 'An item with that UPC or number already exists' };
+  }
+  logError('inventory:create', err);
+  return { status: 500, error: 'An internal error occurred' };
+}
+
+function newItemTextError(body: any): string | null {
+  const { item_name, description } = body;
+  if (!item_name || typeof item_name !== 'string' || item_name.trim().length === 0)
+    return 'Item name is required';
+  if (item_name.length > 500) return 'Item name must be 500 characters or fewer';
+  if (description !== undefined && description !== null && typeof description !== 'string')
+    return 'Description must be a string';
+  if (description && description.length > 2000)
+    return 'Description must be 2000 characters or fewer';
+  return null;
+}
+
+function parseNewItemNumbers(
+  body: any
+): { error: string } | { quantity: number | null; salePrice: number | null; tax: number | null } {
+  if (body.quantity === null) return { error: 'quantity must be a number' };
+  const quantity = parseInventoryNumber(body.quantity, 'quantity', {
+    integer: true,
+    max: 1_000_000,
+    fallback: 0,
+  });
+  if (quantity.error) return { error: quantity.error };
+  const salePrice = parseInventoryNumber(body.sale_price, 'sale_price', { max: 1_000_000 });
+  if (salePrice.error) return { error: salePrice.error };
+  const tax = parseInventoryNumber(body.tax_percent, 'tax_percent', { max: 100 });
+  if (tax.error) return { error: tax.error };
+  return { quantity: quantity.value, salePrice: salePrice.value, tax: tax.value };
+}
+
+function newItemAttributeError(body: any, storeId: number | undefined): string | null {
+  const { upc, unit, tag_names, image, status, category_id } = body;
+  const stringError = validateInventoryStrings({ upc, unit, tag_names, image });
+  if (stringError) return stringError;
+  // A manual add must carry a UPC; the image is optional.
+  if (typeof upc !== 'string' || !upc.trim()) return 'UPC is required';
+  if (status !== undefined && !['Active', 'Inactive'].includes(status))
+    return 'status must be Active or Inactive';
+  if (!isCategoryInStore(category_id, storeId)) return 'Invalid category';
+  return null;
+}
+
 inventoryRouter.post(
   '/inventory',
   authenticateToken,
   requireOwnerOrTaker,
   (req: AuthRequest, res) => {
-    const {
-      item_name,
-      quantity,
-      category_id,
-      status,
-      image,
-      unit,
-      sale_price,
-      tax_percent,
-      description,
-      tag_names,
-      upc,
-    } = req.body;
+    const { item_name, category_id, status, image, unit, description, tag_names, upc } = req.body;
     const user = req.user;
 
-    if (!item_name || typeof item_name !== 'string' || item_name.trim().length === 0)
-      return res.status(400).json({ error: 'Item name is required' });
-    if (item_name.length > 500)
-      return res.status(400).json({ error: 'Item name must be 500 characters or fewer' });
-    if (description !== undefined && description !== null && typeof description !== 'string')
-      return res.status(400).json({ error: 'Description must be a string' });
-    if (description && description.length > 2000)
-      return res.status(400).json({ error: 'Description must be 2000 characters or fewer' });
-    if (quantity === null) return res.status(400).json({ error: 'quantity must be a number' });
-    const quantityValue = parseInventoryNumber(quantity, 'quantity', {
-      integer: true,
-      max: 1_000_000,
-      fallback: 0,
-    });
-    if (quantityValue.error) return res.status(400).json({ error: quantityValue.error });
-    const salePriceValue = parseInventoryNumber(sale_price, 'sale_price', { max: 1_000_000 });
-    if (salePriceValue.error) return res.status(400).json({ error: salePriceValue.error });
-    const taxValue = parseInventoryNumber(tax_percent, 'tax_percent', { max: 100 });
-    if (taxValue.error) return res.status(400).json({ error: taxValue.error });
-    const stringError = validateInventoryStrings({ upc, unit, tag_names, image });
-    if (stringError) return res.status(400).json({ error: stringError });
-    // A manual add must carry a UPC; the image is optional.
-    if (typeof upc !== 'string' || !upc.trim())
-      return res.status(400).json({ error: 'UPC is required' });
-    if (status !== undefined && !['Active', 'Inactive'].includes(status))
-      return res.status(400).json({ error: 'status must be Active or Inactive' });
-    if (!isCategoryInStore(category_id, user.store_id))
-      return res.status(400).json({ error: 'Invalid category' });
+    const textError = newItemTextError(req.body);
+    if (textError) return res.status(400).json({ error: textError });
+    const numbers = parseNewItemNumbers(req.body);
+    if ('error' in numbers) return res.status(400).json({ error: numbers.error });
+    const attributeError = newItemAttributeError(req.body, user.store_id);
+    if (attributeError) return res.status(400).json({ error: attributeError });
 
     const itemName = item_name.trim();
     // '' is an absent category, not category 0. Passing it straight through hit the
     // category_id foreign key and surfaced as a 500; the PUT route already normalises it.
-    const categoryIdValue =
-      category_id === '' || category_id === null || category_id === undefined
-        ? null
-        : Number(category_id);
+    const categoryIdValue = categoryIdOrNull(category_id);
     const cleanUpc = typeof upc === 'string' ? upc.trim() : '';
     // Two items may share a name (the same product in two sizes); they may not share a UPC.
     if (cleanUpc && findItemIdByUpc(cleanUpc, user.store_id) !== null) {
@@ -774,13 +815,13 @@ inventoryRouter.post(
           )
           .run(
             itemName,
-            quantityValue.value,
+            numbers.quantity,
             categoryIdValue,
             status ?? 'Active',
             savedImage,
             unit,
-            salePriceValue.value,
-            taxValue.value,
+            numbers.salePrice,
+            numbers.tax,
             description,
             tag_names,
             cleanUpc || null,
@@ -798,15 +839,8 @@ inventoryRouter.post(
       res.json({ id: info.lastInsertRowid });
     } catch (err: any) {
       if (createdUpload) void removeUploadedFiles([createdUpload]);
-      if (err instanceof UnsupportedImageTypeError) {
-        return res.status(400).json({ error: err.message });
-      }
-      // A concurrent insert can still hit the unique (upc, store_id) or item-number index.
-      if (err.message?.includes('UNIQUE')) {
-        return res.status(409).json({ error: 'An item with that UPC or number already exists' });
-      }
-      logError('inventory:create', err);
-      res.status(500).json({ error: 'An internal error occurred' });
+      const failure = createItemFailure(err);
+      res.status(failure.status).json({ error: failure.error });
     }
   }
 );
