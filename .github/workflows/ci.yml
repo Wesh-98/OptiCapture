@@ -44,7 +44,8 @@ jobs:
           node-version: '20'
           cache: 'npm'
       - run: npm ci
-      - run: npx playwright install --with-deps chromium
+      # The npm script runs the Playwright version pinned in package-lock.json.
+      - run: npm run test:e2e:install
       - run: npm run test:e2e
 
   build:

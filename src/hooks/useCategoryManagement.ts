@@ -78,7 +78,7 @@ export function useCategoryManagement(
       setShowCatModal(false);
       setEditingCategory(null);
       setCatForm({ name: '', icon: '' });
-      fetchCategories();
+      await fetchCategories();
     } catch {
       setCatError('Failed to save category');
     } finally {
