@@ -10,6 +10,7 @@ const TOAST_MS = 3000;
 export function useToastState() {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const nextIdRef = useRef(0);
 
   useEffect(
     () => () => {
@@ -19,7 +20,8 @@ export function useToastState() {
   );
 
   const addToast = useCallback<AddToast>((type, message) => {
-    const id = Math.random().toString(36).slice(2, 11);
+    nextIdRef.current += 1;
+    const id = String(nextIdRef.current);
     setToasts(prev => [...prev, { id, type, message }]);
     const timer = setTimeout(() => {
       setToasts(prev => prev.filter(t => t.id !== id));
