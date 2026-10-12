@@ -602,6 +602,69 @@ export function useScanSession(
     }
   }, [clearStoredSession, user]);
 
+  // Folds one poll response into the feed, the selection and the draft reminders.
+  const applyPolledItems = useCallback(
+    (data: SessionItem[], status: SessionStatus | null, replaceAll: boolean) => {
+      const nextCursor = getLatestCursor(data);
+      if (nextCursor) {
+        lastPollCursorRef.current = nextCursor;
+        lastItemAddedAtRef.current = Date.now();
+      }
+
+      const nextItems = mergeSessionItems(itemsRef.current, data, replaceAll);
+      setItems(nextItems);
+      if (status !== 'completed') {
+        setSelectedIds(
+          reconcileSelectedIds(
+            selectedIdsRef.current,
+            nextItems,
+            data,
+            manuallyDeselectedRef.current
+          )
+        );
+      }
+
+      const alertResult = evaluateSessionDraftAlert({
+        incomingCount: data.length,
+        sessionStatus: sessionStatusRef.current,
+        sessionStartTime: sessionStartTimeRef.current,
+        lastLongSessionAlertAt: lastLongSessionAlertRef.current,
+        lastItemAddedAt: lastItemAddedAtRef.current,
+        idleAlertFired: idleAlertFiredRef.current,
+      });
+      lastLongSessionAlertRef.current = alertResult.nextLastLongSessionAlertAt;
+      idleAlertFiredRef.current = alertResult.nextIdleAlertFired;
+      if (alertResult.alert) {
+        setDraftAlert(alertResult.alert);
+      }
+    },
+    []
+  );
+
+  const handlePollFailure = useCallback((error: unknown) => {
+    // A response with a status is the server telling us something specific; only a
+    // transport failure means it might be unreachable.
+    const responseOutcome =
+      error instanceof PollResponseError ? getPollResponseOutcome(error.status) : null;
+
+    let failure: ReturnType<typeof getPollFailureOutcome>;
+    if (responseOutcome) {
+      failure = responseOutcome;
+      if (responseOutcome.shouldStopPolling) pollHaltedRef.current = true;
+    } else {
+      pollFailCountRef.current += 1;
+      failure = getPollFailureOutcome(pollFailCountRef.current);
+    }
+
+    if (failure.shouldStopPolling && pollIntervalRef.current) {
+      globalThis.clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+    if (failure.uiStatus) setUiStatus(failure.uiStatus);
+    if (failure.statusMessage) setStatusMessage(failure.statusMessage);
+    setPollError(failure.pollError);
+  }, []);
+
   const fetchSessionItems = useCallback(
     async (fullRefresh = false) => {
       if (!sessionId) return;
@@ -627,65 +690,14 @@ export function useScanSession(
 
         pollFailCountRef.current = 0;
 
-        const nextCursor = getLatestCursor(data);
-        if (nextCursor) {
-          lastPollCursorRef.current = nextCursor;
-          lastItemAddedAtRef.current = Date.now();
-        }
-
-        const nextItems = mergeSessionItems(itemsRef.current, data, fullRefresh || cursor == null);
-        setItems(nextItems);
-        if (status !== 'completed') {
-          setSelectedIds(
-            reconcileSelectedIds(
-              selectedIdsRef.current,
-              nextItems,
-              data,
-              manuallyDeselectedRef.current
-            )
-          );
-        }
-
-        const alertResult = evaluateSessionDraftAlert({
-          incomingCount: data.length,
-          sessionStatus: sessionStatusRef.current,
-          sessionStartTime: sessionStartTimeRef.current,
-          lastLongSessionAlertAt: lastLongSessionAlertRef.current,
-          lastItemAddedAt: lastItemAddedAtRef.current,
-          idleAlertFired: idleAlertFiredRef.current,
-        });
-        lastLongSessionAlertRef.current = alertResult.nextLastLongSessionAlertAt;
-        idleAlertFiredRef.current = alertResult.nextIdleAlertFired;
-        if (alertResult.alert) {
-          setDraftAlert(alertResult.alert);
-        }
+        applyPolledItems(data, status, fullRefresh || cursor == null);
 
         setPollError(null);
       } catch (error) {
-        // A response with a status is the server telling us something specific; only a
-        // transport failure means it might be unreachable.
-        const responseOutcome =
-          error instanceof PollResponseError ? getPollResponseOutcome(error.status) : null;
-
-        let failure: ReturnType<typeof getPollFailureOutcome>;
-        if (responseOutcome) {
-          failure = responseOutcome;
-          if (responseOutcome.shouldStopPolling) pollHaltedRef.current = true;
-        } else {
-          pollFailCountRef.current += 1;
-          failure = getPollFailureOutcome(pollFailCountRef.current);
-        }
-
-        if (failure.shouldStopPolling && pollIntervalRef.current) {
-          globalThis.clearInterval(pollIntervalRef.current);
-          pollIntervalRef.current = null;
-        }
-        if (failure.uiStatus) setUiStatus(failure.uiStatus);
-        if (failure.statusMessage) setStatusMessage(failure.statusMessage);
-        setPollError(failure.pollError);
+        handlePollFailure(error);
       }
     },
-    [clearStoredSession, sessionId]
+    [applyPolledItems, clearStoredSession, handlePollFailure, sessionId]
   );
 
   const stopPolling = useCallback(() => {

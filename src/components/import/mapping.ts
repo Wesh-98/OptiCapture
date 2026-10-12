@@ -170,24 +170,25 @@ export function applyMappingToMatchingHeaders(
       if (sourceDestination === undefined) continue;
 
       matchedHeaders.add(header);
-      mapping[header] =
-        sourceDestination !== '__ignore__' && usedDestinations.has(sourceDestination)
-          ? '__ignore__'
-          : sourceDestination;
-      if (mapping[header] !== '__ignore__') usedDestinations.add(mapping[header]);
+      mapping[header] = claimDestination(sourceDestination, usedDestinations);
     }
 
     // Different headers retain their own auto-detected or manually selected mappings.
     for (const header of sheet.headers) {
       if (matchedHeaders.has(header)) continue;
       const current = sheet.mapping[header] ?? '__ignore__';
-      mapping[header] =
-        current !== '__ignore__' && usedDestinations.has(current) ? '__ignore__' : current;
-      if (mapping[header] !== '__ignore__') usedDestinations.add(mapping[header]);
+      mapping[header] = claimDestination(current, usedDestinations);
     }
 
     return { ...sheet, mapping };
   });
+}
+
+/** Keeps `wanted` unless another column on the sheet already took that destination. */
+function claimDestination(wanted: DestinationField, used: Set<DestinationField>): DestinationField {
+  if (wanted === '__ignore__' || used.has(wanted)) return '__ignore__';
+  used.add(wanted);
+  return wanted;
 }
 
 export function projectMappedRow(row: RowData, columns: readonly MappedColumn[]): RowData {
