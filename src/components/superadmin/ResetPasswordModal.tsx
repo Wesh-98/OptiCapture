@@ -60,7 +60,7 @@ export function ResetPasswordModal({
 
           <p className="text-xs text-amber-600 mb-4 flex items-start gap-1.5">
             <span className="shrink-0 mt-0.5">⚠</span>
-            This password will not be shown again. Copy it before closing.
+            <span>This password will not be shown again. Copy it before closing.</span>
           </p>
 
           <button

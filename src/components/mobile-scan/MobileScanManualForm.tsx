@@ -1,4 +1,5 @@
 import type { FormEvent } from 'react';
+import { focusOnMount } from '../../lib/utils';
 
 interface MobileScanManualFormProps {
   manualItemName: string;
@@ -45,7 +46,7 @@ export function MobileScanManualForm({
           placeholder="UPC / Barcode *"
           className="w-full px-4 py-3 bg-white/[0.08] border border-white/10 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono"
           disabled={isProcessing}
-          autoFocus
+          ref={focusOnMount}
           maxLength={128}
         />
 

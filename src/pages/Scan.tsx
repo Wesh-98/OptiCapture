@@ -75,7 +75,6 @@ export default function Scan() {
     <div className="space-y-6">
       {draft.showDraftPopover && (
         <div
-          role="presentation"
           aria-hidden="true"
           className="fixed inset-0 z-20"
           onClick={() => draft.setShowDraftPopover(false)}

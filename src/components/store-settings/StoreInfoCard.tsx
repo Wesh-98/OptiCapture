@@ -82,7 +82,7 @@ export function StoreInfoCard({
 
       <form onSubmit={onSubmit} className="space-y-4">
         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-2">Store Logo</label>
+          <p className="block text-sm font-medium text-slate-700 mb-2">Store Logo</p>
           {storeInfo.logo ? (
             <div className="flex flex-col items-start gap-2">
               <img

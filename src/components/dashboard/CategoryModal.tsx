@@ -1,5 +1,5 @@
 import { X } from 'lucide-react';
-import { cn } from '../../lib/utils';
+import { cn, focusOnMount } from '../../lib/utils';
 import type { Category } from './types';
 import { IMAGE_ICONS, LUCIDE_ICON_PICKS, iconMap, colorMap } from './types';
 
@@ -52,12 +52,12 @@ export function CategoryModal({
               onChange={e => onChange({ ...catForm, name: e.target.value })}
               className="w-full px-4 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-navy-700 focus:border-transparent"
               placeholder="e.g. Beverages"
-              autoFocus
+              ref={focusOnMount}
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">Icon</label>
+            <p className="block text-sm font-medium text-slate-700 mb-2">Icon</p>
             <p className="text-xs text-slate-400 mb-2 font-medium uppercase tracking-wide">
               Image Icons
             </p>

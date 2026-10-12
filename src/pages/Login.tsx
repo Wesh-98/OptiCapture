@@ -138,7 +138,7 @@ export default function Login() {
                   htmlFor="login-store-code"
                   className="block text-sm font-medium text-slate-700 mb-1.5"
                 >
-                  Store Code
+                  <span>Store Code</span>
                   <span className="ml-1.5 text-slate-400 font-normal text-xs">
                     (leave blank for superadmin)
                   </span>
@@ -236,7 +236,7 @@ export default function Login() {
                 className="w-5 h-5"
                 alt="Google"
               />
-              Continue with Google
+              <span>Continue with Google</span>
             </button>
 
             <p className="text-center text-sm text-slate-500 mt-5">

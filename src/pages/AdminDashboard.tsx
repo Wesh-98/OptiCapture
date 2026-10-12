@@ -158,10 +158,9 @@ export default function AdminDashboard() {
                 className={cn('w-full h-10 pl-9 pr-3', FILTER_INPUT)}
               />
             </label>
-            <div
-              role="group"
+            <fieldset
               aria-label="Status filter"
-              className="flex gap-1 rounded-lg bg-theme-canvas p-1"
+              className="flex min-w-0 gap-1 rounded-lg bg-theme-canvas p-1"
             >
               {(['all', 'active', 'suspended'] as const).map(value => (
                 <button
@@ -178,7 +177,7 @@ export default function AdminDashboard() {
                   {value}
                 </button>
               ))}
-            </div>
+            </fieldset>
             <div className="flex-1" />
             <label className="sr-only" htmlFor="store-sort">
               Sort stores

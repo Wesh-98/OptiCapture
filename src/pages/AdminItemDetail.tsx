@@ -357,12 +357,9 @@ export default function AdminItemDetail() {
               ) : itemId ? (
                 <>
                   {savedFor === itemId && (
-                    <p
-                      role="status"
-                      className="mb-4 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-sm font-medium text-brand-700"
-                    >
+                    <output className="mb-4 block rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-sm font-medium text-brand-700">
                       Changes saved and recorded in the store's activity log.
-                    </p>
+                    </output>
                   )}
                   <ItemDetailBody
                     detail={detail}

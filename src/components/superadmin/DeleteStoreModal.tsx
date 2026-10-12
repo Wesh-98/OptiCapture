@@ -1,4 +1,5 @@
 import { Trash2, Loader2 } from 'lucide-react';
+import { focusOnMount } from '../../lib/utils';
 import { StoreRow } from './types';
 
 interface Props {
@@ -54,7 +55,7 @@ export function DeleteStoreModal({
             onChange={e => onConfirmNameChange(e.target.value)}
             placeholder={store.name}
             className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-400 mb-5"
-            autoFocus
+            ref={focusOnMount}
           />
 
           <div className="flex items-center gap-3 justify-end">

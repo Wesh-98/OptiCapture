@@ -315,7 +315,7 @@ export function ImportMappingPanel({
 
         <div className="mb-4 max-w-xl">
           <label className="block text-xs font-semibold text-slate-700">
-            Category for this worksheet
+            <span>Category for this worksheet</span>
             <input
               type="text"
               value={activeSheet.categoryName ?? ''}

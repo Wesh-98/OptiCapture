@@ -9,7 +9,7 @@ import {
   Smartphone,
   ScanBarcode,
 } from 'lucide-react';
-import { cn, formatServerTime } from '../../lib/utils';
+import { cn, focusOnMount, formatServerTime } from '../../lib/utils';
 import type { SessionItem, SessionStatus, UiStatus } from './types';
 
 function StatusBadge({ item }: Readonly<{ item: SessionItem }>) {
@@ -185,7 +185,7 @@ export function FeedPanel({
                     Name this draft (optional)
                   </p>
                   <input
-                    autoFocus
+                    ref={focusOnMount}
                     type="text"
                     value={draftNameInput}
                     maxLength={100}

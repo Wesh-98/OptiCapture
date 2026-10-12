@@ -40,7 +40,7 @@ describe('ExportModal', () => {
     const { onClose, container } = renderModal();
     fireEvent.click(screen.getByRole('dialog'));
     expect(onClose).not.toHaveBeenCalled();
-    fireEvent.click(container.querySelector('[role="presentation"]') as Element);
+    fireEvent.click(container.querySelector('[aria-hidden="true"]') as Element);
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

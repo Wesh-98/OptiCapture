@@ -69,7 +69,6 @@ export function CategoriesTable({
     <div className="overflow-x-auto">
       {activeActionMenu !== null && !openRowGone && (
         <div
-          role="presentation"
           aria-hidden="true"
           className="fixed inset-0 z-10"
           onClick={() => dispatchMenuEvent({ type: 'closeMenu' })}
