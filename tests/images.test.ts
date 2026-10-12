@@ -81,6 +81,7 @@ describe('inventory image persistence', () => {
   it('normalizes Drive image URLs when creating inventory items', async () => {
     const res = await request.post('/api/inventory').set('Cookie', adminCookie).send({
       item_name: 'Drive Create Test',
+      upc: 'drive-create-1',
       quantity: 3,
       status: 'Active',
       image: 'https://drive.google.com/file/d/create123/view?usp=sharing',
@@ -98,6 +99,7 @@ describe('inventory image persistence', () => {
   it('normalizes Docs image URLs when updating inventory items', async () => {
     const createRes = await request.post('/api/inventory').set('Cookie', adminCookie).send({
       item_name: 'Drive Update Test',
+      upc: 'drive-update-1',
       quantity: 1,
       status: 'Active',
       image: 'https://example.com/original.png',

@@ -25,7 +25,9 @@ export function useEditItem(
   };
 
   const saveEdit = async () => {
-    if (!editItem || !sessionId) return;
+    // The server would quietly turn a blank quantity into 1, so it is never sent blank.
+    if (!editItem || !sessionId || editItem.quantity === '') return;
+    const quantity = editItem.quantity;
     setEditSaving(true);
     try {
       const res = await fetch(`/api/session/${sessionId}/items/${editItem.id}`, {
@@ -35,7 +37,7 @@ export function useEditItem(
         body: JSON.stringify({
           product_name: editItem.product_name,
           brand: editItem.brand,
-          quantity: editItem.quantity,
+          quantity,
           upc: editItem.upc,
           image: editItem.image,
           tag_names: editItem.tag_names,
@@ -60,7 +62,7 @@ export function useEditItem(
             ...i,
             product_name: editItem.product_name || null,
             brand: editItem.brand || null,
-            quantity: editItem.quantity,
+            quantity,
             upc: editItem.upc,
             image: editItem.image || null,
             lookup_status: 'new_candidate',
@@ -70,6 +72,7 @@ export function useEditItem(
         })
       );
       setSelectedIds(prev => new Set([...prev, editItem.id]));
+      addToast('success', `Saved "${editItem.product_name.trim() || 'item'}"`);
       setEditItem(null);
     } catch (error) {
       addToast('error', error instanceof Error ? error.message : 'Failed to save changes.');
@@ -86,6 +89,7 @@ export function useEditItem(
         credentials: 'include',
       });
       if (!res.ok) throw new Error('Delete failed');
+      addToast('success', 'Removed from the session');
       setItems(prev => prev.filter(i => i.id !== itemId));
       setSelectedIds(prev => {
         const next = new Set(prev);

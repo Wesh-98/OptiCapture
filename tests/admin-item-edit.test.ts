@@ -189,15 +189,15 @@ describe('superadmin item edits', () => {
     expect(readItem().sale_price).toBe(1.99);
   });
 
-  it('can clear the price, UPC and category', async () => {
+  it('can clear the price and category', async () => {
     const res = await edit({
-      changes: { sale_price: null, upc: null, category_id: null },
+      changes: { sale_price: null, category_id: null },
       expected_revision: revision(),
     });
     expect(res.status).toBe(200);
-    expect(readItem()).toMatchObject({ sale_price: null, upc: null, category_id: null });
+    expect(readItem()).toMatchObject({ sale_price: null, upc: '0001', category_id: null });
     expect(lastLog().details).toBe(
-      `Super Admin edited "Edit Cola": UPC 0001 → —; Category ${categoryName()} → Uncategorized; Price $1.99 → —`
+      `Super Admin edited "Edit Cola": Category ${categoryName()} → Uncategorized; Price $1.99 → —`
     );
   });
 
@@ -296,5 +296,35 @@ describe('superadmin item edits', () => {
       .send({ sale_price: 5 });
     expect(res.status).toBe(200);
     expect(lastLog().details).toBe('Updated item "Edit Cola"');
+  });
+});
+
+describe('UPC protection on edit', () => {
+  it('lets a UPC change but not be removed, by the superadmin or the store', async () => {
+    for (const upc of ['', '   ', null]) {
+      const res = await edit({ changes: { upc }, expected_revision: revision() });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('UPC can be changed but not removed');
+    }
+    const owner = await request
+      .put(`/api/inventory/${itemId}`)
+      .set('Cookie', await login(request, 'editowner', 'Password1', getStoreCode(storeId)))
+      .send({ upc: '' });
+    expect(owner.status).toBe(400);
+    expect(readItem().upc).toBe('0001');
+
+    const changed = await edit({ changes: { upc: '0002' }, expected_revision: revision() });
+    expect(changed.status).toBe(200);
+    expect(readItem().upc).toBe('0002');
+  });
+
+  it('still edits an older item that never had a UPC', async () => {
+    db.prepare('UPDATE inventory SET upc = NULL WHERE id = ?').run(itemId);
+    const res = await edit({
+      changes: { upc: '', sale_price: 2.5 },
+      expected_revision: revision(),
+    });
+    expect(res.status).toBe(200);
+    expect(readItem()).toMatchObject({ upc: null, sale_price: 2.5 });
   });
 });

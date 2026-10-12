@@ -4,6 +4,7 @@ import { db } from '../db.js';
 import { authenticateToken, asyncRoute } from '../middleware.js';
 import { BCRYPT_COST } from '../cache.js';
 import {
+  firstQueryValue,
   generateTempPassword,
   normalizeUsername,
   removeUploadedFiles,
@@ -176,6 +177,63 @@ adminRouter.get('/activity', authenticateToken, requireSuperadmin, (req: AuthReq
     return { ...row, ...described, store_name: store_name ?? deletedName ?? 'Unknown store' };
   });
   res.json({ items, total });
+});
+
+// The windows the Recently added page offers, in days.
+export const RECENT_ITEM_WINDOWS = [1, 7, 30] as const;
+const RECENT_ITEMS_PAGE_SIZE = 50;
+
+// Super admin — items added in the last 1, 7 or 30 days, newest first, across every store
+// or just the one in `store`. Capture-first, so new items are what a superadmin watches.
+adminRouter.get('/recent-items', authenticateToken, requireSuperadmin, (req: AuthRequest, res) => {
+  const days = parseIdParam(firstQueryValue(req.query.days) ?? '7');
+  if (days === null || !(RECENT_ITEM_WINDOWS as readonly number[]).includes(days)) {
+    return res
+      .status(400)
+      .json({ error: `days must be one of: ${RECENT_ITEM_WINDOWS.join(', ')}` });
+  }
+
+  const storeParam = firstQueryValue(req.query.store);
+  let storeId: number | null = null;
+  if (storeParam !== undefined) {
+    storeId = parseIdParam(storeParam);
+    if (storeId === null) return res.status(400).json({ error: 'Invalid store ID' });
+    if (storeId === HQ_STORE_ID) {
+      return res.status(403).json({ error: 'The HQ store is managed internally' });
+    }
+    if (!db.prepare('SELECT 1 FROM stores WHERE id = ?').get(storeId)) {
+      return res.status(404).json({ error: 'Store not found' });
+    }
+  }
+
+  const pageParam = firstQueryValue(req.query.page);
+  const page = pageParam === undefined ? 1 : parseIdParam(pageParam);
+  if (page === null || page < 1) return res.status(400).json({ error: 'Invalid page' });
+
+  const conditions = [`i.created_at >= datetime('now', ?)`, 'i.store_id != ?'];
+  const params: unknown[] = [`-${days} days`, HQ_STORE_ID];
+  if (storeId !== null) {
+    conditions.push('i.store_id = ?');
+    params.push(storeId);
+  }
+  const where = conditions.join(' AND ');
+  const { total } = db
+    .prepare(`SELECT COUNT(*) AS total FROM inventory i WHERE ${where}`)
+    .get(...params) as { total: number };
+  const items = db
+    .prepare(
+      `SELECT i.id, i.item_name, i.upc, i.image, i.sale_price, i.status, i.created_at, i.source,
+              i.store_id, s.name AS store_name, s.status AS store_status,
+              c.name AS category_name
+         FROM inventory i
+         JOIN stores s ON s.id = i.store_id
+         LEFT JOIN categories c ON c.id = i.category_id
+        WHERE ${where}
+        ORDER BY i.created_at DESC, i.id DESC
+        LIMIT ? OFFSET ?`
+    )
+    .all(...params, RECENT_ITEMS_PAGE_SIZE, (page - 1) * RECENT_ITEMS_PAGE_SIZE);
+  res.json({ items, total, page, limit: RECENT_ITEMS_PAGE_SIZE, days });
 });
 
 adminRouter.get('/stores', authenticateToken, requireSuperadmin, (_req: AuthRequest, res) => {

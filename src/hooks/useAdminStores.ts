@@ -8,6 +8,7 @@ import {
 } from '../components/superadmin/types';
 import { isSupportedUploadImageType, SUPPORTED_UPLOAD_IMAGE_ERROR } from '../lib/imageUpload';
 import { parseServerDate } from '../lib/utils';
+import { useToast } from './useToast';
 
 const MAX_LOGO_BYTES = 2 * 1024 * 1024; // 2 MB
 
@@ -24,6 +25,7 @@ async function readErrorMessage(res: Response, fallback: string): Promise<string
 //Store list, create/edit/suspend/delete stores, logo upload
 export function useAdminStores() {
   const navigate = useNavigate();
+  const { addToast } = useToast();
 
   const [stores, setStores] = useState<StoreRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -74,6 +76,10 @@ export function useAdminStores() {
       });
       if (res.ok) {
         setStores(prev => prev.map(s => (s.id === store.id ? { ...s, status: newStatus } : s)));
+        addToast(
+          'success',
+          `${newStatus === 'active' ? 'Reactivated' : 'Suspended'} "${store.name}"`
+        );
       } else {
         const data = await res.json().catch(() => ({}));
         setActionError(data.error || 'Failed to update store status');
@@ -127,6 +133,7 @@ export function useAdminStores() {
       if (res.ok) {
         const updated = await res.json();
         setStores(prev => prev.map(s => (s.id === editStore.id ? { ...s, ...updated } : s)));
+        addToast('success', `Saved "${editStore.name.trim()}"`);
         setEditStore(null);
       } else {
         setEditError(await readErrorMessage(res, 'Failed to save changes'));
@@ -175,6 +182,7 @@ export function useAdminStores() {
       });
       if (res.ok) {
         setStores(prev => prev.filter(s => s.id !== deleteStore.id));
+        addToast('success', `Deleted "${deleteStore.name}"`);
         setDeleteStore(null);
         setDeleteConfirmName('');
       } else {

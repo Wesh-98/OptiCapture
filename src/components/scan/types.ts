@@ -27,7 +27,8 @@ export interface EditDraft {
   id: number;
   product_name: string;
   brand: string;
-  quantity: number;
+  /** '' while the box is cleared; Save stays off until a quantity is typed. */
+  quantity: number | '';
   upc: string;
   image: string;
   tag_names: string;

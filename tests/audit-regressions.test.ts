@@ -85,14 +85,15 @@ describe('audit regression coverage', () => {
     const update = await request
       .put(`/api/inventory/${create.body.id}`)
       .set('Cookie', ownerCookie)
-      .send({ upc: '', image: '' });
+      .send({ image: '' });
     expect(update.status).toBe(200);
 
     const row = db.prepare('SELECT upc, image FROM inventory WHERE id = ?').get(create.body.id) as {
       upc: string | null;
       image: string | null;
     };
-    expect(row).toEqual({ upc: null, image: null });
+    // The UPC stays: it can be changed but not removed.
+    expect(row).toEqual({ upc: 'clearable-upc', image: null });
   });
 
   it('preserves omitted import values while updating mapped descriptions', async () => {

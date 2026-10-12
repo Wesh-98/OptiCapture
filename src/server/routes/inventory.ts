@@ -669,6 +669,9 @@ inventoryRouter.post(
     if (taxValue.error) return res.status(400).json({ error: taxValue.error });
     const stringError = validateInventoryStrings({ upc, unit, tag_names, image });
     if (stringError) return res.status(400).json({ error: stringError });
+    // A manual add must carry a UPC; the image is optional.
+    if (typeof upc !== 'string' || !upc.trim())
+      return res.status(400).json({ error: 'UPC is required' });
     if (status !== undefined && !['Active', 'Inactive'].includes(status))
       return res.status(400).json({ error: 'status must be Active or Inactive' });
     if (!isCategoryInStore(category_id, user.store_id))
@@ -708,8 +711,8 @@ inventoryRouter.post(
         const row = db
           .prepare(
             `
-        INSERT INTO inventory (item_name, quantity, category_id, status, image, unit, sale_price, tax_percent, description, tag_names, upc, store_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO inventory (item_name, quantity, category_id, status, image, unit, sale_price, tax_percent, description, tag_names, upc, store_id, source)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual')
       `
           )
           .run(
@@ -874,6 +877,10 @@ export function updateInventoryItem(
     .prepare('SELECT item_name, upc FROM inventory WHERE id = ? AND store_id = ?')
     .get(itemId, storeId) as { item_name: string; upc: string | null } | undefined;
   if (!existingItem) return { status: 404, body: { error: 'Item not found' } };
+  // A UPC can be changed but not removed: scans, import matching and the cross-store view
+  // all find the item by it. Items that never had one can still be edited without one.
+  if (upc !== undefined && existingItem.upc?.trim() && !(typeof upc === 'string' && upc.trim()))
+    return bad('UPC can be changed but not removed');
 
   // A new image is written to disk before the update runs. If the update then fails, no row
   // points at that file, so it is removed rather than left behind.
@@ -1404,9 +1411,9 @@ inventoryRouter.post(
       item_name, description, quantity, unit, sale_price, tax_percent, upc, number,
       tag_names, category_id, status, image, external_system, external_store_id,
       external_category_id, external_item_id, external_sku, last_imported_at,
-      sync_status, store_id
+      sync_status, store_id, source
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'import')
   `);
 
     const updateStmt = db.prepare(`

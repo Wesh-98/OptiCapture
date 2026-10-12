@@ -247,12 +247,19 @@ describe('inventory batch routes', () => {
     const badCreateRes = await request
       .post('/api/inventory')
       .set('Cookie', adminCookie)
-      .send({ item_name: 'Status Test', quantity: 1, category_id: categoryId, status: 'archived' });
+      .send({
+        item_name: 'Status Test',
+        upc: 'status-test-1',
+        quantity: 1,
+        category_id: categoryId,
+        status: 'archived',
+      });
     expect(badCreateRes.status).toBe(400);
     expect(badCreateRes.body.error).toMatch(/Active or Inactive/i);
 
     const goodCreateRes = await request.post('/api/inventory').set('Cookie', adminCookie).send({
       item_name: 'Status Valid Item',
+      upc: 'status-valid-1',
       quantity: 1,
       category_id: categoryId,
       status: 'Active',

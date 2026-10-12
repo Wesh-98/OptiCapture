@@ -930,8 +930,8 @@ sessionsRouter.post(
     const insertInventory = db.prepare(`
     INSERT INTO inventory (item_name, brand, upc, quantity, category_id, status, image, sale_price,
                            unit, tag_names, store_id, last_verified_at, last_verified_by,
-                           last_verified_session_id)
-    VALUES (?, ?, ?, ?, ?, 'Active', ?, ?, ?, ?, ?, datetime('now'), ?, ?)
+                           last_verified_session_id, source)
+    VALUES (?, ?, ?, ?, ?, 'Active', ?, ?, ?, ?, ?, datetime('now'), ?, ?, 'scan')
   `);
     const markVerified = db.prepare(`
     UPDATE inventory

@@ -43,10 +43,12 @@ describe('cross-tenant category assignment', () => {
       }
     ).id;
 
-    const res = await request
-      .post('/api/inventory')
-      .set('Cookie', ownerCookie)
-      .send({ item_name: 'Smuggled Item', quantity: 1, category_id: foreignCategoryId });
+    const res = await request.post('/api/inventory').set('Cookie', ownerCookie).send({
+      item_name: 'Smuggled Item',
+      upc: 'smuggled-1',
+      quantity: 1,
+      category_id: foreignCategoryId,
+    });
 
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('Invalid category');
@@ -85,10 +87,12 @@ describe('cross-tenant category assignment', () => {
   });
 
   it('still accepts a category owned by the caller’s own store', async () => {
-    const res = await request
-      .post('/api/inventory')
-      .set('Cookie', ownerCookie)
-      .send({ item_name: 'Legitimate Item', quantity: 1, category_id: storeOneCategoryId });
+    const res = await request.post('/api/inventory').set('Cookie', ownerCookie).send({
+      item_name: 'Legitimate Item',
+      upc: 'legitimate-1',
+      quantity: 1,
+      category_id: storeOneCategoryId,
+    });
 
     expect(res.status).toBe(200);
   });

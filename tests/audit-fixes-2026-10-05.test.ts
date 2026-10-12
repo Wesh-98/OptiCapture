@@ -95,7 +95,7 @@ describe('POST /inventory category_id normalisation', () => {
     const res = await request
       .post('/api/inventory')
       .set('Cookie', cookie)
-      .send({ item_name: 'Audit Fix No Category', category_id: '' });
+      .send({ item_name: 'Audit Fix No Category', upc: 'audit-no-cat', category_id: '' });
 
     expect(res.status).toBe(200);
 
@@ -113,7 +113,7 @@ describe('POST /inventory category_id normalisation', () => {
     const res = await request
       .post('/api/inventory')
       .set('Cookie', cookie)
-      .send({ item_name: 'Audit Fix With Category', category_id: categoryId });
+      .send({ item_name: 'Audit Fix With Category', upc: 'audit-with-cat', category_id: categoryId });
 
     expect(res.status).toBe(200);
     const row = db
