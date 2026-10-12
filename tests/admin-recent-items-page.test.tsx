@@ -8,43 +8,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import { fetchedUrls, stubItemListFetch } from './admin-item-list-fixtures';
 import AdminRecentItems from '../src/pages/AdminRecentItems';
 
 vi.mock('../src/context/AuthContext', () => ({
   useAuth: () => ({ user: { username: 'superadmin', role: 'superadmin' } }),
 }));
 
-const stores = [
-  { id: 5, name: 'North Mart', status: 'active', item_count: 3 },
-  { id: 6, name: 'South Mart', status: 'suspended', item_count: 1 },
-];
-const item = {
-  id: 41,
-  item_name: 'Fresh Cola',
-  upc: '0123',
-  image: null,
-  sale_price: 1.5,
-  status: 'Active',
-  created_at: '2026-10-09 08:00:00',
-  store_id: 5,
-  store_name: 'North Mart',
-  store_status: 'active',
-  category_name: 'Drinks',
-};
-
-function stubFetch() {
-  const fetchMock = vi.fn(async (url: string) => ({
-    ok: true,
-    status: 200,
-    json: async () =>
-      url.startsWith('/api/admin/stores') ? stores : { items: [item], total: 1, page: 1 },
-  }));
-  vi.stubGlobal('fetch', fetchMock);
-  return fetchMock;
-}
-
+const stubFetch = stubItemListFetch;
 const recentCalls = (fetchMock: ReturnType<typeof stubFetch>) =>
-  fetchMock.mock.calls.map(([url]) => url).filter(url => url.startsWith('/api/admin/recent-items'));
+  fetchedUrls(fetchMock, '/api/admin/recent-items');
 
 function renderAt(path: string) {
   return render(

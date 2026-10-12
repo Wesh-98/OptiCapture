@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { db } from '../src/server/db.js';
-import { createTestApp, getStoreCode, login, registerStore } from './helpers.js';
+import { createTestApp, itemNames, setUpTwoStores } from './helpers.js';
 
 const request = createTestApp();
 
@@ -29,16 +29,10 @@ function addItem(
   ).run(name, categoryId, upc, extra.brand ?? null, storeId);
 }
 
-const names = (body: { items: Array<{ item_name: string }> }) =>
-  body.items.map(item => item.item_name);
+const names = itemNames;
 
 beforeAll(async () => {
-  ownerCookie = await login(request, 'admin', 'admin123', getStoreCode(1));
-  superadminCookie = await login(request, 'superadmin', 'superadmin123');
-  northId = (await registerStore(request, { storeName: 'North Mart', username: 'northsearch' }))
-    .storeId;
-  southId = (await registerStore(request, { storeName: 'South Mart', username: 'southsearch' }))
-    .storeId;
+  ({ ownerCookie, superadminCookie, northId, southId } = await setUpTwoStores(request, 'search'));
 
   addItem(northId, 'Zesty Cola', '012345678905');
   addItem(southId, 'zesty cola', '0012345678905');
