@@ -188,6 +188,7 @@ export function FeedPanel({
                     autoFocus
                     type="text"
                     value={draftNameInput}
+                    maxLength={100}
                     onChange={e => onDraftNameChange(e.target.value)}
                     onKeyDown={e => {
                       if (e.key === 'Enter') {

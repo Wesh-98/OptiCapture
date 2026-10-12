@@ -321,8 +321,8 @@ Special cases:
 ### Enforcement
 
 - `authenticateToken` verifies signature, issuer, audience, token revocation, token version, password-reset state, store access, and store suspension.
-- `requireOwner` allows owners and superadmins to manage categories, exports, and batch imports.
-- `requireOwnerOrTaker` allows owners, superadmins, and takers to add, edit, and delete individual inventory items.
+- `requireOwner` allows owners to manage categories, exports, and batch imports.
+- `requireOwnerOrTaker` allows owners and takers to add, edit, and delete individual inventory items.
 - Superadmin-only behavior is enforced inside admin routes with a local `requireSuperadmin` guard.
 - Users with temporary reset passwords are forced to `/settings` and can only access the small set of auth endpoints needed to complete the reset.
 
@@ -382,7 +382,7 @@ UPC lookup lives in `src/server/helpers.ts` and currently uses:
 - UPCitemDB
 - Go-UPC when `GO_UPC_API_KEY` is configured; a successful Go-UPC result is preferred
 
-Results are cached in memory for 7 days in `upcCache` to avoid repeated external lookups for the same barcode.
+Results are cached in memory for 7 days in `upcCache` to avoid repeated external lookups for the same barcode. A lookup that found nothing because a provider failed, timed out or rate-limited is cached for 5 minutes only, so the barcode is looked up again once the provider recovers.
 
 ### Batch import
 
@@ -429,7 +429,7 @@ Drive proxy:
 
 - activity logs are stored in the `logs` table
 - reads are exposed through `GET /api/logs` with server-side action, keyword, date, and page filters
-- both owners and takers can view their current store's isolated audit trail
+- owners can view their current store's isolated audit trail; takers cannot
 - the logs page is split into `LogsScreen`, `LogsFilters`, `LogsTable`, `logsApi`, and `useLogsPage`
 - old log entries are pruned automatically after 90 days
 

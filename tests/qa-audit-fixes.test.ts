@@ -76,12 +76,12 @@ describe('POST /api/inventory', () => {
     expect(dup.status).toBe(409);
   });
 
-  it('trims names and treats differently-cased or padded names as duplicates', async () => {
+  it('trims names and lets two items share one, since the UPC is the identity', async () => {
     const created = await request.post('/api/inventory').set('Cookie', store.cookie).send({ item_name: '  Lemonade  ', upc: 'lemonade-1' });
     expect(created.status).toBe(200);
     const stored = db.prepare('SELECT item_name FROM inventory WHERE id = ?').get(created.body.id) as { item_name: string };
     expect(stored.item_name).toBe('Lemonade');
-    expect((await request.post('/api/inventory').set('Cookie', store.cookie).send({ item_name: 'lemonade', upc: 'lemonade-2' })).status).toBe(409);
+    expect((await request.post('/api/inventory').set('Cookie', store.cookie).send({ item_name: 'lemonade', upc: 'lemonade-2' })).status).toBe(200);
   });
 });
 

@@ -53,8 +53,8 @@ if (!JWT_SECRET) {
 }
 
 // ── Process-level error guards ────────────────────────────────────────────────
-// Unhandled rejections crash Node 18+ silently — log before exit so the failure
-// is observable in logs rather than disappearing without a trace.
+// Log an unhandled rejection and keep serving; with this handler installed Node does not
+// exit on one. An uncaught exception leaves the process in an unknown state, so that exits.
 process.on('unhandledRejection', reason => {
   logError('process', reason, 'Unhandled promise rejection');
 });
@@ -136,8 +136,20 @@ if (!isProduction) {
   app.use(vite.middlewares);
 } else {
   // Resolve against this file, not the working directory the process was started from.
-  app.use(express.static(path.join(__dirname, 'dist')));
+  // Vite names everything under assets/ by content hash, so those files never change and
+  // can be cached for good. index.html names the current hashes and must always be
+  // revalidated, or a browser would keep loading a build that no longer exists.
+  app.use(
+    '/assets',
+    express.static(path.join(__dirname, 'dist', 'assets'), {
+      immutable: true,
+      maxAge: '1y',
+      fallthrough: false,
+    })
+  );
+  app.use(express.static(path.join(__dirname, 'dist'), { index: false }));
   app.get('*', (_req, res) => {
+    res.setHeader('Cache-Control', 'no-cache');
     res.sendFile(path.join(__dirname, 'dist', 'index.html'));
   });
 }

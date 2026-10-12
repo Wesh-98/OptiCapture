@@ -54,7 +54,7 @@ export default function Layout({ children }: Readonly<{ children: React.ReactNod
       ownerOnly: true,
       activeSearch: 'export=1',
     },
-    { href: '/logs', label: 'Activity Logs', icon: History },
+    { href: '/logs', label: 'Activity Logs', icon: History, ownerOnly: true },
     { href: '/settings', label: 'Store Settings', icon: Settings },
   ];
   const navItems = allNavItems.filter(item => {

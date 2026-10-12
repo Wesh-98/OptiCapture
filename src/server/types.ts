@@ -6,6 +6,8 @@ export interface UpcCacheEntry {
   image: string | null;
   source: string;
   ts: number;
+  /** How long this entry is good for, when shorter than UPC_CACHE_TTL. */
+  ttl?: number;
 }
 
 export interface JwtPayload {

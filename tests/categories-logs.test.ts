@@ -303,20 +303,24 @@ describe('categories routes', () => {
 });
 
 describe('logs route', () => {
-  it('allows takers to view their store audit trail and clamps invalid limits', async () => {
+  it('keeps the audit trail to owners and clamps invalid limits', async () => {
     db.prepare(
       'INSERT INTO logs (action, details, user_id, store_id) VALUES (?, ?, ?, ?)'
-    ).run('READ', 'Taker-visible log', 1, 1);
+    ).run('READ', 'Owner-visible log', 1, 1);
+
+    // The log names every account's actions, so a taker is turned away.
+    const asTaker = await request.get('/api/logs').set('Cookie', takerCookie);
+    expect(asTaker.status).toBe(403);
 
     const res = await request
       .get('/api/logs')
-      .set('Cookie', takerCookie)
-      .query({ limit: '-20' });
+      .set('Cookie', adminCookie)
+      .query({ limit: '-20', q: 'Owner-visible' });
 
     expect(res.status).toBe(200);
     // GET /logs always answers with the paginated envelope, with or without ?page.
     expect(res.body.items).toHaveLength(1);
-    expect(res.body.items[0].details).toBe('Taker-visible log');
+    expect(res.body.items[0].details).toBe('Owner-visible log');
   });
   it('rejects malformed date parameters', async () => {
     const badFromRes = await request

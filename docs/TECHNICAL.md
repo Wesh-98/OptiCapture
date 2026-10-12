@@ -237,8 +237,8 @@ Role guards:
 | Guard | Allows |
 |---|---|
 | `authenticateToken` | Any valid account and resolved store when required |
-| `requireOwner` | owner, superadmin |
-| `requireOwnerOrTaker` | owner, taker, superadmin |
+| `requireOwner` | owner |
+| `requireOwnerOrTaker` | owner, taker |
 | `requireSuperadmin` | superadmin |
 
 Google OAuth flow:
@@ -276,7 +276,7 @@ Google OAuth flow:
 | GET | `/api/inventory` | cookie | List/search inventory; always returns `{ items, total, page, limit }` (default 50, maximum 500) |
 | GET | `/api/inventory/export?format=xlsx|csv|json|pdf` | owner | Export inventory and mark rows exported |
 | POST | `/api/inventory` | owner/taker | Create item |
-| PUT | `/api/inventory/:id` | owner/taker | Update item and invalidate UPC cache |
+| PUT | `/api/inventory/:id` | owner/taker | Update item |
 | DELETE | `/api/inventory/:id` | owner/taker | Delete item |
 | POST | `/api/inventory/batch-upload` | owner | Parse XLSX/CSV/JSON and return preview/mapping data |
 | POST | `/api/inventory/batch-confirm` | owner | Apply mapped import in a transaction |
@@ -314,7 +314,7 @@ Google OAuth flow:
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/api/logs` | cookie | Store-scoped audit log; supports action, keyword, date, page, and limit filters |
+| GET | `/api/logs` | owner | Store-scoped audit log; supports action, keyword, date, page, and limit filters |
 
 ### Admin
 
@@ -368,8 +368,8 @@ Owner reviews selected items
 Session behavior:
 
 - Empty active sessions are reused for the same user and store.
-- Fresh sessions expire after 8 hours.
-- Draft sessions extend expiry to 24 hours.
+- Phone scanning on a session expires 8 hours after creation, resume, or the latest scan.
+- An expired session that holds scans becomes a draft. Drafts stay listed until committed or deleted; resuming one starts a new scan window and clears the wrong-OTP counter.
 - Completed sessions cannot be reactivated or deleted.
 - Duplicate UPC scans increment quantity.
 - Device IDs are preserved when a staged item belongs to one device; mixed-device duplicates are treated as shared.

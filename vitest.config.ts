@@ -29,6 +29,8 @@ export default defineConfig({
     // Runs before every test file, inside the forked process.
     // Sets DATABASE_PATH and JWT_SECRET before any modules are loaded.
     setupFiles: ['./tests/setup.ts'],
+    // Once per run, in the main process: clears the workers' throwaway upload folders.
+    globalSetup: ['./tests/global-setup.ts'],
     testTimeout: 30_000,
     hookTimeout: 30_000,
 

@@ -5,7 +5,6 @@ import ExcelJS from 'exceljs';
 import Papa from 'papaparse';
 import { db } from '../db.js';
 import { authenticateToken, requireOwner, requireOwnerOrTaker, asyncRoute } from '../middleware.js';
-import { upcCache } from '../cache.js';
 import {
   saveBase64Image,
   normalizeImageUrl,
@@ -20,6 +19,7 @@ import {
 import { isReservedCategoryName } from './categories.js';
 import type { AuthRequest } from '../types.js';
 import { logError } from '../logger.js';
+import { discardUploads } from '../uploads.js';
 
 export const inventoryRouter = express.Router();
 
@@ -85,6 +85,41 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 20 * 1024 * 1024, fieldSize: 10 * 1024 }, // 20 MB file, 10 KB per non-file field
 });
+
+const IMPORT_FORMAT_BY_EXTENSION: Record<string, 'xlsx' | 'csv' | 'json'> = {
+  '.xlsx': 'xlsx',
+  '.csv': 'csv',
+  '.json': 'json',
+};
+const IMPORT_FORMAT_BY_MIME: Record<string, 'xlsx' | 'csv' | 'json'> = {
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+  'text/csv': 'csv',
+  'application/csv': 'csv',
+  'application/json': 'json',
+};
+
+/**
+ * Which parser an uploaded import file gets, or null when it is not one we read. The file
+ * name decides first: the type a browser reports depends on the machine, and Windows with
+ * Excel installed sends a .csv as application/vnd.ms-excel (or as nothing at all), which the
+ * old type-only check turned away. The reported type is the fallback for a file with no
+ * recognised extension. Either way the parser still has to accept the contents.
+ */
+export function importFileFormat(
+  filename: string | undefined,
+  mimetype: string | undefined
+): 'xlsx' | 'csv' | 'json' | null {
+  const dot = filename?.lastIndexOf('.') ?? -1;
+  const extension = dot >= 0 ? filename!.slice(dot).toLowerCase() : '';
+  if (Object.hasOwn(IMPORT_FORMAT_BY_EXTENSION, extension)) {
+    return IMPORT_FORMAT_BY_EXTENSION[extension];
+  }
+  // A recognisable but unsupported extension (.xls, .txt, .exe) is refused outright.
+  if (extension) return null;
+  return Object.hasOwn(IMPORT_FORMAT_BY_MIME, mimetype ?? '')
+    ? IMPORT_FORMAT_BY_MIME[mimetype ?? '']
+    : null;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -334,6 +369,32 @@ function isCategoryInStore(categoryId: unknown, storeId: number | undefined): bo
 }
 
 /**
+ * The store's item carrying this barcode, in either of its forms: a UPC-A code and the same
+ * code written as EAN-13 with a leading zero are one product. Every path that adds or
+ * re-labels an item checks through this, so a store can never hold the same barcode twice.
+ */
+export function findItemIdByUpc(upc: string, storeId: number | undefined): number | null {
+  const statement = db.prepare('SELECT id FROM inventory WHERE upc = ? AND store_id = ?');
+  for (const variant of upcVariants(upc)) {
+    const row = statement.get(variant, storeId) as { id: number } | undefined;
+    if (row) return row.id;
+  }
+  return null;
+}
+
+// What the item form allows. An import is held to the same lengths.
+const ITEM_LIMITS = {
+  item_name: 500,
+  description: 2000,
+  upc: 128,
+  unit: 50,
+  tag_names: 1000,
+  category: 100,
+  number: 128,
+  external: 200,
+} as const;
+
+/**
  * One page of a store's items, filtered the way the inventory page filters them. Shared by
  * GET /inventory (the caller's active store) and the superadmin's per-store view (the store
  * named in the URL), so both read the same rows. Returns an error string for a bad filter.
@@ -412,7 +473,7 @@ inventoryRouter.get('/inventory', authenticateToken, (req: AuthRequest, res) => 
   res.json(result);
 });
 
-// Export inventory — XLSX, CSV, JSON, PDF
+// IDs of every item in one category, for select-all across pages
 inventoryRouter.get('/inventory/ids', authenticateToken, (req: AuthRequest, res) => {
   const categoryId = Number(req.query.category_id);
   const storeId = req.user.store_id;
@@ -431,6 +492,7 @@ inventoryRouter.get('/inventory/ids', authenticateToken, (req: AuthRequest, res)
   res.json({ ids: rows.map(row => row.id) });
 });
 
+// Export inventory — XLSX, CSV, JSON, PDF
 inventoryRouter.get(
   '/inventory/export',
   authenticateToken,
@@ -685,18 +747,8 @@ inventoryRouter.post(
         ? null
         : Number(category_id);
     const cleanUpc = typeof upc === 'string' ? upc.trim() : '';
-    const existing = db
-      .prepare('SELECT id FROM inventory WHERE LOWER(TRIM(item_name)) = LOWER(?) AND store_id = ?')
-      .get(itemName, user.store_id);
-    if (existing) {
-      return res.status(409).json({ error: 'Item with this name already exists' });
-    }
-    if (
-      cleanUpc &&
-      db
-        .prepare('SELECT 1 FROM inventory WHERE upc = ? AND store_id = ?')
-        .get(cleanUpc, user.store_id)
-    ) {
+    // Two items may share a name (the same product in two sizes); they may not share a UPC.
+    if (cleanUpc && findItemIdByUpc(cleanUpc, user.store_id) !== null) {
       return res.status(409).json({ error: 'An item with that UPC already exists' });
     }
 
@@ -847,6 +899,24 @@ export function updateInventoryItem(
   } = body;
   const bad = (error: string) => ({ status: 400, body: { error } });
 
+  // An edit that names no field used to answer 200 and write an "Updated item" audit row.
+  if (
+    [
+      item_name,
+      quantity,
+      category_id,
+      status,
+      unit,
+      sale_price,
+      tax_percent,
+      description,
+      tag_names,
+      image,
+      upc,
+    ].every(value => value === undefined)
+  )
+    return bad('Nothing to change');
+
   // Reject blank strings — the POST route already guards this but PUT skipped the trim check
   if (
     item_name !== undefined &&
@@ -874,13 +944,21 @@ export function updateInventoryItem(
   if (!isCategoryInStore(category_id, storeId)) return bad('Invalid category');
 
   const existingItem = db
-    .prepare('SELECT item_name, upc FROM inventory WHERE id = ? AND store_id = ?')
-    .get(itemId, storeId) as { item_name: string; upc: string | null } | undefined;
+    .prepare('SELECT item_name, upc, image FROM inventory WHERE id = ? AND store_id = ?')
+    .get(itemId, storeId) as
+    | { item_name: string; upc: string | null; image: string | null }
+    | undefined;
   if (!existingItem) return { status: 404, body: { error: 'Item not found' } };
   // A UPC can be changed but not removed: scans, import matching and the cross-store view
   // all find the item by it. Items that never had one can still be edited without one.
   if (upc !== undefined && existingItem.upc?.trim() && !(typeof upc === 'string' && upc.trim()))
     return bad('UPC can be changed but not removed');
+  if (typeof upc === 'string' && upc.trim()) {
+    const holder = findItemIdByUpc(upc.trim(), storeId);
+    if (holder !== null && holder !== Number(itemId)) {
+      return { status: 409, body: { error: 'An item with that UPC already exists' } };
+    }
+  }
 
   // A new image is written to disk before the update runs. If the update then fails, no row
   // points at that file, so it is removed rather than left behind.
@@ -965,9 +1043,8 @@ export function updateInventoryItem(
       return { status: 404, body: { error: 'Item not found' } };
     }
 
-    // Invalidate UPC cache so mobile scanners see the updated product name immediately
-    if (existingItem.upc) upcCache.delete(existingItem.upc);
-    if (upc) upcCache.delete(String(upc));
+    // A replaced or cleared image is removed unless something still points at it.
+    if (image !== undefined) discardUploads([existingItem.image]);
 
     return { status: 200, body: { success: true } };
   } catch (err: any) {
@@ -981,7 +1058,7 @@ export function updateInventoryItem(
     if (err instanceof ItemUpdateNoChange) return bad('Nothing to change');
     if (err instanceof UnsupportedImageTypeError) return bad(err.message);
     if (err.message?.includes('UNIQUE')) {
-      return { status: 409, body: { error: 'An item with that UPC or name already exists' } };
+      return { status: 409, body: { error: 'An item with that UPC or number already exists' } };
     }
     logError('inventory:update', err, 'Failed to update inventory item', { itemId });
     return { status: 500, body: { error: 'An internal error occurred' } };
@@ -1007,7 +1084,7 @@ inventoryRouter.delete(
     const user = req.user;
 
     const deletedItem = db
-      .prepare('SELECT item_name, description FROM inventory WHERE id = ? AND store_id = ?')
+      .prepare('SELECT item_name, image FROM inventory WHERE id = ? AND store_id = ?')
       .get(id, user.store_id) as any;
 
     // Item not found in this store — either it doesn't exist or it belongs to
@@ -1024,6 +1101,7 @@ inventoryRouter.delete(
         user.store_id
       );
     })();
+    discardUploads([deletedItem.image]);
 
     res.json({ success: true });
   }
@@ -1038,22 +1116,13 @@ inventoryRouter.post(
   asyncRoute<AuthRequest>(async (req: AuthRequest, res) => {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-    // After receiving the uploaded file, check MIME type
-    const allowedUploadTypes = [
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // xlsx
-      'text/csv',
-      'application/csv',
-      'application/json',
-    ];
-    if (!allowedUploadTypes.includes(req.file.mimetype)) {
+    const format = importFileFormat(req.file.originalname, req.file.mimetype);
+    if (!format) {
       return res
         .status(400)
         .json({ error: 'Invalid file type. Only XLSX, CSV, and JSON files are allowed.' });
     }
-
-    const isJson =
-      req.file.originalname?.toLowerCase().endsWith('.json') ||
-      req.file.mimetype === 'application/json';
+    const isJson = format === 'json';
 
     try {
       if (isJson) {
@@ -1078,12 +1147,7 @@ inventoryRouter.post(
         ]);
       }
 
-      const isCsv =
-        req.file.mimetype === 'text/csv' ||
-        req.file.mimetype === 'application/csv' ||
-        req.file.originalname?.toLowerCase().endsWith('.csv');
-
-      if (isCsv) {
+      if (format === 'csv') {
         const { data, errors } = Papa.parse<Record<string, any>>(req.file.buffer.toString('utf8'), {
           header: true,
           skipEmptyLines: true,
@@ -1173,7 +1237,8 @@ inventoryRouter.post(
           typeof sheet.sheetName !== 'string' ||
           (sheet.categoryName !== undefined &&
             sheet.categoryName !== null &&
-            (typeof sheet.categoryName !== 'string' || sheet.categoryName.length > 120)) ||
+            (typeof sheet.categoryName !== 'string' ||
+              sheet.categoryName.length > ITEM_LIMITS.category)) ||
           !Array.isArray(sheet.rows) ||
           !isRecord(sheet.mapping) ||
           Object.values(sheet.mapping).some(
@@ -1187,6 +1252,13 @@ inventoryRouter.post(
     }
 
     for (const sheet of sheetsData) {
+      // A sheet's own name becomes its category when none was chosen, so it is held to the
+      // category limit too.
+      if (!Object.hasOwn(sheet, 'categoryName') && sheet.sheetName.length > ITEM_LIMITS.category) {
+        return res.status(400).json({
+          error: `A sheet name is longer than ${ITEM_LIMITS.category} characters. Choose a category for that sheet instead.`,
+        });
+      }
       const destinations = Object.values(sheet.mapping).filter(
         destination => destination !== '__ignore__'
       );
@@ -1390,16 +1462,12 @@ inventoryRouter.post(
       'SELECT 1 FROM inventory WHERE store_id = ? AND image = ? LIMIT 1'
     );
 
-    const checkUpc = db.prepare('SELECT id FROM inventory WHERE upc = ? AND store_id = ?');
     // A barcode with or without its leading zero is the same item. The scan commit path has
     // always matched both; this one matched the literal string only, so importing a POS file
     // created a second row for every item a scan had already added under the other variant.
     const findByUpc = (value: string): { id: number } | null => {
-      for (const variant of upcVariants(value)) {
-        const row = checkUpc.get(variant, user.store_id) as { id: number } | undefined;
-        if (row) return row;
-      }
-      return null;
+      const id = findItemIdByUpc(value, user.store_id);
+      return id === null ? null : { id };
     };
     const checkNum = db.prepare('SELECT id FROM inventory WHERE number = ? AND store_id = ?');
     const checkExternalSku = db.prepare(
@@ -1484,7 +1552,28 @@ inventoryRouter.post(
         return;
       }
 
-      const rowLabel = itemName || upc || number || externalItemId || externalSku;
+      const rowLabel = (itemName || upc || number || externalItemId || externalSku).slice(0, 80);
+      // The same lengths the item form enforces; a file used to be able to store a name,
+      // UPC or description of any size.
+      const lengthChecks: Array<[label: string, value: string, max: number]> = [
+        ['Item name', itemName, ITEM_LIMITS.item_name],
+        ['UPC', upc, ITEM_LIMITS.upc],
+        ['SKU / Item number', number, ITEM_LIMITS.number],
+        ['Description', readImportedString(item.description), ITEM_LIMITS.description],
+        ['Unit', readImportedString(item.unit), ITEM_LIMITS.unit],
+        ['Tags', readImportedString(item.tag_names), ITEM_LIMITS.tag_names],
+        ['Category', readImportedString(item.category), ITEM_LIMITS.category],
+        ['External system', externalSystem, ITEM_LIMITS.external],
+        ['External store ID', externalStoreId, ITEM_LIMITS.external],
+        ['External category ID', externalCategoryId, ITEM_LIMITS.external],
+        ['External item ID', externalItemId, ITEM_LIMITS.external],
+        ['External SKU', externalSku, ITEM_LIMITS.external],
+      ];
+      const tooLong = lengthChecks.find(([, value, max]) => value.length > max);
+      if (tooLong) {
+        addError(`"${rowLabel}": ${tooLong[0]} must be ${tooLong[2]} characters or fewer`);
+        return;
+      }
       const qtyResult = parseImportNumber(item.quantity, 'Quantity', { integer: true });
       const priceResult = parseImportNumber(item.sale_price, 'Sale price');
       const taxResult = parseImportNumber(item.tax_percent, 'Tax percent', { max: 100 });

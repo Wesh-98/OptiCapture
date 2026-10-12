@@ -57,11 +57,33 @@ async function readErrorMessage(res: Response, fallback: string): Promise<string
   return text.trim() || fallback;
 }
 
+/**
+ * The picked dates as instants: midnight at the start of the first day and midnight after
+ * the last, both in the viewer's own time zone. The server stores UTC, so sending the bare
+ * dates filtered by UTC days instead of the days the viewer meant.
+ */
+export function localDayRangeUtc(
+  from?: string,
+  to?: string
+): { from_utc?: string; to_utc?: string } {
+  const localMidnight = (date: string, addDays = 0): string | undefined => {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+    if (!match) return undefined;
+    const instant = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]) + addDays);
+    return Number.isNaN(instant.getTime()) ? undefined : instant.toISOString();
+  };
+  return {
+    ...(from ? { from_utc: localMidnight(from) } : {}),
+    ...(to ? { to_utc: localMidnight(to, 1) } : {}),
+  };
+}
+
 export async function fetchActivityLogs(query: ActivityLogQuery): Promise<ActivityLogPage> {
   const params = new URLSearchParams({ page: String(query.page), limit: String(query.limit) });
   if (query.action) params.set('action', query.action);
-  if (query.from) params.set('from', query.from);
-  if (query.to) params.set('to', query.to);
+  const dayRange = localDayRangeUtc(query.from, query.to);
+  if (dayRange.from_utc) params.set('from_utc', dayRange.from_utc);
+  if (dayRange.to_utc) params.set('to_utc', dayRange.to_utc);
   if (query.q) params.set('q', query.q);
 
   const res = await fetch(`/api/logs?${params.toString()}`, { credentials: 'include' });

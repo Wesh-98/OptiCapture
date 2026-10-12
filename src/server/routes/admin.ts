@@ -7,11 +7,10 @@ import {
   firstQueryValue,
   generateTempPassword,
   normalizeUsername,
-  removeUploadedFiles,
   saveBase64Image,
   UnsupportedImageTypeError,
-  uploadFileName,
 } from '../helpers.js';
+import { discardUploads, removeUnreferencedUploads } from '../uploads.js';
 import type { AuthRequest } from '../types.js';
 import { logError } from '../logger.js';
 import {
@@ -57,27 +56,6 @@ function isValidEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
-/**
- * The upload files some surviving row still points at. A '/uploads/...' value in a deleted
- * store's row is not proof that the store owned the file — inventory POST/PUT and imports
- * can write an arbitrary path into inventory.image — so deleting a store must never unlink
- * a file something else still points at.
- *
- * Compared by uploadFileName, the key the unlink uses, not by the stored string:
- * '/uploads/sub/x.png' and an absolute 'https://…/uploads/x.png' both name x.png. One scan
- * builds the set rather than one query per file being deleted.
- */
-function referencedUploadFileNames(): Set<string> {
-  const rows = db
-    .prepare(
-      `SELECT image AS path FROM inventory WHERE image LIKE '%/uploads/%'
-       UNION SELECT logo AS path FROM stores WHERE logo LIKE '%/uploads/%'
-       UNION SELECT image AS path FROM session_items WHERE image LIKE '%/uploads/%'`
-    )
-    .all() as Array<{ path: string }>;
-  return new Set(rows.map(row => uploadFileName(row.path)));
-}
-
 function writeAdminLog(details: string, userId: number, storeId: number) {
   db.prepare('INSERT INTO logs (action, details, user_id, store_id) VALUES (?, ?, ?, ?)').run(
     'ADMIN',
@@ -98,7 +76,6 @@ const STORE_INVENTORY_STATS = `
   (SELECT COUNT(*) FROM inventory i
     WHERE i.store_id = s.id AND (i.upc IS NULL OR TRIM(i.upc) = '')) AS missing_upc_count`;
 
-// Super admin — list all stores
 // The dashboard's Recent changes card: store lifecycle events and new captures only.
 // Catalog edits (manual adds, edits, deletes, imports) belong to the store's own portal.
 export type ActivityKind =
@@ -236,6 +213,7 @@ adminRouter.get('/recent-items', authenticateToken, requireSuperadmin, (req: Aut
   res.json({ items, total, page, limit: RECENT_ITEMS_PAGE_SIZE, days });
 });
 
+// Super admin — list all stores
 adminRouter.get('/stores', authenticateToken, requireSuperadmin, (_req: AuthRequest, res) => {
   const stores = db
     .prepare(
@@ -328,7 +306,6 @@ adminRouter.get(
   }
 );
 
-// Super admin — one item from one store, plus the other stores that carry the same UPC
 /**
  * One item with its revision and the other stores carrying its UPC. The item view and the
  * edit response both use this, so a saved UPC change brings back matches for the new UPC.
@@ -351,6 +328,7 @@ function readItemDetail(itemId: number, storeId: number) {
   return { item: { ...item, revision: itemRevision(item) }, other_stores: otherStores };
 }
 
+// Super admin — one item from one store, plus the other stores that carry the same UPC
 adminRouter.get(
   '/stores/:id/items/:itemId',
   authenticateToken,
@@ -613,12 +591,7 @@ adminRouter.post(
         })();
 
         return res.status(201).json({
-          ...(createdAccess ?? {
-            id: null,
-            username: normalizedUsername,
-            email: normalizedEmail || null,
-            role,
-          }),
+          ...createdAccess,
           created: true,
           // The UI surfaces this exactly once, so admins can hand it to the new user.
           tempPassword,
@@ -661,11 +634,7 @@ adminRouter.post(
     `
       )
       .get(user.id, storeId) as any;
-    res
-      .status(201)
-      .json(
-        createdAccess ?? { id: user.id, username: user.username, email: user.email ?? null, role }
-      );
+    res.status(201).json(createdAccess);
   })
 );
 
@@ -703,7 +672,7 @@ adminRouter.delete(
         .prepare("SELECT COUNT(*) as c FROM user_stores WHERE store_id = ? AND role = 'owner'")
         .get(storeId) as any
     ).c;
-    if (target?.role === 'owner' && ownerCount <= 1)
+    if (target.role === 'owner' && ownerCount <= 1)
       return res.status(400).json({ error: 'Cannot remove the last owner of a store' });
     db.prepare('DELETE FROM user_stores WHERE user_id = ? AND store_id = ?').run(userId, storeId);
     writeAdminLog(`Revoked store access for user ${userId}`, req.user.id, storeId);
@@ -732,9 +701,13 @@ adminRouter.delete(
         .prepare(
           `SELECT image AS path FROM inventory WHERE store_id = ? AND image LIKE '/uploads/%'
          UNION
-         SELECT logo AS path FROM stores WHERE id = ? AND logo LIKE '/uploads/%'`
+         SELECT logo AS path FROM stores WHERE id = ? AND logo LIKE '/uploads/%'
+         UNION
+         SELECT si.image AS path FROM session_items si
+           JOIN scan_sessions ss ON ss.session_id = si.session_id
+          WHERE ss.store_id = ? AND si.image LIKE '/uploads/%'`
         )
-        .all(storeId, storeId) as Array<{ path: string }>
+        .all(storeId, storeId, storeId) as Array<{ path: string }>
     ).map(row => row.path);
 
     db.transaction(() => {
@@ -779,10 +752,7 @@ adminRouter.delete(
 
     // Only after the transaction commits — a rollback must not take the files with it — and
     // only for files nothing else still references.
-    const stillReferenced = referencedUploadFileNames();
-    await removeUploadedFiles(
-      uploadedImages.filter(image => !stillReferenced.has(uploadFileName(image)))
-    );
+    await removeUnreferencedUploads(uploadedImages);
 
     writeAdminLog(`Deleted store "${store.name}" (${storeId})`, req.user.id, HQ_STORE_ID);
 
@@ -828,6 +798,11 @@ adminRouter.put('/stores/:id', authenticateToken, requireSuperadmin, (req: AuthR
     return res.status(400).json({ error: 'Zipcode format: 12345 or 12345-6789' });
   }
   try {
+    const previousLogo = (
+      db.prepare('SELECT logo FROM stores WHERE id = ?').get(storeId) as
+        | { logo: string | null }
+        | undefined
+    )?.logo;
     // An omitted logo keeps the current one; null or an empty string clears it.
     const savedLogo = logo === undefined ? undefined : logo ? saveBase64Image(logo) : null;
     db.prepare(
@@ -847,6 +822,7 @@ adminRouter.put('/stores/:id', authenticateToken, requireSuperadmin, (req: AuthR
     );
     db.prepare('UPDATE users SET store_name = ? WHERE store_id = ?').run(name.trim(), storeId);
     writeAdminLog(`Updated store "${name.trim()}" (${storeId})`, req.user.id, storeId);
+    if (savedLogo !== undefined) discardUploads([previousLogo]);
 
     const updatedStore = db
       .prepare(

@@ -3,6 +3,7 @@ import { db } from '../db.js';
 import { authenticateToken, requireOwner } from '../middleware.js';
 import type { AuthRequest } from '../types.js';
 import { logError } from '../logger.js';
+import { discardUploads } from '../uploads.js';
 
 export const categoriesRouter = express.Router();
 
@@ -13,6 +14,35 @@ export const visibleCategoryCondition = `LOWER(TRIM(c.name)) NOT IN (${reservedC
 
 export function isReservedCategoryName(name: string): boolean {
   return RESERVED_CATEGORY_NAMES.includes(name.trim().toLowerCase());
+}
+
+const MAX_CATEGORY_ICON_LENGTH = 200;
+
+/**
+ * Another category in the store with this name, ignoring case and outer spaces. The table's
+ * UNIQUE(name, store_id) is case-sensitive, so "Snacks" and "snacks" could both be created
+ * here while the import treated them as one category.
+ */
+function categoryNameTaken(name: string, storeId: number | undefined, exceptId?: unknown) {
+  return Boolean(
+    db
+      .prepare(
+        `SELECT 1 FROM categories
+          WHERE LOWER(TRIM(name)) = LOWER(?) AND store_id = ? AND id IS NOT ?`
+      )
+      .get(name.trim(), storeId, exceptId === undefined ? null : Number(exceptId))
+  );
+}
+
+/** The uploaded images of a category's items, read before those items are deleted. */
+function categoryItemUploads(categoryId: unknown, storeId: number | undefined): string[] {
+  return (
+    db
+      .prepare(
+        "SELECT image FROM inventory WHERE category_id = ? AND store_id = ? AND image LIKE '/uploads/%'"
+      )
+      .all(categoryId, storeId) as Array<{ image: string }>
+  ).map(row => row.image);
 }
 
 function writeCategoryLog(
@@ -65,7 +95,7 @@ categoriesRouter.get('/dashboard/stats', authenticateToken, (req: AuthRequest, r
     .get(...inventoryParams) as any;
   const outOfStock = db
     .prepare(
-      `SELECT COUNT(*) as count FROM inventory WHERE quantity = 0 AND store_id = ?${categoryCondition}`
+      `SELECT COUNT(*) as count FROM inventory WHERE COALESCE(quantity, 0) <= 0 AND store_id = ?${categoryCondition}`
     )
     .get(...inventoryParams) as any;
 
@@ -150,6 +180,7 @@ categoriesRouter.delete(
       .prepare('SELECT name FROM categories WHERE id = ? AND store_id = ?')
       .get(id, storeId) as { name: string } | undefined;
     if (!category) return res.status(404).json({ error: 'Category not found' });
+    const images = categoryItemUploads(id, storeId);
     db.transaction(() => {
       const result = db
         .prepare('DELETE FROM inventory WHERE category_id = ? AND store_id = ?')
@@ -161,6 +192,7 @@ categoriesRouter.delete(
         storeId
       );
     })();
+    discardUploads(images);
     res.json({ success: true });
   }
 );
@@ -172,10 +204,14 @@ categoriesRouter.post('/categories', authenticateToken, requireOwner, (req: Auth
   if (name.length > 100) return res.status(400).json({ error: 'Category name is too long' });
   if (icon !== undefined && typeof icon !== 'string')
     return res.status(400).json({ error: 'Category icon must be a string' });
+  if (icon && icon.length > MAX_CATEGORY_ICON_LENGTH)
+    return res.status(400).json({ error: 'Category icon is too long' });
   if (isReservedCategoryName(name)) {
     return res.status(400).json({ error: 'Inventory is not a category name' });
   }
   const storeId = req.user.store_id;
+  if (categoryNameTaken(name, storeId))
+    return res.status(409).json({ error: 'Category name already exists' });
   try {
     const info = db.transaction(() => {
       const result = db
@@ -206,9 +242,13 @@ categoriesRouter.put(
     if (name.length > 100) return res.status(400).json({ error: 'Category name is too long' });
     if (icon !== undefined && typeof icon !== 'string')
       return res.status(400).json({ error: 'Category icon must be a string' });
+    if (icon && icon.length > MAX_CATEGORY_ICON_LENGTH)
+      return res.status(400).json({ error: 'Category icon is too long' });
     if (isReservedCategoryName(name)) {
       return res.status(400).json({ error: 'Inventory is not a category name' });
     }
+    if (categoryNameTaken(name, storeId, id))
+      return res.status(409).json({ error: 'Category name already exists' });
     try {
       const updated = db.transaction(() => {
         const result = db
@@ -243,11 +283,13 @@ categoriesRouter.delete(
       .prepare('SELECT name FROM categories WHERE id = ? AND store_id = ?')
       .get(id, storeId) as { name: string } | undefined;
     if (!category) return res.status(404).json({ error: 'Category not found' });
+    const images = categoryItemUploads(id, storeId);
     db.transaction(() => {
       db.prepare('DELETE FROM inventory WHERE category_id = ? AND store_id = ?').run(id, storeId);
       db.prepare('DELETE FROM categories WHERE id = ? AND store_id = ?').run(id, storeId);
       writeCategoryLog('DELETE', `Deleted category "${category.name}"`, req.user.id, storeId);
     })();
+    discardUploads(images);
     res.json({ success: true });
   }
 );

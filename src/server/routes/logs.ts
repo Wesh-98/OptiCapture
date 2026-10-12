@@ -1,12 +1,14 @@
 import express from 'express';
 import { db } from '../db.js';
-import { authenticateToken } from '../middleware.js';
-import { firstQueryValue } from '../helpers.js';
+import { authenticateToken, requireOwner } from '../middleware.js';
+import { firstQueryValue, toSqliteUtc } from '../helpers.js';
 import type { AuthRequest } from '../types.js';
 
 export const logsRouter = express.Router();
 
-logsRouter.get('/logs', authenticateToken, (req: AuthRequest, res) => {
+// Owners only: the log names every account's actions, including password resets and access
+// changes, which a taker has no need to read.
+logsRouter.get('/logs', authenticateToken, requireOwner, (req: AuthRequest, res) => {
   const storeId = req.user.store_id;
   const from = firstQueryValue(req.query.from);
   const to = firstQueryValue(req.query.to);
@@ -20,6 +22,8 @@ logsRouter.get('/logs', authenticateToken, (req: AuthRequest, res) => {
 
   const conditions: string[] = ['logs.store_id = ?'];
   const params: any[] = [storeId];
+  const fromInstant = firstQueryValue(req.query.from_utc);
+  const toInstant = firstQueryValue(req.query.to_utc);
 
   // Validate date format before passing to SQLite — malformed strings are not
   // rejected by the parameterised query and cause the comparison to silently
@@ -33,13 +37,30 @@ logsRouter.get('/logs', authenticateToken, (req: AuthRequest, res) => {
   // but the upper bound was built as `to + 'T23:59:59'`, which only sorted correctly because
   // a space happens to precede 'T' in ASCII — and silently excluded any legacy row still
   // stored in the ISO 'T' form. date() parses both spellings.
-  if (from) {
+  if (from && fromInstant === undefined) {
     conditions.push('date(logs.timestamp) >= date(?)');
     params.push(from);
   }
-  if (to) {
+  if (to && toInstant === undefined) {
     conditions.push('date(logs.timestamp) <= date(?)');
     params.push(to);
+  }
+
+  // The page sends its day boundaries as instants (local midnight of the first day, local
+  // midnight after the last), because a plain date is read as a UTC day: for a store in
+  // the US, an evening's entries fell on "tomorrow". These win over from/to when present.
+  for (const [name, value] of [
+    ['from_utc', fromInstant],
+    ['to_utc', toInstant],
+  ] as const) {
+    if (value === undefined) continue;
+    const ms = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/.test(value) ? Date.parse(value) : NaN;
+    if (Number.isNaN(ms)) {
+      return res.status(400).json({ error: `${name} must be an ISO 8601 UTC timestamp` });
+    }
+    // Stored timestamps are UTC 'YYYY-MM-DD HH:MM:SS', which compares correctly as text.
+    conditions.push(name === 'from_utc' ? 'logs.timestamp >= ?' : 'logs.timestamp < ?');
+    params.push(toSqliteUtc(new Date(ms)));
   }
 
   if (action) {
@@ -75,7 +96,7 @@ logsRouter.get('/logs', authenticateToken, (req: AuthRequest, res) => {
       `
     SELECT logs.*, users.username
     ${fromSql}
-    ORDER BY timestamp DESC
+    ORDER BY logs.timestamp DESC, logs.id DESC
     LIMIT ? OFFSET ?
   `
     )
