@@ -8,7 +8,9 @@ import {
   generateTempPassword,
   normalizeUsername,
   saveBase64Image,
+  searchCondition,
   UnsupportedImageTypeError,
+  upcVariants,
 } from '../helpers.js';
 import { discardUploads, removeUnreferencedUploads } from '../uploads.js';
 import type { AuthRequest } from '../types.js';
@@ -156,9 +158,53 @@ adminRouter.get('/activity', authenticateToken, requireSuperadmin, (req: AuthReq
   res.json({ items, total });
 });
 
+// The cross-store item lists (Recently added, Search) share a row shape and a page size.
+const CROSS_STORE_PAGE_SIZE = 50;
+const CROSS_STORE_ITEM_COLUMNS = `i.id, i.item_name, i.upc, i.image, i.sale_price, i.status,
+  i.created_at, i.source, i.store_id, s.name AS store_name, s.status AS store_status,
+  c.name AS category_name`;
+const CROSS_STORE_ITEM_FROM = `FROM inventory i
+  JOIN stores s ON s.id = i.store_id
+  LEFT JOIN categories c ON c.id = i.category_id`;
+
+/**
+ * The optional `store` and `page` filters of a cross-store item list. Sends the error
+ * response itself and returns null for a malformed value, the HQ store, or a store that
+ * does not exist.
+ */
+function resolveItemListFilters(
+  req: AuthRequest,
+  res: express.Response
+): { storeId: number | null; page: number } | null {
+  const storeParam = firstQueryValue(req.query.store);
+  let storeId: number | null = null;
+  if (storeParam !== undefined) {
+    storeId = parseIdParam(storeParam);
+    if (storeId === null) {
+      res.status(400).json({ error: 'Invalid store ID' });
+      return null;
+    }
+    if (storeId === HQ_STORE_ID) {
+      res.status(403).json({ error: 'The HQ store is managed internally' });
+      return null;
+    }
+    if (!db.prepare('SELECT 1 FROM stores WHERE id = ?').get(storeId)) {
+      res.status(404).json({ error: 'Store not found' });
+      return null;
+    }
+  }
+
+  const pageParam = firstQueryValue(req.query.page);
+  const page = pageParam === undefined ? 1 : parseIdParam(pageParam);
+  if (page === null || page < 1) {
+    res.status(400).json({ error: 'Invalid page' });
+    return null;
+  }
+  return { storeId, page };
+}
+
 // The windows the Recently added page offers, in days.
 export const RECENT_ITEM_WINDOWS = [1, 7, 30] as const;
-const RECENT_ITEMS_PAGE_SIZE = 50;
 
 // Super admin — items added in the last 1, 7 or 30 days, newest first, across every store
 // or just the one in `store`. Capture-first, so new items are what a superadmin watches.
@@ -170,22 +216,9 @@ adminRouter.get('/recent-items', authenticateToken, requireSuperadmin, (req: Aut
       .json({ error: `days must be one of: ${RECENT_ITEM_WINDOWS.join(', ')}` });
   }
 
-  const storeParam = firstQueryValue(req.query.store);
-  let storeId: number | null = null;
-  if (storeParam !== undefined) {
-    storeId = parseIdParam(storeParam);
-    if (storeId === null) return res.status(400).json({ error: 'Invalid store ID' });
-    if (storeId === HQ_STORE_ID) {
-      return res.status(403).json({ error: 'The HQ store is managed internally' });
-    }
-    if (!db.prepare('SELECT 1 FROM stores WHERE id = ?').get(storeId)) {
-      return res.status(404).json({ error: 'Store not found' });
-    }
-  }
-
-  const pageParam = firstQueryValue(req.query.page);
-  const page = pageParam === undefined ? 1 : parseIdParam(pageParam);
-  if (page === null || page < 1) return res.status(400).json({ error: 'Invalid page' });
+  const filters = resolveItemListFilters(req, res);
+  if (!filters) return;
+  const { storeId, page } = filters;
 
   const conditions = [`i.created_at >= datetime('now', ?)`, 'i.store_id != ?'];
   const params: unknown[] = [`-${days} days`, HQ_STORE_ID];
@@ -199,18 +232,56 @@ adminRouter.get('/recent-items', authenticateToken, requireSuperadmin, (req: Aut
     .get(...params) as { total: number };
   const items = db
     .prepare(
-      `SELECT i.id, i.item_name, i.upc, i.image, i.sale_price, i.status, i.created_at, i.source,
-              i.store_id, s.name AS store_name, s.status AS store_status,
-              c.name AS category_name
-         FROM inventory i
-         JOIN stores s ON s.id = i.store_id
-         LEFT JOIN categories c ON c.id = i.category_id
+      `SELECT ${CROSS_STORE_ITEM_COLUMNS} ${CROSS_STORE_ITEM_FROM}
         WHERE ${where}
         ORDER BY i.created_at DESC, i.id DESC
         LIMIT ? OFFSET ?`
     )
-    .all(...params, RECENT_ITEMS_PAGE_SIZE, (page - 1) * RECENT_ITEMS_PAGE_SIZE);
-  res.json({ items, total, page, limit: RECENT_ITEMS_PAGE_SIZE, days });
+    .all(...params, CROSS_STORE_PAGE_SIZE, (page - 1) * CROSS_STORE_PAGE_SIZE);
+  res.json({ items, total, page, limit: CROSS_STORE_PAGE_SIZE, days });
+});
+
+const ITEM_SEARCH_MIN_LENGTH = 2;
+const ITEM_SEARCH_MAX_LENGTH = 100;
+
+// Super admin — find items by name, UPC, brand, category or tag across every store, or just the
+// one in `store`. Spaces and punctuation are ignored, so "coca cola" finds "Coca-Cola". A
+// full barcode also finds its other form (12 digits, or 13 with a leading zero), since
+// stores hold either.
+adminRouter.get('/search', authenticateToken, requireSuperadmin, (req: AuthRequest, res) => {
+  const q = (firstQueryValue(req.query.q) ?? '').trim();
+  if (q.length < ITEM_SEARCH_MIN_LENGTH || q.length > ITEM_SEARCH_MAX_LENGTH) {
+    return res.status(400).json({
+      error: `Search needs ${ITEM_SEARCH_MIN_LENGTH} to ${ITEM_SEARCH_MAX_LENGTH} characters`,
+    });
+  }
+
+  const filters = resolveItemListFilters(req, res);
+  if (!filters) return;
+  const { storeId, page } = filters;
+
+  const text = searchCondition(['i.item_name', 'i.upc', 'i.brand', 'c.name', 'i.tag_names'], q);
+  const otherUpcForms = upcVariants(q).slice(1);
+  const matches = [text.sql, ...otherUpcForms.map(() => 'i.upc = ?')];
+  const conditions = ['i.store_id != ?', `(${matches.join(' OR ')})`];
+  const params: unknown[] = [HQ_STORE_ID, ...text.params, ...otherUpcForms];
+  if (storeId !== null) {
+    conditions.push('i.store_id = ?');
+    params.push(storeId);
+  }
+  const where = conditions.join(' AND ');
+  const { total } = db
+    .prepare(`SELECT COUNT(*) AS total ${CROSS_STORE_ITEM_FROM} WHERE ${where}`)
+    .get(...params) as { total: number };
+  const items = db
+    .prepare(
+      `SELECT ${CROSS_STORE_ITEM_COLUMNS} ${CROSS_STORE_ITEM_FROM}
+        WHERE ${where}
+        ORDER BY i.item_name COLLATE NOCASE, s.name COLLATE NOCASE, i.id
+        LIMIT ? OFFSET ?`
+    )
+    .all(...params, CROSS_STORE_PAGE_SIZE, (page - 1) * CROSS_STORE_PAGE_SIZE);
+  res.json({ items, total, page, limit: CROSS_STORE_PAGE_SIZE, q });
 });
 
 // Super admin — list all stores

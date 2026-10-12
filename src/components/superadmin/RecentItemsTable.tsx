@@ -52,7 +52,8 @@ interface Props {
   onPageChange: (page: number) => void;
 }
 
-// Newest items first, each linking to its item view and its store.
+// A cross-store item list (Recently added, Search), each row linking to its item view and
+// its store.
 export function RecentItemsTable({
   items,
   total,

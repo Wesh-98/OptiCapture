@@ -121,3 +121,19 @@ export async function registerStore(
 
   return { storeId, storeCode, cookie };
 }
+
+/** The item names of a list response, in the order returned. */
+export const itemNames = (body: { items: Array<{ item_name: string }> }) =>
+  body.items.map(item => item.item_name);
+
+/**
+ * Logs in the seeded store owner and the superadmin, and registers North Mart and South
+ * Mart. `tag` keeps the new owners' usernames unique to the calling test file.
+ */
+export async function setUpTwoStores(request: TestApp, tag: string) {
+  const ownerCookie = await login(request, 'admin', 'admin123', getStoreCode(1));
+  const superadminCookie = await login(request, 'superadmin', 'superadmin123');
+  const north = await registerStore(request, { storeName: 'North Mart', username: `north${tag}` });
+  const south = await registerStore(request, { storeName: 'South Mart', username: `south${tag}` });
+  return { ownerCookie, superadminCookie, northId: north.storeId, southId: south.storeId };
+}
