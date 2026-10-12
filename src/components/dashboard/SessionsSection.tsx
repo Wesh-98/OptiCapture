@@ -4,6 +4,63 @@ import { ChevronDown, X } from 'lucide-react';
 import { parseServerDate } from '../../lib/utils';
 import type { ActiveSession } from './types';
 
+type SessionTone = ActiveSession['status'] | 'stale';
+
+const STATUS_STYLE: Record<
+  ActiveSession['status'],
+  { dotClass: string; labelClass: string; statusText: string; btnLabel: string }
+> = {
+  completed: {
+    dotClass: 'bg-brand-400',
+    labelClass: 'text-brand-600',
+    statusText: 'Committed',
+    btnLabel: 'View',
+  },
+  active: {
+    dotClass: 'bg-emerald-500 animate-pulse',
+    labelClass: 'text-emerald-800',
+    statusText: 'Scanning',
+    btnLabel: 'Open',
+  },
+  draft: {
+    dotClass: 'bg-amber-400',
+    labelClass: 'text-amber-800',
+    statusText: 'Draft',
+    btnLabel: 'Review',
+  },
+};
+
+const TONE_STYLE: Record<SessionTone, { cardClass: string; btnClass: string }> = {
+  completed: {
+    cardClass: 'bg-theme-subtle border border-theme-border border-l-brand-400',
+    btnClass: 'bg-theme-text text-white hover:bg-navy-800',
+  },
+  stale: {
+    cardClass: 'bg-slate-50 border border-slate-200 border-l-slate-400 opacity-75',
+    btnClass: 'bg-slate-500 text-white hover:bg-slate-600',
+  },
+  active: {
+    cardClass: 'bg-emerald-50/60 border border-emerald-200 border-l-emerald-500',
+    btnClass: 'bg-emerald-600 text-white hover:bg-emerald-700',
+  },
+  draft: {
+    cardClass: 'bg-amber-50/60 border border-amber-200 border-l-amber-500',
+    btnClass: 'bg-amber-500 text-white hover:bg-amber-600',
+  },
+};
+
+/** An unfinished session nobody touched in the last day is shown greyed out. */
+function sessionTone(status: ActiveSession['status'], isToday: boolean): SessionTone {
+  if (status === 'completed' || isToday) return status;
+  return 'stale';
+}
+
+function formatTimeAgo(diffMin: number): string {
+  if (diffMin < 60) return `${diffMin}m ago`;
+  if (diffMin < 1440) return `${Math.floor(diffMin / 60)}h ago`;
+  return `${Math.floor(diffMin / 1440)}d ago`;
+}
+
 interface SessionCardProps {
   session: ActiveSession;
   onDelete: (sessionId: string) => void;
@@ -21,40 +78,10 @@ function SessionCard({ session: s, onDelete, now }: Readonly<SessionCardProps>) 
   const diffMs = now - parseServerDate(lastActivity).getTime();
   const diffMin = Math.floor(diffMs / 60000);
   const isToday = diffMs < 24 * 60 * 60 * 1000;
-  const timeAgo =
-    diffMin < 60
-      ? `${diffMin}m ago`
-      : diffMin < 1440
-        ? `${Math.floor(diffMin / 60)}h ago`
-        : `${Math.floor(diffMin / 1440)}d ago`;
-
-  const cardClass = isCompleted
-    ? 'bg-theme-subtle border border-theme-border border-l-brand-400'
-    : !isToday
-      ? 'bg-slate-50 border border-slate-200 border-l-slate-400 opacity-75'
-      : isActive
-        ? 'bg-emerald-50/60 border border-emerald-200 border-l-emerald-500'
-        : 'bg-amber-50/60 border border-amber-200 border-l-amber-500';
-
-  const dotClass = isCompleted
-    ? 'bg-brand-400'
-    : isActive
-      ? 'bg-emerald-500 animate-pulse'
-      : 'bg-amber-400';
-  const labelClass = isCompleted
-    ? 'text-brand-600'
-    : isActive
-      ? 'text-emerald-800'
-      : 'text-amber-800';
-  const statusText = isCompleted ? 'Committed' : isActive ? 'Scanning' : 'Draft';
-  const btnLabel = isCompleted ? 'View' : isActive ? 'Open' : 'Review';
-  const btnClass = isCompleted
-    ? 'bg-theme-text text-white hover:bg-navy-800'
-    : !isToday
-      ? 'bg-slate-500 text-white hover:bg-slate-600'
-      : isActive
-        ? 'bg-emerald-600 text-white hover:bg-emerald-700'
-        : 'bg-amber-500 text-white hover:bg-amber-600';
+  const status = isActive || isCompleted ? s.status : 'draft';
+  const { dotClass, labelClass, statusText, btnLabel } = STATUS_STYLE[status];
+  const { cardClass, btnClass } = TONE_STYLE[sessionTone(status, isToday)];
+  const timeAgo = formatTimeAgo(diffMin);
 
   return (
     <div

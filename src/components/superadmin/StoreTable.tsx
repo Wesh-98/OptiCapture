@@ -38,6 +38,13 @@ interface Props {
   onClearSelection: () => void;
 }
 
+function storeTableEmptyMessage(isLoading: boolean, total: number, shown: number): string | null {
+  if (isLoading) return 'Loading stores...';
+  if (total === 0) return 'No stores registered yet.';
+  if (shown === 0) return 'No stores match your filters.';
+  return null;
+}
+
 export function StoreTable({
   stores,
   filteredStores,
@@ -61,6 +68,7 @@ export function StoreTable({
   onToggleAll,
   onClearSelection,
 }: Readonly<Props>) {
+  const emptyMessage = storeTableEmptyMessage(isLoading, stores.length, filteredStores.length);
   // Select All covers the stores the filters currently show.
   const selectedVisible = filteredStores.filter(store => selectedIds.has(store.id)).length;
   const allVisibleSelected = filteredStores.length > 0 && selectedVisible === filteredStores.length;
@@ -136,12 +144,8 @@ export function StoreTable({
       </div>
 
       {/* Body */}
-      {isLoading ? (
-        <div className="p-12 text-center text-slate-400">Loading stores...</div>
-      ) : stores.length === 0 ? (
-        <div className="p-12 text-center text-slate-400">No stores registered yet.</div>
-      ) : filteredStores.length === 0 ? (
-        <div className="p-12 text-center text-slate-400">No stores match your filters.</div>
+      {emptyMessage ? (
+        <div className="p-12 text-center text-slate-400">{emptyMessage}</div>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-left">

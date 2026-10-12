@@ -175,6 +175,9 @@ export function ItemEditForm({
   const [conflict, setConflict] = useState(false);
 
   const changes = useMemo(() => diffValues(item, values, categories), [item, values, categories]);
+  const changeWord = changes.length === 1 ? 'change' : 'changes';
+  const reviewLabel =
+    changes.length === 0 ? 'No changes' : `Review ${changes.length} ${changeWord}`;
   const set = (field: keyof FormValues) => (value: string) =>
     setValues(prev => ({ ...prev, [field]: value }));
 
@@ -439,9 +442,7 @@ export function ItemEditForm({
       <div className="flex gap-2">
         <SecondaryButton onClick={onCancel}>Cancel</SecondaryButton>
         <PrimaryButton type="submit" disabled={changes.length === 0}>
-          {changes.length === 0
-            ? 'No changes'
-            : `Review ${changes.length} ${changes.length === 1 ? 'change' : 'changes'}`}
+          {reviewLabel}
         </PrimaryButton>
       </div>
     </form>

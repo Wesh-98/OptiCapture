@@ -37,6 +37,33 @@ const textFields: ReadonlyArray<{
   { field: 'email', label: 'Email', type: 'email' },
 ];
 
+function EmptyLogo({
+  isTaker,
+  onLogoFileChange,
+}: Readonly<Pick<StoreInfoCardProps, 'isTaker' | 'onLogoFileChange'>>) {
+  if (isTaker) {
+    return (
+      <div className="w-24 h-24 border border-slate-200 rounded-xl flex items-center justify-center text-slate-300 bg-slate-50">
+        <Store size={24} />
+      </div>
+    );
+  }
+  return (
+    <label className="relative w-24 h-24 block">
+      <input
+        type="file"
+        accept={SUPPORTED_UPLOAD_IMAGE_ACCEPT}
+        onChange={onLogoFileChange}
+        className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+      />
+      <div className="w-24 h-24 border-2 border-dashed border-slate-300 rounded-xl flex flex-col items-center justify-center text-slate-400 hover:border-slate-400 cursor-pointer gap-1">
+        <Upload size={18} />
+        <span className="text-xs">Upload Logo</span>
+      </div>
+    </label>
+  );
+}
+
 export function StoreInfoCard({
   infoErrors,
   isTaker,
@@ -100,23 +127,8 @@ export function StoreInfoCard({
                 </button>
               )}
             </div>
-          ) : isTaker ? (
-            <div className="w-24 h-24 border border-slate-200 rounded-xl flex items-center justify-center text-slate-300 bg-slate-50">
-              <Store size={24} />
-            </div>
           ) : (
-            <label className="relative w-24 h-24 block">
-              <input
-                type="file"
-                accept={SUPPORTED_UPLOAD_IMAGE_ACCEPT}
-                onChange={onLogoFileChange}
-                className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-              />
-              <div className="w-24 h-24 border-2 border-dashed border-slate-300 rounded-xl flex flex-col items-center justify-center text-slate-400 hover:border-slate-400 cursor-pointer gap-1">
-                <Upload size={18} />
-                <span className="text-xs">Upload Logo</span>
-              </div>
-            </label>
+            <EmptyLogo isTaker={isTaker} onLogoFileChange={onLogoFileChange} />
           )}
         </div>
 

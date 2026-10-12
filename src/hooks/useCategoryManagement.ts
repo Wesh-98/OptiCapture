@@ -133,11 +133,12 @@ export function useCategoryManagement(
       }
       const found = categories.find(c => c.id === categoryId)?.name;
       const where = found ? `"${found}"` : 'the category';
+      const newStatus = action === 'activate' ? 'Active' : 'In-Active';
       addToast(
         'success',
         action === 'deleteItems'
           ? `Deleted all items in ${where}`
-          : `Set all items in ${where} ${action === 'activate' ? 'Active' : 'In-Active'}`
+          : `Set all items in ${where} ${newStatus}`
       );
       await fetchCategories();
       onStatsChange();

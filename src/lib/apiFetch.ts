@@ -23,8 +23,7 @@ function buildPatchedRequest(
     return { input, init };
   }
 
-  const rawUrl =
-    input instanceof Request ? input.url : input instanceof URL ? input.toString() : String(input);
+  const rawUrl = input instanceof Request ? input.url : String(input);
 
   let url: URL;
   try {

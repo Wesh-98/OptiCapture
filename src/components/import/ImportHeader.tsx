@@ -26,17 +26,16 @@ export function ImportHeader({ step }: Readonly<Props>) {
         {IMPORT_STEPS.map((currentStep, index) => {
           const isActive = step === currentStep || (step === 'importing' && currentStep === 'map');
           const isComplete = step === 'done' || (currentStep === 'upload' && step !== 'upload');
+          let stepClass = 'bg-slate-100 text-slate-500';
+          if (isActive) stepClass = 'bg-theme-subtle text-brand-600 ring-1 ring-theme-border';
+          else if (isComplete) stepClass = 'bg-emerald-100 text-emerald-700';
 
           return (
             <React.Fragment key={currentStep}>
               <div
                 className={cn(
                   'flex items-center gap-1.5 rounded-full px-3 py-1.5 font-medium transition-colors',
-                  isActive
-                    ? 'bg-theme-subtle text-brand-600 ring-1 ring-theme-border'
-                    : isComplete
-                      ? 'bg-emerald-100 text-emerald-700'
-                      : 'bg-slate-100 text-slate-500'
+                  stepClass
                 )}
               >
                 {isComplete && currentStep !== 'done' ? (

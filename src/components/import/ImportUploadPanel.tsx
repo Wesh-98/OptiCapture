@@ -28,16 +28,16 @@ export function ImportUploadPanel({
     if (file) void onFileSelect(file);
   };
 
+  let dropZoneClass = 'border-slate-300 bg-slate-50 hover:bg-slate-100';
+  if (isParsing) dropZoneClass = 'cursor-not-allowed border-slate-200 bg-slate-50';
+  else if (isDragging) dropZoneClass = 'border-brand-400 bg-theme-subtle';
+
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
       <label
         className={cn(
           'flex h-64 w-full cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed transition-colors',
-          isParsing
-            ? 'cursor-not-allowed border-slate-200 bg-slate-50'
-            : isDragging
-              ? 'border-brand-400 bg-theme-subtle'
-              : 'border-slate-300 bg-slate-50 hover:bg-slate-100'
+          dropZoneClass
         )}
         onDragEnter={event => {
           event.preventDefault();

@@ -45,6 +45,11 @@ export function getBulkCategoryTargetIds(
   return eligibleItems.filter(item => targetIds.has(item.id)).map(item => item.id);
 }
 
+const COMMIT_STATUS_MESSAGES: Record<string, string> = {
+  completed: 'Session committed to inventory. View only.',
+  draft: 'Draft mode. Resume scanning when you are ready.',
+};
+
 interface CommitModalDeps {
   sessionId: string | null;
   selectedIds: Set<number>;
@@ -155,11 +160,8 @@ export function useCommitModal({
       await refreshSession(true);
       setUiStatus('ready');
       setStatusMessage(
-        result.status === 'completed'
-          ? 'Session committed to inventory. View only.'
-          : result.status === 'draft'
-            ? 'Draft mode. Resume scanning when you are ready.'
-            : 'Session ready. Scan the QR code with your phone.'
+        COMMIT_STATUS_MESSAGES[result.status as string] ??
+          'Session ready. Scan the QR code with your phone.'
       );
     } catch {
       setUiStatus('error');

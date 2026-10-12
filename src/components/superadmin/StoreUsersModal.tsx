@@ -69,10 +69,10 @@ export function StoreUsersModal({
         )}
 
         <div className="p-5 space-y-3 max-h-64 overflow-y-auto">
-          {loading ? (
-            <p className="text-sm text-slate-400 text-center py-4">Loading...</p>
-          ) : users.length === 0 ? (
-            <p className="text-sm text-slate-400 text-center py-4">No users assigned yet.</p>
+          {users.length === 0 || loading ? (
+            <p className="text-sm text-slate-400 text-center py-4">
+              {loading ? 'Loading...' : 'No users assigned yet.'}
+            </p>
           ) : (
             users.map(u => {
               const displayName = u.username?.trim() || 'Unknown user';
