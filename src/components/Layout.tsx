@@ -57,6 +57,8 @@ function navItemIsActive(
 ): boolean {
   if (pathname !== item.href.split('?')[0]) return false;
   if (item.activeSearch) return isExportRouteActive;
+  // Only Dashboard shares its path with Export, so only it gives way to the export query.
+  if (item.href !== '/') return true;
   return !isExportRouteActive || !hasExportNavItem;
 }
 
