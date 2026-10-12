@@ -74,8 +74,8 @@ function DesktopSidebar({
   isSidebarCollapsed: boolean;
   setIsSidebarCollapsed: (collapsed: boolean) => void;
   hasMultipleStores: boolean;
-  handleLeaveCurrentStore: () => void;
-  handleLogout: () => void;
+  handleLeaveCurrentStore: () => Promise<void>;
+  handleLogout: () => Promise<void>;
 }>) {
   return (
     <aside

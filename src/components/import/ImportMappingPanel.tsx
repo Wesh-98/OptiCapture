@@ -415,8 +415,7 @@ function MappedPreview({
               {mappedPreview.map((row, index) => (
                 <tr
                   key={
-                    mappedColumns.map(column => String(row[column.destination] ?? '')).join('|') +
-                    index
+                    mappedColumns.map(column => cellText(row[column.destination])).join('|') + index
                   }
                   className="border-t border-slate-100"
                 >
@@ -425,7 +424,7 @@ function MappedPreview({
                       key={column.source}
                       className="max-w-[160px] truncate px-3 py-2 text-slate-600 whitespace-nowrap"
                     >
-                      {String(row[column.destination] ?? '')}
+                      {cellText(row[column.destination])}
                     </td>
                   ))}
                 </tr>
