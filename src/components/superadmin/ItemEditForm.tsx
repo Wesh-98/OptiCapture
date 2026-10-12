@@ -134,8 +134,9 @@ function diffValues(item: AdminItem, values: FormValues, categories: Category[])
   return changes;
 }
 
-function validate(values: FormValues): string {
+function validate(item: AdminItem, values: FormValues): string {
   if (!values.item_name.trim()) return 'Name is required.';
+  if (item.upc?.trim() && !values.upc.trim()) return 'UPC can be changed but not removed.';
   for (const [label, raw, max] of [
     ['Price', values.sale_price, 1_000_000],
     ['Tax', values.tax_percent, 100],
@@ -198,7 +199,7 @@ export function ItemEditForm({
   };
 
   const review = () => {
-    const problem = validate(values);
+    const problem = validate(item, values);
     setError(problem);
     if (!problem) setStep('review');
   };
@@ -389,6 +390,7 @@ export function ItemEditForm({
             min={0}
             step="0.01"
             value={values.sale_price}
+            onFocus={e => e.target.select()}
             onChange={e => set('sale_price')(e.target.value)}
             className={cn('w-full h-10 px-3', FILTER_INPUT)}
           />
@@ -401,6 +403,7 @@ export function ItemEditForm({
             max={100}
             step="0.01"
             value={values.tax_percent}
+            onFocus={e => e.target.select()}
             onChange={e => set('tax_percent')(e.target.value)}
             className={cn('w-full h-10 px-3', FILTER_INPUT)}
           />

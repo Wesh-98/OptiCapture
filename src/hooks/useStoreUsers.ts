@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { StoreRow, StoreUser, validateEmail } from '../components/superadmin/types';
+import { useToast } from './useToast';
 
 export function useStoreUsers() {
+  const { addToast } = useToast();
   const [usersStore, setUsersStore] = useState<StoreRow | null>(null);
   const [storeUsers, setStoreUsers] = useState<StoreUser[]>([]);
   const [usersLoading, setUsersLoading] = useState(false);
@@ -99,6 +101,12 @@ export function useStoreUsers() {
         return;
       }
       await loadUsersForStore(usersStore.id);
+      addToast(
+        'success',
+        userActionMode === 'create'
+          ? `Created "${newUsername.trim()}" as ${newRole}`
+          : `Gave "${newUsername.trim()}" ${newRole} access`
+      );
       setNewUsername('');
       setNewEmail('');
       if (
@@ -127,6 +135,8 @@ export function useStoreUsers() {
       setUsersError(data.error || 'Failed to remove user');
       return;
     }
+    const name = storeUsers.find(u => u.id === userId)?.username;
+    addToast('success', name ? `Removed "${name}" from ${usersStore.name}` : 'Access removed');
     setStoreUsers(prev => prev.filter(u => u.id !== userId));
     setConfirmDeleteUserId(null);
   };
@@ -141,6 +151,7 @@ export function useStoreUsers() {
       });
       const data = await res.json();
       if (res.ok) {
+        addToast('success', `Reset the password for "${data.username}"`);
         setResetResult({ username: data.username, tempPassword: data.tempPassword });
       } else {
         setUsersError(data.error || 'Failed to reset password');

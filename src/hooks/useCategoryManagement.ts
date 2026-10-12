@@ -27,8 +27,9 @@ export function useCategoryManagement(
   const [catForm, setCatForm] = useState({ name: '', icon: '' });
   const [catError, setCatError] = useState('');
   const [catSaving, setCatSaving] = useState(false);
-  const [pendingCategoryAction, setPendingCategoryAction] =
-    useState<PendingCategoryAction | null>(null);
+  const [pendingCategoryAction, setPendingCategoryAction] = useState<PendingCategoryAction | null>(
+    null
+  );
 
   const fetchCategories = async () => {
     const res = await fetch('/api/categories', { credentials: 'include' });
@@ -70,6 +71,10 @@ export function useCategoryManagement(
         setCatError(data.error || 'Failed to save category');
         return;
       }
+      addToast(
+        'success',
+        `${editingCategory ? 'Saved' : 'Added'} category "${catForm.name.trim()}"`
+      );
       setShowCatModal(false);
       setEditingCategory(null);
       setCatForm({ name: '', icon: '' });
@@ -91,6 +96,8 @@ export function useCategoryManagement(
         const payload = (await res.json().catch(() => null)) as { error?: string } | null;
         throw new Error(payload?.error || 'Failed to delete category');
       }
+      const name = categories.find(c => c.id === catId)?.name;
+      addToast('success', name ? `Deleted category "${name}"` : 'Category deleted');
       await fetchCategories();
       onStatsChange();
     } catch (error) {
@@ -124,6 +131,14 @@ export function useCategoryManagement(
           throw new Error(payload?.error || 'Failed to delete category items');
         }
       }
+      const found = categories.find(c => c.id === categoryId)?.name;
+      const where = found ? `"${found}"` : 'the category';
+      addToast(
+        'success',
+        action === 'deleteItems'
+          ? `Deleted all items in ${where}`
+          : `Set all items in ${where} ${action === 'activate' ? 'Active' : 'In-Active'}`
+      );
       await fetchCategories();
       onStatsChange();
     } catch (error) {

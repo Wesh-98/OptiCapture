@@ -33,23 +33,27 @@ export function EditItemModal({
             initial={prefersReducedMotion ? false : { opacity: 0, scale: 0.95 }}
             animate={prefersReducedMotion ? {} : { opacity: 1, scale: 1 }}
             exit={prefersReducedMotion ? {} : { opacity: 0, scale: 0.95 }}
-            className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto"
+            // Never taller than the screen: the title and buttons stay put, the fields scroll.
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[calc(100dvh-2rem)] flex flex-col"
           >
-            <div className="p-6 border-b border-slate-200 flex justify-between items-center sticky top-0 bg-white z-10">
+            <div className="px-6 py-4 border-b border-slate-200 flex justify-between items-center shrink-0">
               <h3 className="text-xl font-bold text-navy-900">Edit Item</h3>
               <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
                 <X size={24} />
               </button>
             </div>
-            <form onSubmit={onSubmit} className="p-6 space-y-6">
-              <ItemFormFields
-                data={editFormData}
-                onChange={onChange}
-                onImageChange={onImageChange}
-                categories={categories}
-                imageRequired={false}
-              />
-              <div className="flex justify-end gap-3 pt-4 border-t border-slate-200">
+            <form onSubmit={onSubmit} className="flex flex-col flex-1 min-h-0">
+              <div className="flex-1 min-h-0 overflow-y-auto p-6">
+                <ItemFormFields
+                  data={editFormData}
+                  onChange={onChange}
+                  onImageChange={onImageChange}
+                  categories={categories}
+                  // Older items without a UPC stay editable; one that has a UPC keeps it.
+                  upcRequired={Boolean(editingItem.upc?.trim())}
+                />
+              </div>
+              <div className="flex justify-end gap-3 px-6 py-4 border-t border-slate-200 shrink-0">
                 <button
                   type="button"
                   onClick={onClose}

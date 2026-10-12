@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   ChevronDown,
   ChevronRight,
+  Clock,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -93,6 +94,14 @@ export function AdminLayout({ onLogout, children, bare = false }: Readonly<Props
       icon: LayoutDashboard,
       to: '/admin',
       active: location.pathname === '/admin',
+    },
+    {
+      key: 'recent',
+      label: 'Recently added',
+      icon: Clock,
+      // From a store's pages it opens already filtered to that store.
+      to: onStorePage ? `/admin/recent?store=${viewedStoreId}` : '/admin/recent',
+      active: location.pathname === '/admin/recent',
     },
     {
       key: 'inventory',

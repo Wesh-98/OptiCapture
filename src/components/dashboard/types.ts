@@ -271,7 +271,23 @@ export const LUCIDE_ICON_PICKS = [
   'Sparkles',
 ];
 
-export const emptyForm = {
+// The number boxes hold '' while cleared, so a starting 0 can be deleted and retyped.
+// The server reads '' as "not given": quantity is required by the form, price and tax go blank.
+export interface ItemForm {
+  image: string;
+  item_name: string;
+  upc: string;
+  unit: string;
+  quantity: number | '';
+  category_id: string;
+  status: string;
+  sale_price: number | '';
+  tax_percent: number | '';
+  description: string;
+  tag_names: string;
+}
+
+export const emptyForm: ItemForm = {
   image: '',
   item_name: '',
   upc: '',
@@ -284,5 +300,3 @@ export const emptyForm = {
   description: '',
   tag_names: '',
 };
-
-export type ItemForm = typeof emptyForm;

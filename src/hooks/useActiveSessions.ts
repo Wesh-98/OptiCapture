@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import type { ActiveSession } from '../components/dashboard/types';
+import { useToast } from './useToast';
 
 //loads active/draft sessions
 export function useActiveSessions() {
   const [activeSessions, setActiveSessions] = useState<ActiveSession[]>([]);
   const [sessionsOpen, setSessionsOpen] = useState(false);
+  const { addToast } = useToast();
 
   const fetchActiveSessions = async () => {
     try {
@@ -22,8 +24,10 @@ export function useActiveSessions() {
         method: 'DELETE',
         credentials: 'include',
       });
-      if (!res.ok) await fetchActiveSessions();
+      if (!res.ok) throw new Error('Delete failed');
+      addToast('success', 'Scan session deleted');
     } catch {
+      addToast('error', 'Failed to delete the scan session');
       await fetchActiveSessions();
     }
   };

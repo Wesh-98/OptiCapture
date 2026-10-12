@@ -28,15 +28,16 @@ export function EditItemModal({
             initial={prefersReducedMotion ? false : { opacity: 0, scale: 0.95 }}
             animate={prefersReducedMotion ? {} : { opacity: 1, scale: 1 }}
             exit={prefersReducedMotion ? {} : { opacity: 0, scale: 0.95 }}
-            className="bg-white rounded-2xl shadow-2xl w-full max-w-md"
+            // Never taller than the screen: the title and buttons stay put, the fields scroll.
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[calc(100dvh-2rem)] flex flex-col"
           >
-            <div className="p-5 border-b border-slate-200 flex justify-between items-center">
+            <div className="p-5 border-b border-slate-200 flex justify-between items-center shrink-0">
               <h3 className="text-lg font-bold text-navy-900">Edit Item</h3>
               <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
                 <X size={20} />
               </button>
             </div>
-            <div className="p-5 space-y-4 overflow-y-auto max-h-[90vh]">
+            <div className="p-5 space-y-4 overflow-y-auto flex-1 min-h-0">
               <div>
                 <label
                   htmlFor="scan-edit-name"
@@ -81,7 +82,13 @@ export function EditItemModal({
                   type="number"
                   min="1"
                   value={editItem.quantity}
-                  onChange={e => onChange({ ...editItem, quantity: parseInt(e.target.value) || 1 })}
+                  onFocus={e => e.target.select()}
+                  onChange={e =>
+                    onChange({
+                      ...editItem,
+                      quantity: e.target.value === '' ? '' : Number(e.target.value),
+                    })
+                  }
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-navy-700 focus:border-transparent"
                 />
               </div>
@@ -102,6 +109,7 @@ export function EditItemModal({
                     min="0"
                     step="0.01"
                     value={editItem.sale_price}
+                    onFocus={e => e.target.select()}
                     onChange={e => onChange({ ...editItem, sale_price: e.target.value })}
                     className="w-full pl-7 pr-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-navy-700 focus:border-transparent"
                     placeholder="0.00"
@@ -212,7 +220,7 @@ export function EditItemModal({
                 />
               </div>
             </div>
-            <div className="p-5 border-t border-slate-200 flex justify-end gap-3">
+            <div className="p-5 border-t border-slate-200 flex justify-end gap-3 shrink-0">
               <button
                 onClick={onClose}
                 className="px-4 py-2 border border-accent-500 text-accent-500 font-medium hover:bg-accent-50 rounded-lg transition-colors text-sm"
@@ -221,7 +229,7 @@ export function EditItemModal({
               </button>
               <button
                 onClick={onSave}
-                disabled={editSaving || !editItem.product_name.trim()}
+                disabled={editSaving || !editItem.product_name.trim() || editItem.quantity === ''}
                 className="px-4 py-2 bg-brand-600 text-white font-medium rounded-lg hover:bg-brand-700 transition-colors text-sm disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2"
               >
                 {editSaving && <Loader2 size={14} className="animate-spin" />}

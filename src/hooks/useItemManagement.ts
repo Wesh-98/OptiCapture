@@ -51,8 +51,13 @@ export function useItemManagement(
 
   const handleAddItem = async (e: { preventDefault(): void }) => {
     e.preventDefault();
-    if (!formData.image || !formData.item_name || !formData.category_id) {
-      addToast('warning', 'Please fill in all required fields (*)');
+    const missing = [
+      !formData.item_name.trim() && 'a name',
+      !formData.upc.trim() && 'a UPC',
+      !formData.category_id && 'a category',
+    ].filter(Boolean);
+    if (missing.length > 0) {
+      addToast('warning', `Please add ${missing.join(', ')} before saving.`);
       return;
     }
     try {
@@ -63,6 +68,7 @@ export function useItemManagement(
         body: JSON.stringify(formData),
       });
       if (res.ok) {
+        addToast('success', `Added "${formData.item_name.trim()}"`);
         setIsAddModalOpen(false);
         setFormData({ ...emptyForm });
         onStatsChange();
@@ -88,6 +94,7 @@ export function useItemManagement(
         body: JSON.stringify(editFormData),
       });
       if (res.ok) {
+        addToast('success', `Saved changes to "${editFormData.item_name.trim()}"`);
         setEditingItem(null);
         onStatsChange();
         if (viewMode === 'items') void fetchItems(selectedCategoryId);
@@ -140,6 +147,8 @@ export function useItemManagement(
         const payload = (await res.json().catch(() => null)) as { error?: string } | null;
         throw new Error(payload?.error || 'Failed to delete item');
       }
+      const name = items.find(i => i.id === itemId)?.item_name;
+      addToast('success', name ? `Deleted "${name}"` : 'Item deleted');
       setItems(prev => prev.filter(i => i.id !== itemId));
       onStatsChange();
       if (viewMode === 'items') void fetchItems(selectedCategoryId);
@@ -165,6 +174,7 @@ export function useItemManagement(
       a.download = `inventory.${exportFormat}`;
       a.click();
       URL.revokeObjectURL(url);
+      addToast('success', `Exported inventory as ${exportFormat.toUpperCase()}`);
       setShowExportModal(false);
       return true;
     } catch {

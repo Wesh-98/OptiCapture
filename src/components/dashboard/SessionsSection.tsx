@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ChevronDown, X } from 'lucide-react';
 import { parseServerDate } from '../../lib/utils';
@@ -11,6 +12,8 @@ interface SessionCardProps {
 
 function SessionCard({ session: s, onDelete, now }: Readonly<SessionCardProps>) {
   const navigate = useNavigate();
+  // Deleting throws away every scan in the session, so the X asks first.
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const isActive = s.status === 'active';
   const isCompleted = s.status === 'completed';
   const itemWord = s.item_count === 1 ? 'item' : 'items';
@@ -59,7 +62,7 @@ function SessionCard({ session: s, onDelete, now }: Readonly<SessionCardProps>) 
     >
       {!isCompleted && (
         <button
-          onClick={() => onDelete(s.session_id)}
+          onClick={() => setConfirmingDelete(true)}
           className="absolute top-2 right-2 text-slate-400 hover:text-red-500 transition-colors"
           title="Delete session"
         >
@@ -81,12 +84,37 @@ function SessionCard({ session: s, onDelete, now }: Readonly<SessionCardProps>) 
         </p>
         <p className="text-xs text-slate-500">{timeAgo}</p>
       </div>
-      <button
-        onClick={() => navigate(`/scan?session=${s.session_id}`)}
-        className={`w-full py-1.5 rounded-lg text-xs font-semibold transition-colors ${btnClass}`}
-      >
-        {btnLabel}
-      </button>
+      {confirmingDelete ? (
+        <div className="space-y-1.5">
+          <p className="text-xs font-semibold text-accent-600">
+            Delete this session and its {itemWord}?
+          </p>
+          <div className="flex gap-1.5">
+            <button
+              onClick={() => setConfirmingDelete(false)}
+              className="flex-1 py-1.5 rounded-lg border border-theme-border bg-white text-xs font-semibold text-theme-text hover:bg-theme-subtle transition-colors"
+            >
+              Keep
+            </button>
+            <button
+              onClick={() => {
+                setConfirmingDelete(false);
+                onDelete(s.session_id);
+              }}
+              className="flex-1 py-1.5 rounded-lg bg-accent-600 text-xs font-semibold text-white hover:bg-accent-700 transition-colors"
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          onClick={() => navigate(`/scan?session=${s.session_id}`)}
+          className={`w-full py-1.5 rounded-lg text-xs font-semibold transition-colors ${btnClass}`}
+        >
+          {btnLabel}
+        </button>
+      )}
     </div>
   );
 }
@@ -113,9 +141,7 @@ export function SessionsSection({
     <div className="border border-slate-200 rounded-xl bg-white overflow-hidden">
       <div className="flex items-center justify-between px-4 py-3">
         <button onClick={onToggle} className="flex items-center gap-2 flex-1">
-          <span className="text-sm font-semibold text-brand-600">
-            Scan Sessions
-          </span>
+          <span className="text-sm font-semibold text-brand-600">Scan Sessions</span>
           <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">
             {sessions.length}
           </span>

@@ -725,6 +725,16 @@ runMigration(24, () => {
   }
 });
 
+// Migration 25: how an item first entered the catalog — 'manual', 'import' or 'scan' — for
+// the Super Admin's Recently added page. Items from before this stay NULL: nothing recorded
+// it reliably, and guessing from later import or verify stamps would mislabel them.
+runMigration(25, () => {
+  const cols = new Set(
+    (db.prepare('PRAGMA table_info(inventory)').all() as any[]).map((c: any) => c.name)
+  );
+  if (!cols.has('source')) db.exec('ALTER TABLE inventory ADD COLUMN source TEXT');
+});
+
 // Run after all table creation / migrations so the logs table is guaranteed to exist
 pruneAuditLogs();
 // .unref() so the daily retention sweep does not keep the event loop alive on its own.
@@ -741,6 +751,11 @@ db.prepare(
 ).run();
 db.prepare(
   'CREATE INDEX IF NOT EXISTS idx_inventory_store_updated ON inventory(store_id, updated_at DESC)'
+).run();
+// The Super Admin's Recently added page and the per-store "added this week" figures.
+db.prepare('CREATE INDEX IF NOT EXISTS idx_inventory_created ON inventory(created_at DESC)').run();
+db.prepare(
+  'CREATE INDEX IF NOT EXISTS idx_inventory_store_created ON inventory(store_id, created_at DESC)'
 ).run();
 db.prepare(
   `

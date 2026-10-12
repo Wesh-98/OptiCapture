@@ -66,6 +66,7 @@ describe('Inventory CRUD — Store A owner', () => {
     // need here — we verify the item was actually written via GET below.
     const res = await request.post('/api/inventory').set('Cookie', storeA.cookie).send({
       item_name: 'Test Chips',
+      upc: 'test-chips-1',
       quantity: 10,
       unit: 'bags',
       status: 'Active',
@@ -150,7 +151,7 @@ describe('Multi-tenant isolation', () => {
     const res = await request
       .post('/api/inventory')
       .set('Cookie', storeA.cookie)
-      .send({ item_name: 'Store A Secret Item', quantity: 99 });
+      .send({ item_name: 'Store A Secret Item', upc: 'store-a-secret', quantity: 99 });
     expect(res.status).toBe(200);
     storeAItemId = res.body.id;
   });

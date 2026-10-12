@@ -13,7 +13,6 @@ import { ScannerPanel } from '../components/scan/ScannerPanel';
 import { FeedPanel } from '../components/scan/FeedPanel';
 import { EditItemModal } from '../components/scan/EditItemModal';
 import { CommitModal } from '../components/scan/CommitModal';
-import { ToastContainer } from '../components/scan/ToastContainer';
 
 const RENDER_LIMIT = 150;
 
@@ -22,7 +21,7 @@ export default function Scan() {
   const { user } = useAuth();
   const isTaker = user?.role === 'taker';
 
-  const { toasts, addToast } = useToast();
+  const { addToast } = useToast();
   const { serverInfo, ipLoading } = useServerInfo();
 
   const session = useScanSession(addToast);
@@ -220,8 +219,6 @@ export default function Scan() {
           commit.setModalSelectedIds(new Set());
         }}
       />
-
-      <ToastContainer toasts={toasts} prefersReducedMotion={prefersReducedMotion} />
     </div>
   );
 }

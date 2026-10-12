@@ -775,6 +775,15 @@ describe('session item editing and commit flow', () => {
           .get('commit-new-1') as any
       ).count
     ).toBe(1);
+    // A committed scan records where the new item came from; the existing one keeps its own.
+    expect(
+      db
+        .prepare('SELECT upc, source FROM inventory WHERE upc IN (?, ?) ORDER BY upc')
+        .all('commit-existing-1', 'commit-new-1')
+    ).toEqual([
+      { upc: 'commit-existing-1', source: null },
+      { upc: 'commit-new-1', source: 'scan' },
+    ]);
     expect(
       (
         db

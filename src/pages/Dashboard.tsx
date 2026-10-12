@@ -17,7 +17,6 @@ import { AddItemModal } from '../components/dashboard/AddItemModal';
 import { EditItemModal } from '../components/dashboard/EditItemModal';
 import { CategoryModal } from '../components/dashboard/CategoryModal';
 import { ExportModal } from '../components/dashboard/ExportModal';
-import { ToastContainer } from '../components/scan/ToastContainer';
 import { emptyForm } from '../components/dashboard/types';
 import type { Category } from '../components/dashboard/types';
 
@@ -41,7 +40,7 @@ export default function Dashboard() {
   const [pageSize, setPageSize] = useState<50 | 100 | 200>(50);
   const [currentPage, setCurrentPage] = useState(1);
 
-  const { toasts, addToast } = useToast();
+  const { addToast } = useToast();
   const { stats, fetchStats } = useDashboardStats();
   const { activeSessions, sessionsOpen, setSessionsOpen, fetchActiveSessions, deleteSession } =
     useActiveSessions();
@@ -325,8 +324,6 @@ export default function Dashboard() {
         onExport={handleExport}
         onClose={handleCloseExportModal}
       />
-
-      <ToastContainer toasts={toasts} prefersReducedMotion={prefersReducedMotion} />
     </div>
   );
 }
