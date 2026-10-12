@@ -145,7 +145,7 @@ src/
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | **SuperAdmin** | — | — | — | — | — | — | Full access |
 | **Owner** | Full | Full | Full | Full | Full | Full | — |
-| **Taker** | View | Scan | Add / Edit / Delete | — | View | View only | — |
+| **Taker** | View | Scan | Add / Edit / Delete | — | — | View only | — |
 
 Category management (add, edit, delete, activate/deactivate) is owner-only.
 

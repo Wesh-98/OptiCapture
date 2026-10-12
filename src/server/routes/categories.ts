@@ -15,6 +15,24 @@ export function isReservedCategoryName(name: string): boolean {
   return RESERVED_CATEGORY_NAMES.includes(name.trim().toLowerCase());
 }
 
+const MAX_CATEGORY_ICON_LENGTH = 200;
+
+/**
+ * Another category in the store with this name, ignoring case and outer spaces. The table's
+ * UNIQUE(name, store_id) is case-sensitive, so "Snacks" and "snacks" could both be created
+ * here while the import treated them as one category.
+ */
+function categoryNameTaken(name: string, storeId: number | undefined, exceptId?: unknown) {
+  return Boolean(
+    db
+      .prepare(
+        `SELECT 1 FROM categories
+          WHERE LOWER(TRIM(name)) = LOWER(?) AND store_id = ? AND id IS NOT ?`
+      )
+      .get(name.trim(), storeId, exceptId === undefined ? null : Number(exceptId))
+  );
+}
+
 function writeCategoryLog(
   action: string,
   details: string,
@@ -172,10 +190,14 @@ categoriesRouter.post('/categories', authenticateToken, requireOwner, (req: Auth
   if (name.length > 100) return res.status(400).json({ error: 'Category name is too long' });
   if (icon !== undefined && typeof icon !== 'string')
     return res.status(400).json({ error: 'Category icon must be a string' });
+  if (icon && icon.length > MAX_CATEGORY_ICON_LENGTH)
+    return res.status(400).json({ error: 'Category icon is too long' });
   if (isReservedCategoryName(name)) {
     return res.status(400).json({ error: 'Inventory is not a category name' });
   }
   const storeId = req.user.store_id;
+  if (categoryNameTaken(name, storeId))
+    return res.status(409).json({ error: 'Category name already exists' });
   try {
     const info = db.transaction(() => {
       const result = db
@@ -206,9 +228,13 @@ categoriesRouter.put(
     if (name.length > 100) return res.status(400).json({ error: 'Category name is too long' });
     if (icon !== undefined && typeof icon !== 'string')
       return res.status(400).json({ error: 'Category icon must be a string' });
+    if (icon && icon.length > MAX_CATEGORY_ICON_LENGTH)
+      return res.status(400).json({ error: 'Category icon is too long' });
     if (isReservedCategoryName(name)) {
       return res.status(400).json({ error: 'Inventory is not a category name' });
     }
+    if (categoryNameTaken(name, storeId, id))
+      return res.status(409).json({ error: 'Category name already exists' });
     try {
       const updated = db.transaction(() => {
         const result = db

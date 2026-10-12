@@ -233,6 +233,12 @@ sessionsRouter.patch('/session/:id/status', authenticateToken, (req: AuthRequest
   if (!['draft', 'active'].includes(status)) {
     return res.status(400).json({ error: 'Invalid status. Must be draft or active.' });
   }
+  if (label !== undefined && label !== null && typeof label !== 'string') {
+    return res.status(400).json({ error: 'Label must be text' });
+  }
+  if (typeof label === 'string' && label.length > 100) {
+    return res.status(400).json({ error: 'Label must be 100 characters or fewer' });
+  }
 
   const session = db
     .prepare('SELECT * FROM scan_sessions WHERE session_id = ? AND store_id = ?')

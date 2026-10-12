@@ -232,6 +232,10 @@ export const authenticateToken = (
           return next();
         }
 
+        // Nothing to pick from: every store this account can reach is suspended.
+        if (accessibleStores.length > 0 && activeStores.length === 0) {
+          return res.status(403).json({ error: 'Store account suspended' });
+        }
         return res.status(409).json({
           error: 'Store selection required',
           needs_store_selection: true,

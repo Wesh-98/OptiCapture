@@ -314,7 +314,7 @@ Google OAuth flow:
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/api/logs` | cookie | Store-scoped audit log; supports action, keyword, date, page, and limit filters |
+| GET | `/api/logs` | owner | Store-scoped audit log; supports action, keyword, date, page, and limit filters |
 
 ### Admin
 

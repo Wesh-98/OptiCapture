@@ -85,7 +85,10 @@ class ErrorBoundary extends React.Component<
   }
 }
 
-function ProtectedRoute({ children }: Readonly<{ children: React.ReactNode }>) {
+function ProtectedRoute({
+  children,
+  ownerOnly = false,
+}: Readonly<{ children: React.ReactNode; ownerOnly?: boolean }>) {
   const { user, isLoading } = useAuth();
   const location = useLocation();
 
@@ -98,6 +101,8 @@ function ProtectedRoute({ children }: Readonly<{ children: React.ReactNode }>) {
   if (user.must_reset_password && location.pathname !== '/settings') {
     return <Navigate to="/settings" replace />;
   }
+  // The sidebar hides these pages from takers; a typed URL gets the same answer.
+  if (ownerOnly && user.role === 'taker') return <Navigate to="/" replace />;
 
   return (
     <Layout>
@@ -235,7 +240,7 @@ export default function App() {
             <Route
               path="/import"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute ownerOnly>
                   <Import />
                 </ProtectedRoute>
               }
@@ -243,7 +248,7 @@ export default function App() {
             <Route
               path="/logs"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute ownerOnly>
                   <Logs />
                 </ProtectedRoute>
               }

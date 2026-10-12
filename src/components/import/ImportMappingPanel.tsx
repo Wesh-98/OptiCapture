@@ -323,7 +323,7 @@ export function ImportMappingPanel({
               value={activeSheet.categoryName ?? ''}
               onChange={event => onCategoryNameChange(activeSheetIndex, event.target.value)}
               disabled={isImporting}
-              maxLength={120}
+              maxLength={100}
               placeholder="Uncategorized"
               className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-normal text-slate-800 focus:border-transparent focus:ring-2 focus:ring-navy-700 disabled:bg-slate-100"
             />

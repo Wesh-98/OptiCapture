@@ -272,6 +272,14 @@ export function createApp() {
       ) {
         return res.status(400).json({ error: 'Malformed JSON request body' });
       }
+      // An upload multer refused is the caller's mistake, not a server fault: a file over
+      // the size limit used to come back as a 500.
+      if (err instanceof Error && err.name === 'MulterError') {
+        const tooLarge = (err as { code?: string }).code === 'LIMIT_FILE_SIZE';
+        return res
+          .status(tooLarge ? 413 : 400)
+          .json({ error: tooLarge ? 'File is too large. The limit is 20 MB.' : 'Invalid upload' });
+      }
       logError('http', err, 'Unhandled request error', {
         method: _req.method,
         path: _req.path,

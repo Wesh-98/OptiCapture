@@ -1,12 +1,14 @@
 import express from 'express';
 import { db } from '../db.js';
-import { authenticateToken } from '../middleware.js';
+import { authenticateToken, requireOwner } from '../middleware.js';
 import { firstQueryValue } from '../helpers.js';
 import type { AuthRequest } from '../types.js';
 
 export const logsRouter = express.Router();
 
-logsRouter.get('/logs', authenticateToken, (req: AuthRequest, res) => {
+// Owners only: the log names every account's actions, including password resets and access
+// changes, which a taker has no need to read.
+logsRouter.get('/logs', authenticateToken, requireOwner, (req: AuthRequest, res) => {
   const storeId = req.user.store_id;
   const from = firstQueryValue(req.query.from);
   const to = firstQueryValue(req.query.to);

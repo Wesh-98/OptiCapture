@@ -429,7 +429,7 @@ Drive proxy:
 
 - activity logs are stored in the `logs` table
 - reads are exposed through `GET /api/logs` with server-side action, keyword, date, and page filters
-- both owners and takers can view their current store's isolated audit trail
+- owners can view their current store's isolated audit trail; takers cannot
 - the logs page is split into `LogsScreen`, `LogsFilters`, `LogsTable`, `logsApi`, and `useLogsPage`
 - old log entries are pruned automatically after 90 days
 
