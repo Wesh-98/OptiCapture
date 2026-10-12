@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { Loader2, Download } from 'lucide-react';
 
 type ExportFormat = 'xlsx' | 'csv' | 'json' | 'pdf';
@@ -26,22 +27,30 @@ export function ExportModal({
   onExport,
   onClose,
 }: Readonly<Props>) {
+  // Escape closes the modal wherever focus is; opening it does not move focus inside.
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
   return (
-    <div
-      role="presentation"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
-      onClick={onClose}
-      onKeyDown={e => {
-        if (e.key === 'Escape') onClose();
-      }}
-    >
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div
+        role="presentation"
+        aria-hidden="true"
+        className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+        onClick={onClose}
+      />
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="export-modal-title"
-        className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm mx-4"
-        onClick={e => e.stopPropagation()}
+        className="relative bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm mx-4"
       >
         <h3 id="export-modal-title" className="text-lg font-bold text-navy-900 mb-1">
           Export Inventory
