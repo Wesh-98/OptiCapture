@@ -4,6 +4,7 @@ import {
   ChevronDown,
   ChevronRight,
   Clock,
+  History,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -114,6 +115,14 @@ export function AdminLayout({ onLogout, children, bare = false }: Readonly<Props
       icon: Package,
       to: inventoryStoreId === undefined ? null : `/admin/stores/${inventoryStoreId}`,
       active: onStorePage,
+    },
+    {
+      key: 'activity',
+      label: 'Activity log',
+      icon: History,
+      // From a store's pages it opens already filtered to that store.
+      to: onStorePage ? `/admin/activity?store=${viewedStoreId}` : '/admin/activity',
+      active: location.pathname === '/admin/activity',
     },
     {
       key: 'settings',

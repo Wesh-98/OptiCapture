@@ -88,22 +88,46 @@ const STORE_INVENTORY_STATS = `
   (SELECT COUNT(*) FROM inventory i
     WHERE i.store_id = s.id AND (i.upc IS NULL OR TRIM(i.upc) = '')) AS missing_upc_count`;
 
-// The dashboard's Recent changes card: store lifecycle events and new captures only.
-// Catalog edits (manual adds, edits, deletes, imports) belong to the store's own portal.
-export type ActivityKind =
-  | 'registered'
-  | 'suspended'
-  | 'reactivated'
-  | 'updated'
-  | 'deleted'
-  | 'capture';
+// The Recent changes card and the Activity log page: store lifecycle events and new captures
+// only. Catalog edits (manual adds, edits, deletes, imports) belong to the store's own portal.
+export const ACTIVITY_KINDS = [
+  'capture',
+  'registered',
+  'suspended',
+  'reactivated',
+  'updated',
+  'deleted',
+] as const;
+export type ActivityKind = (typeof ACTIVITY_KINDS)[number];
 
-const ACTIVITY_FILTER = `
-  (l.action = 'BATCH' AND l.store_id != ?)
-  OR (l.action = 'CREATE' AND l.details LIKE 'Registered store %')
-  OR (l.action = 'ADMIN' AND (l.details LIKE 'Set store % status to %'
-                              OR l.details LIKE 'Updated store %'
-                              OR l.details LIKE 'Deleted store %'))`;
+// The log rows behind each kind. Keep in step with describeActivity below.
+const ACTIVITY_CONDITIONS: Record<ActivityKind, string> = {
+  capture: `(l.action = 'BATCH' AND l.store_id != ${HQ_STORE_ID})`,
+  registered: `(l.action = 'CREATE' AND l.details LIKE 'Registered store %')`,
+  suspended: `(l.action = 'ADMIN' AND l.details LIKE 'Set store % status to %'
+               AND l.details NOT LIKE '% active')`,
+  reactivated: `(l.action = 'ADMIN' AND l.details LIKE 'Set store % status to %'
+                 AND l.details LIKE '% active')`,
+  updated: `(l.action = 'ADMIN' AND l.details LIKE 'Updated store %')`,
+  deleted: `(l.action = 'ADMIN' AND l.details LIKE 'Deleted store %')`,
+};
+const ACTIVITY_FILTER = `(${Object.values(ACTIVITY_CONDITIONS).join(' OR ')})`;
+const ACTIVITY_COLUMNS = `l.id, l.action, l.details, l.timestamp, l.user_id,
+  s.id AS store_id, s.name AS store_name, u.username`;
+const ACTIVITY_FROM = `FROM logs l
+  LEFT JOIN stores s ON s.id = l.store_id AND s.id != ${HQ_STORE_ID}
+  LEFT JOIN users u ON u.id = l.user_id`;
+
+interface ActivityRow {
+  id: number;
+  action: string;
+  details: string | null;
+  timestamp: string;
+  user_id: number | null;
+  store_id: number | null;
+  store_name: string | null;
+  username: string | null;
+}
 
 /** Turns one matching log row into a kind and a short line. Raw log text never reaches the UI. */
 export function describeActivity(
@@ -135,38 +159,127 @@ export function describeActivity(
   return { kind: 'updated', summary: 'Store details updated' };
 }
 
+// "Seen" is one marker per superadmin: the newest log entry they have marked. Nothing is
+// deleted, so the log stays a complete audit trail.
+function activitySeenMarker(userId: number): number {
+  const row = db
+    .prepare('SELECT activity_seen_log_id AS marker FROM users WHERE id = ?')
+    .get(userId) as { marker: number } | undefined;
+  return row?.marker ?? 0;
+}
+
+/**
+ * How many changes this superadmin has not marked as seen (their own actions never count),
+ * and the newest change there is: what "mark all as seen" marks up to.
+ */
+function activitySeenState(userId: number, marker: number): { unseen: number; newest: number } {
+  return db
+    .prepare(
+      `SELECT COUNT(CASE WHEN l.id > ? AND (l.user_id IS NULL OR l.user_id != ?) THEN 1 END)
+                AS unseen,
+              COALESCE(MAX(l.id), 0) AS newest
+         FROM logs l
+        WHERE ${ACTIVITY_FILTER}`
+    )
+    .get(marker, userId) as { unseen: number; newest: number };
+}
+
+function presentActivity(rows: ActivityRow[], userId: number, marker: number) {
+  return rows.map(({ action, details, store_name, user_id, ...row }) => {
+    const { deletedName, ...described } = describeActivity(action, details);
+    return {
+      ...row,
+      ...described,
+      store_name: store_name ?? deletedName ?? 'Unknown store',
+      seen: row.id <= marker || user_id === userId,
+    };
+  });
+}
+
+// Super admin — store events and captures, newest first. With `page` it is the Activity log
+// page: 50 a page, optionally one store's (`store`) or one kind's (`kind`). Without, it is the
+// dashboard card: the latest `limit` (5 by default).
 adminRouter.get('/activity', authenticateToken, requireSuperadmin, (req: AuthRequest, res) => {
-  const requested = Number.parseInt(String(req.query.limit ?? ''), 10);
-  const limit = Number.isFinite(requested) ? Math.min(Math.max(requested, 1), 100) : 5;
+  const userId = req.user.id;
+  const marker = activitySeenMarker(userId);
+  const seenState = activitySeenState(userId, marker);
+
+  if (firstQueryValue(req.query.page) === undefined) {
+    const requested = Number.parseInt(String(req.query.limit ?? ''), 10);
+    const limit = Number.isFinite(requested) ? Math.min(Math.max(requested, 1), 100) : 5;
+    const { total } = db
+      .prepare(`SELECT COUNT(*) AS total FROM logs l WHERE ${ACTIVITY_FILTER}`)
+      .get() as { total: number };
+    const rows = db
+      .prepare(
+        `SELECT ${ACTIVITY_COLUMNS} ${ACTIVITY_FROM}
+          WHERE ${ACTIVITY_FILTER}
+          ORDER BY l.timestamp DESC, l.id DESC
+          LIMIT ?`
+      )
+      .all(limit) as ActivityRow[];
+    return res.json({ items: presentActivity(rows, userId, marker), total, ...seenState });
+  }
+
+  const kind = firstQueryValue(req.query.kind) ?? 'all';
+  if (kind !== 'all' && !(ACTIVITY_KINDS as readonly string[]).includes(kind)) {
+    return res
+      .status(400)
+      .json({ error: `kind must be one of: all, ${ACTIVITY_KINDS.join(', ')}` });
+  }
+  const filters = resolveItemListFilters(req, res);
+  if (!filters) return;
+  const { storeId, page } = filters;
+
+  const conditions = [kind === 'all' ? ACTIVITY_FILTER : ACTIVITY_CONDITIONS[kind as ActivityKind]];
+  const params: unknown[] = [];
+  if (storeId !== null) {
+    conditions.push('l.store_id = ?');
+    params.push(storeId);
+  }
+  const where = conditions.join(' AND ');
   const { total } = db
-    .prepare(`SELECT COUNT(*) AS total FROM logs l WHERE ${ACTIVITY_FILTER}`)
-    .get(HQ_STORE_ID) as { total: number };
+    .prepare(`SELECT COUNT(*) AS total FROM logs l WHERE ${where}`)
+    .get(...params) as { total: number };
   const rows = db
     .prepare(
-      `SELECT l.id, l.action, l.details, l.timestamp, s.id AS store_id, s.name AS store_name,
-              u.username
-         FROM logs l
-         LEFT JOIN stores s ON s.id = l.store_id AND s.id != ?
-         LEFT JOIN users u ON u.id = l.user_id
-        WHERE ${ACTIVITY_FILTER}
+      `SELECT ${ACTIVITY_COLUMNS} ${ACTIVITY_FROM}
+        WHERE ${where}
         ORDER BY l.timestamp DESC, l.id DESC
-        LIMIT ?`
+        LIMIT ? OFFSET ?`
     )
-    .all(HQ_STORE_ID, HQ_STORE_ID, limit) as Array<{
-    id: number;
-    action: string;
-    details: string | null;
-    timestamp: string;
-    store_id: number | null;
-    store_name: string | null;
-    username: string | null;
-  }>;
-  const items = rows.map(({ action, details, store_name, ...row }) => {
-    const { deletedName, ...described } = describeActivity(action, details);
-    return { ...row, ...described, store_name: store_name ?? deletedName ?? 'Unknown store' };
+    .all(...params, CROSS_STORE_PAGE_SIZE, (page - 1) * CROSS_STORE_PAGE_SIZE) as ActivityRow[];
+  res.json({
+    items: presentActivity(rows, userId, marker),
+    total,
+    page,
+    limit: CROSS_STORE_PAGE_SIZE,
+    kind,
+    ...seenState,
   });
-  res.json({ items, total });
 });
+
+// Super admin — mark every change up to `through` (a log entry ID) as seen. The client sends
+// back the `newest` it was given, so a change that arrives after the list loaded stays new.
+adminRouter.post(
+  '/activity/seen',
+  authenticateToken,
+  requireSuperadmin,
+  (req: AuthRequest, res) => {
+    const through: unknown = req.body?.through;
+    if (typeof through !== 'number' || !Number.isSafeInteger(through) || through < 1) {
+      return res.status(400).json({ error: 'through must be a log entry ID' });
+    }
+    const userId = req.user.id;
+    // Never past the newest entry, and never backwards.
+    const { newest } = db.prepare('SELECT COALESCE(MAX(id), 0) AS newest FROM logs').get() as {
+      newest: number;
+    };
+    const marker = Math.max(activitySeenMarker(userId), Math.min(through, newest));
+    db.prepare('UPDATE users SET activity_seen_log_id = ? WHERE id = ?').run(marker, userId);
+    res.json(activitySeenState(userId, marker));
+  }
+);
 
 // The cross-store item lists (Recently added, Search) share a row shape and a page size.
 const CROSS_STORE_PAGE_SIZE = 50;

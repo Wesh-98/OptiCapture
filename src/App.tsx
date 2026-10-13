@@ -15,6 +15,7 @@ const AdminStoreInventory = lazy(() => import('./pages/AdminStoreInventory'));
 const AdminItemDetail = lazy(() => import('./pages/AdminItemDetail'));
 const AdminRecentItems = lazy(() => import('./pages/AdminRecentItems'));
 const AdminItemSearch = lazy(() => import('./pages/AdminItemSearch'));
+const AdminActivity = lazy(() => import('./pages/AdminActivity'));
 const StorePicker = lazy(() => import('./pages/StorePicker'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const MobileScan = lazy(() => import('./pages/MobileScan'));
@@ -187,6 +188,14 @@ export default function App() {
               element={
                 <AdminRoute>
                   <AdminItemSearch />
+                </AdminRoute>
+              }
+            />
+            <Route
+              path="/admin/activity"
+              element={
+                <AdminRoute>
+                  <AdminActivity />
                 </AdminRoute>
               }
             />

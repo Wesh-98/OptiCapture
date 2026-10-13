@@ -757,6 +757,17 @@ runMigration(25, () => {
   if (!cols.has('source')) db.exec('ALTER TABLE inventory ADD COLUMN source TEXT');
 });
 
+// Migration 26: the newest Recent changes entry each superadmin has marked as seen. Entries
+// above it show as new on the Super Admin dashboard and Activity log.
+runMigration(26, () => {
+  const cols = new Set(
+    (db.prepare('PRAGMA table_info(users)').all() as any[]).map((c: any) => c.name)
+  );
+  if (!cols.has('activity_seen_log_id')) {
+    db.exec('ALTER TABLE users ADD COLUMN activity_seen_log_id INTEGER NOT NULL DEFAULT 0');
+  }
+});
+
 // Run after all table creation / migrations so the logs table is guaranteed to exist
 pruneAuditLogs();
 pruneScanSessions();

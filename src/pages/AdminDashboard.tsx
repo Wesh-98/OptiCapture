@@ -4,19 +4,12 @@ import {
   AlertTriangle,
   ChevronRight,
   History,
-  PauseCircle,
-  Pencil,
-  PlayCircle,
-  ScanLine,
   Search,
-  Store as StoreIcon,
-  Trash2,
-  type LucideIcon,
   ArrowDownUp as ArrowDownUpIcon,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useAdminStores } from '../hooks/useAdminStores';
-import { useAdminActivity, type ActivityEntry, type ActivityKind } from '../hooks/useAdminActivity';
+import { useAdminActivity, type ActivityEntry } from '../hooks/useAdminActivity';
 import { AdminLayout } from '../components/superadmin/AdminLayout';
 import {
   HeaderStat,
@@ -27,6 +20,7 @@ import {
   SelectIcon,
   ICON_ONLY_SELECT,
 } from '../components/superadmin/AdminUi';
+import { ActivityIcon, NewDot } from '../components/superadmin/ActivityTable';
 import { timeAgo } from '../components/superadmin/format';
 import type { StoreRow } from '../components/superadmin/types';
 
@@ -319,15 +313,6 @@ export default function AdminDashboard() {
   );
 }
 
-const CHANGE_ICONS: Record<ActivityKind, { icon: LucideIcon; tone: string }> = {
-  capture: { icon: ScanLine, tone: 'bg-brand-50 text-brand-600' },
-  registered: { icon: StoreIcon, tone: 'bg-brand-50 text-brand-600' },
-  reactivated: { icon: PlayCircle, tone: 'bg-brand-50 text-brand-600' },
-  updated: { icon: Pencil, tone: 'bg-theme-subtle text-theme-muted' },
-  suspended: { icon: PauseCircle, tone: 'bg-accent-50 text-accent-600' },
-  deleted: { icon: Trash2, tone: 'bg-accent-50 text-accent-600' },
-};
-
 function storesNoticeFor(isLoading: boolean, total: number, shown: number): string | null {
   if (isLoading) return 'Loading stores...';
   if (total === 0) return 'No stores registered yet.';
@@ -335,30 +320,37 @@ function storesNoticeFor(isLoading: boolean, total: number, shown: number): stri
   return null;
 }
 
-// Store events (registered, suspended, reactivated, updated, deleted) and new captures.
-// Catalog edits are left to each store's own portal.
+// Store events (registered, suspended, reactivated, updated, deleted) and new captures: the
+// latest five, with the rest on the Activity log page. Catalog edits are left to each
+// store's own portal.
 function RecentChanges() {
   const activity = useAdminActivity();
-  const { entries, error } = activity;
+  const { entries, error, unseen } = activity;
 
   return (
     <section className="bg-white rounded-xl border border-theme-border overflow-hidden">
-      <h2 className="px-4 py-3.5 border-b border-theme-border flex items-center gap-2 font-bold text-black">
-        <History size={18} className="text-brand-600" />
-        Recent changes
-      </h2>
+      <div className="px-4 py-3.5 border-b border-theme-border flex items-center gap-3">
+        <h2 className="flex items-center gap-2 font-bold text-black">
+          <History size={18} className="text-brand-600" />
+          Recent changes
+        </h2>
+        {unseen > 0 && (
+          <span className="rounded-full bg-brand-600 px-2 py-0.5 text-xs font-semibold text-white">
+            {unseen} new
+          </span>
+        )}
+      </div>
+      {activity.markError && (
+        <p role="alert" className="px-4 pt-3 text-sm text-accent-600">
+          {activity.markError}
+        </p>
+      )}
       {entries === null || entries.length === 0 || error ? (
         <p className={cn('px-4 py-6 text-sm', error ? 'text-accent-600' : 'text-theme-muted')}>
           {error || (entries === null ? 'Loading changes...' : 'No changes in the last 90 days.')}
         </p>
       ) : (
-        <ul
-          className={cn(
-            'divide-y divide-theme-border/60',
-            activity.expanded && 'max-h-[28rem] overflow-y-auto',
-            activity.loading && 'opacity-60'
-          )}
-        >
+        <ul className="divide-y divide-theme-border/60">
           {entries.map(entry => (
             <li key={entry.id}>
               <ChangeRow entry={entry} />
@@ -366,18 +358,25 @@ function RecentChanges() {
           ))}
         </ul>
       )}
-      {!error && activity.canExpand && (
+      {!error && activity.total > 0 && (
         <div className="px-4 py-2.5 border-t border-theme-border flex items-center justify-between gap-2">
-          <span className="text-xs text-theme-muted">
-            {activity.capped ? `Latest 100 of ${activity.total}` : `${activity.total} in 90 days`}
-          </span>
-          <button
-            onClick={activity.toggleExpanded}
-            aria-expanded={activity.expanded}
+          {unseen > 0 ? (
+            <button
+              onClick={activity.markAllSeen}
+              disabled={activity.marking}
+              className="text-sm font-semibold text-brand-600 hover:text-brand-700 disabled:opacity-40"
+            >
+              Mark all as seen
+            </button>
+          ) : (
+            <span className="text-xs text-theme-muted">{activity.total} in 90 days</span>
+          )}
+          <Link
+            to="/admin/activity"
             className="text-sm font-semibold text-brand-600 hover:text-brand-700"
           >
-            {activity.expanded ? 'Show less' : 'See all'}
-          </button>
+            See all
+          </Link>
         </div>
       )}
     </section>
@@ -385,16 +384,14 @@ function RecentChanges() {
 }
 
 function ChangeRow({ entry }: Readonly<{ entry: ActivityEntry }>) {
-  const { icon: Icon, tone } = CHANGE_ICONS[entry.kind] ?? CHANGE_ICONS.updated;
   const body = (
     <>
-      <span
-        className={cn('mt-0.5 w-7 h-7 rounded-lg shrink-0 flex items-center justify-center', tone)}
-      >
-        <Icon size={15} />
-      </span>
+      <ActivityIcon kind={entry.kind} className="mt-0.5" />
       <span className="min-w-0">
-        <span className="block text-sm font-semibold text-black">{entry.summary}</span>
+        <span className="flex items-center gap-2 text-sm font-semibold text-black">
+          {entry.summary}
+          <NewDot seen={entry.seen} />
+        </span>
         <span className="block text-sm text-theme-muted">
           <span className={entry.store_id === null ? undefined : 'text-brand-600'}>
             {entry.store_name}

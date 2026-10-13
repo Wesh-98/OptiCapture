@@ -2,14 +2,13 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Image as ImageIcon,
-  ChevronLeft,
-  ChevronRight,
   FileSpreadsheet,
   PencilLine,
   ScanBarcode,
   type LucideIcon,
 } from 'lucide-react';
 import { cn, parseServerDate } from '../../lib/utils';
+import { ListPager } from './AdminUi';
 import { formatPrice, timeAgo } from './format';
 import type { ItemSource, RecentItem } from '../../hooks/useAdminRecentItems';
 
@@ -65,7 +64,6 @@ export function RecentItemsTable({
   currentPage,
   onPageChange,
 }: Readonly<Props>) {
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const columns: Array<{ label: string; align?: 'right' }> = [
     { label: 'Item' },
     ...(showStore ? [{ label: 'Store' }] : []),
@@ -176,42 +174,13 @@ export function RecentItemsTable({
     <>
       {body}
 
-      <div className="px-6 py-3 border-t border-theme-border bg-theme-subtle flex items-center justify-between gap-4 flex-wrap">
-        <p className="text-xs text-theme-muted">
-          {total === 0 ? (
-            'No items'
-          ) : (
-            <>
-              Showing{' '}
-              <span className="font-semibold text-theme-text">
-                {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, total)}
-              </span>{' '}
-              of <span className="font-semibold text-theme-text">{total}</span> items
-            </>
-          )}
-        </p>
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => onPageChange(Math.max(1, currentPage - 1))}
-            disabled={currentPage === 1}
-            aria-label="Previous page"
-            className="p-1.5 rounded-lg bg-white border border-theme-border text-brand-600 hover:bg-brand-50 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-          >
-            <ChevronLeft size={16} />
-          </button>
-          <span className="px-3 py-1 text-xs font-semibold text-theme-text min-w-[5rem] text-center">
-            {currentPage} / {totalPages}
-          </span>
-          <button
-            onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
-            disabled={currentPage === totalPages}
-            aria-label="Next page"
-            className="p-1.5 rounded-lg bg-white border border-theme-border text-brand-600 hover:bg-brand-50 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-          >
-            <ChevronRight size={16} />
-          </button>
-        </div>
-      </div>
+      <ListPager
+        total={total}
+        pageSize={pageSize}
+        currentPage={currentPage}
+        onPageChange={onPageChange}
+        noun="items"
+      />
     </>
   );
 }
