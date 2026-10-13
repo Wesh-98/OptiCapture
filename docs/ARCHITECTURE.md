@@ -1,8 +1,8 @@
 # OptiCapture Architecture
 
-Last updated: 2026-09-22
+Last updated: 2026-10-13
 
-This document reflects the current codebase after the server/app split, lazy route loading, multi-store active-store selection, and the mobile-scan extraction.
+This document reflects the current codebase after the server/app split, lazy route loading, multi-store active-store selection, the mobile-scan extraction, and the Super Admin inventory pages.
 
 ## System Overview
 
@@ -29,7 +29,6 @@ Runtime bootstrap (server.ts)
   |- dotenv and required-secret guard
   |- database startup side effects
   |- HTTP/HTTPS server
-  |- /api/server-info
   |- Vite middleware in development or dist/ in production
             |
             +--> SQLite (better-sqlite3, WAL mode)
@@ -40,14 +39,15 @@ Runtime bootstrap (server.ts)
 
 ## Runtime Topology
 
-- `npm run dev` runs `node generate-certs.js && tsx server.ts`.
+- `npm run dev` runs `node generate-certs.js && tsx server.ts`. `npm start` runs `tsx server.ts` for production.
 - `server.ts` is the runtime entry point. It loads env vars, validates `JWT_SECRET`, imports the database module so migrations run, creates the Express app, attaches Vite or static serving, and starts the Node server.
 - `src/server/app.ts` exports `createApp()`. Tests import this factory directly with `supertest`, so route and middleware coverage does not require opening a port or starting Vite.
 - Development uses Vite in middleware mode on the same HTTP or HTTPS server instance as Express. Vite HMR uses the same Node server for WebSocket upgrades.
-- Production serves the prebuilt SPA from `dist/` and keeps the same API routes.
-- The app listens on port `3000`.
+- Production serves the prebuilt SPA from `dist/` and keeps the same API routes. Vite is loaded only in development.
+- The app listens on `PORT`, defaulting to `3000`.
 - If `dev-key.pem` and `dev-cert.pem` exist, local development runs over HTTPS so camera scanning works on mobile devices. `generate-certs.js` prepares those runtime files.
-- `/api/server-info` is mounted in `server.ts` because it needs the resolved protocol, port, LAN IP, and optional tunnel URL.
+- `/api/server-info` is registered in `src/server/app.ts`, ahead of the JSON 404 for unknown API paths. It returns `PUBLIC_BASE_URL` when that is set and otherwise the tunnel or LAN address; `server.ts` records the resolved protocol on the app for it.
+- `/api/health` answers before the rate limiter so a load balancer can poll it.
 
 ## Repository Layout
 
@@ -56,35 +56,41 @@ OptiCapture/
 |- server.ts
 |- generate-certs.js
 |- start-tunnel.js
+|- scripts/
+|  |- backup-db.mjs
+|  |- export-db-schema.mjs
+|  \- export-erd.mjs
 |- public/
 |  \- icons/
 |- docs/
 |  |- ARCHITECTURE.md
-|  |- DEMO_SCRIPT.md
-|  \- TECHNICAL.md
+|  |- TECHNICAL.md
+|  |- Demo.MD
+|  |- DATABASE_SCHEMA.md
+|  |- DATABASE_RELATIONSHIPS_CURRENT.md
+|  |- database-schema.sql
+|  \- opticapture-erd.svg, opticapture-erd-quick.svg
+|- e2e/
 |- tests/
 |- src/
 |  |- main.tsx
 |  |- App.tsx
 |  |- context/
-|  |  \- AuthContext.tsx
+|  |  |- AuthContext.tsx
+|  |  \- ToastContext.tsx
 |  |- lib/
 |  |  |- apiFetch.ts
 |  |  |- constants.ts
+|  |  |- emailFormat.ts
 |  |  |- imageUpload.ts
 |  |  |- mobileScanScanner.ts
 |  |  |- utils.ts
 |  |  \- zxingStoreScanner.ts
 |  |- pages/
-|  |  |- Dashboard.tsx
-|  |  |- Import.tsx
-|  |  |- Login.tsx
-|  |  |- Logs.tsx
-|  |  |- MobileScan.tsx
-|  |  |- Scan.tsx
-|  |  |- Signup.tsx
-|  |  |- StorePicker.tsx
-|  |  |- StoreSettings.tsx
+|  |  |- Dashboard.tsx, Scan.tsx, Import.tsx, Logs.tsx, StoreSettings.tsx
+|  |  |- Login.tsx, Signup.tsx, StorePicker.tsx, MobileScan.tsx
+|  |  |- AdminDashboard.tsx, AdminStoreInventory.tsx, AdminItemDetail.tsx
+|  |  |- AdminRecentItems.tsx, AdminItemSearch.tsx, AdminActivity.tsx
 |  |  \- SuperAdmin.tsx
 |  |- components/
 |  |  |- dashboard/
@@ -96,26 +102,7 @@ OptiCapture/
 |  |  |- store-settings/
 |  |  |- superadmin/
 |  |  \- Layout.tsx
-|  |- hooks/
-|  |  |- useActiveSessions.ts
-|  |  |- useAdminStores.ts
-|  |  |- useCategoryManagement.ts
-|  |  |- useCommitModal.ts
-|  |  |- useDashboardStats.ts
-|  |  |- useDraftManagement.ts
-|  |  |- useEditItem.ts
-|  |  |- useGlobalSearch.ts
-|  |  |- useHardwareScanner.ts
-|  |  |- useImportWorkflow.ts
-|  |  |- useItemManagement.ts
-|  |  |- useLogsPage.ts
-|  |  |- useMobileScan.ts
-|  |  |- useScanSession.ts
-|  |  |- useServerInfo.ts
-|  |  |- useSignupFlow.ts
-|  |  |- useStoreSettings.ts
-|  |  |- useStoreUsers.ts
-|  |  \- useToast.ts
+|  |- hooks/            one concern per hook; see TECHNICAL.md section 5
 |  \- server/
 |     |- app.ts
 |     |- cache.ts
@@ -123,7 +110,9 @@ OptiCapture/
 |     |- helpers.ts
 |     |- logger.ts
 |     |- middleware.ts
+|     |- storeDetails.ts
 |     |- types.ts
+|     |- uploads.ts
 |     \- routes/
 |        |- admin.ts
 |        |- auth.ts
@@ -147,13 +136,19 @@ Current client routes:
 - `/login`
 - `/signup`
 - `/choose-store`
-- `/admin`
 - `/mobile-scan/:sessionId`
 - `/`
 - `/scan`
 - `/import`
 - `/logs`
 - `/settings`
+- `/admin` (all stores)
+- `/admin/recent`
+- `/admin/search`
+- `/admin/activity`
+- `/admin/stores` (store settings)
+- `/admin/stores/:id` (one store's inventory)
+- `/admin/stores/:id/items` and `/admin/stores/:id/items/:itemId`
 
 ### Route patterns
 
@@ -165,7 +160,7 @@ The app uses feature-oriented route composition rather than large all-in-one pag
 
 2. Page orchestrators
    Routes still own high-level composition while hooks and components carry most state and UI.
-   Examples: `Dashboard.tsx`, `Scan.tsx`, `SuperAdmin.tsx`
+   Examples: `Dashboard.tsx`, `Scan.tsx`, `SuperAdmin.tsx`, `AdminDashboard.tsx`, `AdminItemDetail.tsx`
 
 3. Route-local implementation
    `Login.tsx` remains the main route with the most page-local behavior.
@@ -179,7 +174,7 @@ The app uses feature-oriented route composition rather than large all-in-one pag
 - `logs/` holds the log filter form, table, API helper, and screen composition.
 - `signup/` holds the signup API, brand panel, form card, success card, and screen composition.
 - `store-settings/` holds store profile, store code, password, API, and screen composition.
-- `superadmin/` holds store table and admin modals for editing stores, deleting stores, resetting passwords, and managing store users.
+- `superadmin/` holds the Super Admin shell (`AdminLayout`: collapsible sidebar plus a top bar with the store switcher), the shared cross-store list page (`ItemListPage`) and its tables, the item edit form, the activity table, and the store table and modals for editing stores, deleting stores, resetting passwords, and managing store users.
 
 ### Scanning on the client
 
@@ -187,7 +182,18 @@ The app uses feature-oriented route composition rather than large all-in-one pag
 - Phone-side scan state lives in `useMobileScan`.
 - `src/lib/mobileScanScanner.ts` prefers the native `BarcodeDetector` API when available and falls back to the ZXing-based scanner.
 - `src/lib/zxingStoreScanner.ts` implements the small lazy ZXing camera fallback directly from `@zxing/library`, avoiding the larger browser package.
-- Mobile clients identify themselves with a locally generated `scan_device_id`, sent on scan requests as `X-Device-Id`.
+- Mobile clients identify themselves with a locally generated `scan_device_id`, sent on scan and sync requests as `X-Device-Id`.
+- `readScanOtp()` in `src/lib/mobileScanScanner.ts` takes the OTP from the link, keeps it in `sessionStorage` for the tab, and the screen then removes it from the address bar.
+
+### Super Admin on the client
+
+The Super Admin pages oversee inventory across stores; store settings and user access stay on `/admin/stores`.
+
+- `AdminDashboard` lists every store with its counts, a "Needs attention" card, and a "Recent changes" card.
+- `AdminStoreInventory` and `AdminItemDetail` show one store's items. The store and category are in the URL, so the sidebar, breadcrumbs and shared links agree.
+- Item edits open a before-and-after review; nothing is written until it is confirmed.
+- `AdminRecentItems`, `AdminItemSearch` and `AdminActivity` share `ItemListPage` and the `useAdminItemList` hook: one page of rows across every store or the one in `?store=`.
+- Back navigation is a breadcrumb up one level, not browser history.
 
 ## Backend Architecture
 
@@ -199,9 +205,8 @@ The app uses feature-oriented route composition rather than large all-in-one pag
 - failing fast when `JWT_SECRET` is missing
 - importing `src/server/db.ts` so migrations, indexes, seeds, and audit pruning run before routes are registered
 - creating the Express app through `createApp()`
-- exposing `/api/server-info`
 - selecting HTTP or HTTPS based on local certificate files
-- attaching Vite middleware in development
+- attaching Vite middleware in development (imported only then)
 - serving `dist/index.html` in production
 - logging process-level unhandled errors
 - emitting structured JSON startup, shutdown, warning, and error records
@@ -211,7 +216,8 @@ The app uses feature-oriented route composition rather than large all-in-one pag
 
 `src/server/app.ts` owns the reusable Express application:
 
-- `trust proxy: 1`
+- `trust proxy` from `TRUST_PROXY`, defaulting to loopback and private-network proxies
+- `/api/health`, registered ahead of the rate limiter
 - Helmet security headers with stricter production CSP
 - API limiting before body parsing, JSON body parsing, and object-body validation, including a larger limit for `batch-confirm`
 - cookie parsing
@@ -220,6 +226,8 @@ The app uses feature-oriented route composition rather than large all-in-one pag
 - `/api/drive-image/:fileId` Google Drive image proxy with file ID validation, an 8-second timeout, MIME allowlist, and streaming 5 MB response cap
 - API rate limiting on `/api`
 - route mounting
+- `/api/server-info`
+- a JSON 404 for unknown `/api` paths
 - global JSON error handler
 
 ### Shared server modules
@@ -233,13 +241,15 @@ The app uses feature-oriented route composition rather than large all-in-one pag
 | `src/server/logger.ts` | Structured JSON application and process logging |
 | `src/server/cache.ts` | In-memory UPC cache, pending OAuth registrations, revoked token tracking |
 | `src/server/types.ts` | Shared request, auth, lookup, and session-status types |
+| `src/server/storeDetails.ts` | Validation and normalization of store profile fields shared by signup, store settings and admin edits |
+| `src/server/uploads.ts` | Finds upload files no row points at any more and removes them |
 
 ### Route modules
 
 | Route module | Main responsibilities |
 |---|---|
 | `auth.ts` | Login/logout, Google OAuth, OAuth pending signup, registration, current user, store list, store switching, store settings, password changes |
-| `admin.ts` | Superadmin store list/update/delete, store-user access management, store suspension, user creation/removal, password reset |
+| `admin.ts` | Superadmin store list/update/delete, store-user access management, store suspension, user creation/removal, password reset; per-store inventory views and item edits, cross-store recent items and search, the activity feed and its seen marker |
 | `categories.ts` | Dashboard stats, category list/create/update/delete, category activation, category-scoped bulk item delete |
 | `inventory.ts` | Inventory list/search/detail, item CRUD, export, batch upload parsing, batch import confirmation |
 | `sessions.ts` | Scan session lifecycle, active sessions, draft/completed status, mobile item polling, OTP scan ingestion, item edits/deletes, commit flow |
@@ -259,8 +269,9 @@ Current database characteristics:
 - startup applies schema creation and numbered migrations inside `src/server/db.ts`; migrations are transactional where SQLite permits it.
 - migration 17 restores the `users.store_id -> stores.id` foreign key and verifies the rebuilt table.
 - migration 19 adds the `inventory.last_verified_*` columns written when a scan session is committed.
+- migrations 20 to 26 add the 24-hour scan window (`scan_sessions.scan_window_started_at`), `inventory.brand`, `inventory.source`, and the per-superadmin activity marker (`users.activity_seen_log_id`), and clean up older Drive image links and reserved category names.
 - timestamps are stored as UTC text `YYYY-MM-DD HH:MM:SS`, the form `CURRENT_TIMESTAMP` and `datetime('now')` produce; `session_items` keeps milliseconds for its sync cursor. Server code writes them with `toSqliteUtc()` and reads them with `parseSqliteUtc()`; the client parses them with `parseServerDate()`/`parseServerTimestamp()` so they are never read as local time. Exported files use ISO 8601 UTC with `Z`. Migration 18 converted earlier ISO values.
-- audit logs older than 90 days are pruned at startup and then daily.
+- audit logs older than 90 days are pruned at startup and then daily, along with scan sessions that were never used.
 
 ### Core tables
 
@@ -277,10 +288,10 @@ Current database characteristics:
 Important current columns include:
 
 - `stores`: profile fields, logo, status, city/state/address fields, generated `store_code`
-- `users`: username/password, role, default store, OAuth fields, email, login lockout fields, `token_version`, `must_reset_password`
-- `inventory`: item name/description, quantity/unit, category, status, pricing/tax, image, UPC, item number, tags, external mapping fields
-- `scan_sessions`: session ID, OTP, user/store, status, label, OTP attempts, expiry
-- `session_items`: UPC, quantity, lookup metadata, product fields, source, `device_id`, timestamps
+- `users`: username/password, role, default store, OAuth fields, email, login lockout fields, `token_version`, `must_reset_password`, `activity_seen_log_id`
+- `inventory`: item name/description, brand, quantity/unit, category, status, pricing/tax, image, UPC, item number, tags, `source`, `last_verified_*`, external mapping fields
+- `scan_sessions`: session ID, OTP, user/store, status, label, OTP attempts, expiry, scan window start
+- `session_items`: UPC, quantity, lookup metadata, product fields, source, `device_id`, recent scan IDs, timestamps
 
 ### Tenant model
 
@@ -294,7 +305,7 @@ Operational data is store-scoped:
 
 Users can belong to multiple stores through `user_stores`. The login cookie identifies the account, while the active store is resolved per request:
 
-- superadmin requests run without a store-scoped user context
+- superadmin requests run without a store-scoped user context; admin routes name the store in the URL
 - single-store users are auto-resolved to their only active store
 - multi-store users must choose a store
 - browser tabs persist their selected store in `sessionStorage`
@@ -323,18 +334,18 @@ Special cases:
 - `authenticateToken` verifies signature, issuer, audience, token revocation, token version, password-reset state, store access, and store suspension.
 - `requireOwner` allows owners to manage categories, exports, and batch imports.
 - `requireOwnerOrTaker` allows owners and takers to add, edit, and delete individual inventory items.
-- Superadmin-only behavior is enforced inside admin routes with a local `requireSuperadmin` guard.
+- Superadmin-only behavior is enforced inside admin routes with a local `requireSuperadmin` guard. A superadmin can view any store's inventory and edit its items; each edit is logged to that store, and suspended stores are read-only.
 - Users with temporary reset passwords are forced to `/settings` and can only access the small set of auth endpoints needed to complete the reset.
 
 ### Additional controls
 
 - auth rate limit: 20 requests per 15 minutes per IP
 - general API limit: 2000 requests per 15 minutes per IP
-- scan endpoint limit: 60 requests per minute per IP
+- scan endpoint limits per minute: 150 per device, 600 per session, 1200 per IP (phones in one store share an IP)
 - failed logins trigger a 15-minute lockout after 5 bad attempts
 - logout revokes the current token in memory
 - password changes increment `token_version` so old tokens stop working
-- scan OTP attempts are tracked on the session
+- scan OTP attempts are tracked on the session and lock it after 5 wrong tries
 
 ### OAuth
 
@@ -365,10 +376,10 @@ The desktop scan flow is owned by `Scan.tsx` and the scan hooks/components.
 
 1. The desktop page creates or resumes a scan session through `POST /api/session/create`.
 2. The server returns a `sessionId` and OTP.
-3. `useServerInfo` builds a mobile URL using either the tunnel URL or the LAN address.
+3. `useServerInfo` supplies the base of the mobile URL: `PUBLIC_BASE_URL` when configured, otherwise the tunnel URL or the LAN address.
 4. The QR code points the phone to `/mobile-scan/:sessionId#otp=...`. The OTP sits after `#`, so it is never sent to the server with the URL; the page stores it for the tab and removes it from the address bar.
 5. `MobileScanScreen` and `useMobileScan` load session items through `GET /api/session/:id/items`, sending the OTP and device ID as the `X-Scan-Otp` and `X-Device-Id` headers.
-6. The phone submits scans to `POST /api/session/:id/scan` with OTP and `X-Device-Id`.
+6. The phone submits scans to `POST /api/session/:id/scan` with the OTP in the body, `X-Device-Id`, and a `scan_id` so a retried request is not counted twice.
 7. Hardware scanners use keyboard-wedge input on desktop and submit through the same session workflow.
 8. The server checks existing inventory first, then falls back to cached/external UPC lookup providers.
 9. The desktop page polls `GET /api/session/:id` using the stable `since_updated_at` plus `since_id` cursor for incremental refresh.
@@ -430,6 +441,8 @@ Drive proxy:
 - activity logs are stored in the `logs` table
 - reads are exposed through `GET /api/logs` with server-side action, keyword, date, and page filters
 - owners can view their current store's isolated audit trail; takers cannot
+- the superadmin activity feed (`GET /api/admin/activity`) reads the same table across stores, limited to store events and scan captures, and never shows raw log text
+- each superadmin has a marker (`users.activity_seen_log_id`); entries above it show as new until "Mark all as seen". Nothing is deleted
 - the logs page is split into `LogsScreen`, `LogsFilters`, `LogsTable`, `logsApi`, and `useLogsPage`
 - old log entries are pruned automatically after 90 days
 
@@ -442,11 +455,13 @@ Drive proxy:
 - coverage: `vitest run --coverage`
 - e2e tests: `playwright test`
 - full local check: `npm run test:full`
+- CI (GitHub Actions): TypeScript and ESLint, unit tests with coverage, Playwright e2e, and the production build, plus SonarCloud analysis and CodeRabbit review on pull requests
 - development runtime: single Node process with Express + Vite middleware
-- production runtime: Express serves the built SPA and API from the same process
+- production runtime: `npm start`; Express serves the built SPA and API from the same process
+- database backup: `npm run db:backup` takes an online backup and keeps the latest 14
 - static files:
   - `/icons` -> `public/icons`
-  - `/uploads` -> repo-root `uploads/`
+  - `/uploads` -> `UPLOADS_DIR`, defaulting to repo-root `uploads/`
 
 This architecture is optimized for a single deployed application instance.
 
@@ -466,13 +481,13 @@ Mostly modular but still page-orchestrated:
 
 - Dashboard
 - Scan
-- SuperAdmin
+- SuperAdmin (store settings) and the Super Admin inventory pages
 
 Still mostly route-local:
 
 - Login
 
-The clearest next frontend extraction candidate is `Login.tsx`. The highest-value reliability work is broader hook-level scan coverage and real-device scanner validation. On the backend, the biggest future boundary is replacing single-instance state and local persistence if the app moves to multiple server instances.
+The clearest next frontend extraction candidate is `Login.tsx`. The highest-value reliability work is real-device scanner validation: the scan hooks are tested mounted, but the camera path only runs on a phone. On the backend, the biggest future boundary is replacing single-instance state and local persistence if the app moves to multiple server instances.
 
 ## Scaling Notes
 

@@ -1,6 +1,6 @@
 # OptiCapture database schema
 
-The complete SQLite DDL for the current app is in [database-schema.sql](database-schema.sql). It contains all 9 application tables and 15 named indexes, including unique and partial indexes. The SQL is generated from a fresh in-memory database after `src/server/db.ts` has applied all current migrations. It does not include seed data or planned integration tables.
+The complete SQLite DDL for the current app is in [database-schema.sql](database-schema.sql). It contains all 9 application tables and 18 named indexes, including unique and partial indexes. The SQL is generated from a fresh in-memory database after `src/server/db.ts` has applied all current migrations. It does not include seed data or planned integration tables.
 
 ## Downloadable ERDs
 
@@ -16,7 +16,7 @@ The current detailed ERD is zoomable and shows every column's SQLite type, nulla
 
 The ERD marks `INTEGER PRIMARY KEY` columns as non-null because they alias the SQLite row ID. Other nullability labels follow the column declaration; SQLite can allow `NULL` in a non-integer primary key unless it is explicitly `NOT NULL`.
 
-`src/server/db.ts` remains the source of truth for database creation and upgrades. `schema_migrations` records applied versions; the current code has migrations 1 through 19. Do not run the snapshot as a migration against an existing database.
+`src/server/db.ts` remains the source of truth for database creation and upgrades. `schema_migrations` records applied versions; the current code has migrations 1 through 26. Do not run the snapshot as a migration against an existing database.
 
 Timestamps are stored as UTC text in the `CURRENT_TIMESTAMP` form, `YYYY-MM-DD HH:MM:SS`; `session_items.scanned_at` and `updated_at` add milliseconds. Values carry no zone suffix and must always be read as UTC. Exported files use ISO 8601 UTC with `Z`. The integration proposal enforces the seconds form with a `CHECK` on every timestamp column.
 

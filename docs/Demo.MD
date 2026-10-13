@@ -1,6 +1,6 @@
 # OptiCapture Operating Procedure
 
-Last updated: 2026-09-22
+Last updated: 2026-10-13
 
 Use this procedure to operate the OptiCapture workflow from login through inventory capture, review, administration, and cleanup checks.
 
@@ -84,7 +84,7 @@ Expected result:
 3. Confirm the QR code is visible.
 4. Confirm the OTP is visible under the QR code.
 5. Scan the QR code with the phone.
-6. Confirm the phone opens `/mobile-scan/:sessionId`.
+6. Confirm the phone opens `/mobile-scan/:sessionId` and that the address bar shows no OTP once the page has loaded.
 7. Allow camera access on the phone.
 8. If camera permission is denied, confirm the scanner waits for **Try Again** instead of entering a retry loop.
 9. Scan a product barcode.
@@ -100,7 +100,7 @@ Expected result:
 
 Expected result:
 
-- The phone joins by session ID and OTP.
+- The phone joins by session ID and OTP. The OTP is not left in the address bar, and refreshing the phone page keeps the session.
 - Camera scanning works when browser security requirements are met.
 - Manual entry works as a fallback.
 - Desktop and phone views reflect the same session state.
@@ -199,31 +199,51 @@ Expected result:
 - All roles can access password change.
 - Takers cannot edit store profile fields.
 
-## 10. Superadmin Panel
+## 10. Super Admin
 
-1. Sign in as a superadmin.
-2. Open `/admin`.
-3. Review the store list.
-4. Confirm user and item counts appear.
-5. Filter stores by status.
-6. Search stores.
-7. Sort stores if needed.
-8. Edit store details.
-9. Suspend a store.
-10. Confirm suspended store behavior if needed.
-11. Reactivate the store.
-12. Open user management for a store.
-13. Add access for an existing user if test data is available.
-14. Create a new store user.
-15. Record the one-time temporary password only for the active demo flow.
-16. Confirm the new user must reset the temporary password.
-17. Reset an existing user's password.
-18. Confirm the forced reset flow.
+Navigation is in the left sidebar: All stores, Recently added, Search items, Store inventory, Activity log, Store settings.
+
+### 10.1 Inventory oversight
+
+1. Sign in as a superadmin. Confirm the app opens `/admin`.
+2. Review the store list: status, items, categories, added this week, last capture.
+3. Filter stores by status, search by name, and change the sort order.
+4. Review the Needs attention card (suspended stores, items missing a UPC).
+5. Open a store. Confirm its header stats, the category filter, and the item table.
+6. Open an item. Confirm the detail pane lists other stores that carry the same UPC.
+7. Edit the item. Confirm the review step shows before and after values and that nothing is saved until it is confirmed.
+8. Confirm the edit appears in that store's own Activity Logs with the superadmin as the author.
+9. Open a suspended store. Confirm its items cannot be edited.
+10. Open Recently added. Switch between the last 24 hours, 7 days and 30 days, and filter to one store.
+11. Open Search items. Search by name and by UPC across every store, then within one store.
+
+### 10.2 Activity log
+
+1. On the All stores page, review the Recent changes card. Confirm new entries carry a dot and the header shows how many are new.
+2. Select See all to open the Activity log.
+3. Filter by kind of change. Select a store and confirm the kind filter offers only All changes and Captures.
+4. Select Mark all as seen. Confirm the dots and the New count clear and that no entry is removed.
+
+### 10.3 Store settings
+
+1. Open Store settings in the sidebar (`/admin/stores`).
+2. Edit store details.
+3. Suspend a store.
+4. Confirm suspended store behavior if needed.
+5. Reactivate the store.
+6. Open user management for a store.
+7. Add access for an existing user if test data is available.
+8. Create a new store user.
+9. Record the one-time temporary password only for the active demo flow.
+10. Confirm the new user must reset the temporary password.
+11. Reset an existing user's password.
+12. Confirm the forced reset flow.
 
 Expected result:
 
+- Superadmin users can view every store's inventory, edit items with an audited review step, search across stores, and follow new captures and store events.
 - Superadmin users can manage stores, status, store users, and password recovery workflows.
-- HQ/internal store records are not modified during normal store administration.
+- HQ/internal store records are not shown or modified during normal store administration.
 
 ## Wrap-Up Verification
 
