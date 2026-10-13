@@ -302,7 +302,7 @@ Google OAuth flow:
 | PATCH | `/api/session/:id/status` | cookie | Save as draft or resume as active |
 | DELETE | `/api/session/:id` | cookie | Delete non-completed session |
 | GET | `/api/session/:id/meta` | cookie | Read session metadata |
-| GET | `/api/session/:id/items?otp=...` | OTP | Mobile session item list |
+| GET | `/api/session/:id/items` | OTP (`X-Scan-Otp` header) | Mobile session item list |
 | GET | `/api/session/:id` | cookie | Desktop poll; supports `since_updated_at` and `since_id` |
 | POST | `/api/session/:id/scan` | OTP | Add/increment scanned item |
 | PATCH | `/api/session/:id/items/:itemId` | cookie | Edit staged item |
@@ -344,10 +344,10 @@ Desktop owner/taker opens /scan
   <- { sessionId, otp }
 
 Desktop renders QR:
-  /mobile-scan/:sessionId?otp=<otp>
+  /mobile-scan/:sessionId#otp=<otp>
 
 Phone opens QR link
-  -> GET /api/session/:id/items?otp=<otp>&device_id=<device>
+  -> GET /api/session/:id/items   (headers: X-Scan-Otp, X-Device-Id)
   <- session status and visible items
 
 Phone scans barcode

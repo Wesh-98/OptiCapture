@@ -366,8 +366,8 @@ The desktop scan flow is owned by `Scan.tsx` and the scan hooks/components.
 1. The desktop page creates or resumes a scan session through `POST /api/session/create`.
 2. The server returns a `sessionId` and OTP.
 3. `useServerInfo` builds a mobile URL using either the tunnel URL or the LAN address.
-4. The QR code points the phone to `/mobile-scan/:sessionId?otp=...`.
-5. `MobileScanScreen` and `useMobileScan` load session items through `GET /api/session/:id/items?otp=...`.
+4. The QR code points the phone to `/mobile-scan/:sessionId#otp=...`. The OTP sits after `#`, so it is never sent to the server with the URL; the page stores it for the tab and removes it from the address bar.
+5. `MobileScanScreen` and `useMobileScan` load session items through `GET /api/session/:id/items`, sending the OTP and device ID as the `X-Scan-Otp` and `X-Device-Id` headers.
 6. The phone submits scans to `POST /api/session/:id/scan` with OTP and `X-Device-Id`.
 7. Hardware scanners use keyboard-wedge input on desktop and submit through the same session workflow.
 8. The server checks existing inventory first, then falls back to cached/external UPC lookup providers.

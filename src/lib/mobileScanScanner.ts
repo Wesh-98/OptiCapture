@@ -84,6 +84,28 @@ export function getDeviceId(): string {
   return id;
 }
 
+const SCAN_OTP_KEY_PREFIX = 'mobile_scan_otp:';
+
+/**
+ * The OTP the QR link carried, after "#" (or "?" on a link made before that change). It is
+ * kept for this tab so a refresh still works once the page has dropped it from the address
+ * bar; closing the tab forgets it.
+ */
+export function readScanOtp(sessionId: string | undefined, hash: string, search: string) {
+  const fromUrl =
+    new URLSearchParams(hash.replace(/^#/, '')).get('otp') ??
+    new URLSearchParams(search).get('otp');
+  if (!sessionId) return fromUrl;
+  const storageKey = SCAN_OTP_KEY_PREFIX + sessionId;
+  try {
+    if (fromUrl) sessionStorage.setItem(storageKey, fromUrl);
+    return fromUrl ?? sessionStorage.getItem(storageKey);
+  } catch {
+    // Storage can be blocked; the OTP then lasts until the page is refreshed.
+    return fromUrl;
+  }
+}
+
 export function buildCameraErrorMessage(error: unknown): string {
   const err = error as { name?: string; message?: string } | null;
   const errName = err?.name || '';

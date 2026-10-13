@@ -1,6 +1,8 @@
 import { useReducedMotion } from 'motion/react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useMobileScan } from '../../hooks/useMobileScan';
+import { readScanOtp } from '../../lib/mobileScanScanner';
 import { MobileScanCameraPanel } from './MobileScanCameraPanel';
 import { MobileScanConnectionBanner } from './MobileScanConnectionBanner';
 import { MobileScanDraftState } from './MobileScanDraftState';
@@ -13,8 +15,16 @@ import { MobileScanToast } from './MobileScanToast';
 export function MobileScanScreen() {
   const prefersReducedMotion = useReducedMotion() ?? false;
   const { sessionId } = useParams();
-  const [searchParams] = useSearchParams();
-  const otp = searchParams.get('otp');
+  const location = useLocation();
+  const navigate = useNavigate();
+  // Read once: the address bar loses the OTP straight after.
+  const [otp] = useState(() => readScanOtp(sessionId, location.hash, location.search));
+
+  // Keep the OTP out of the phone's history and out of any link copied from the address bar.
+  const otpInUrl = /[#?&]otp=/.test(location.hash + location.search);
+  useEffect(() => {
+    if (otpInUrl) navigate(location.pathname, { replace: true });
+  }, [otpInUrl, location.pathname, navigate]);
 
   const scan = useMobileScan({ sessionId, otp });
 

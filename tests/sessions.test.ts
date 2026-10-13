@@ -187,6 +187,21 @@ describe('session item retrieval', () => {
       'shared-item',
     ]);
 
+    // The phone sends both as headers, keeping the OTP out of the URL and so out of logs.
+    const headerRes = await request
+      .get(`/api/session/${session.sessionId}/items`)
+      .set('X-Scan-Otp', session.otp)
+      .set('X-Device-Id', 'device-b');
+    expect(headerRes.status).toBe(200);
+    expect(headerRes.body.items.map((item: any) => item.upc).sort()).toEqual([
+      'device-b-item',
+      'shared-item',
+    ]);
+    const wrongHeaderRes = await request
+      .get(`/api/session/${session.sessionId}/items`)
+      .set('X-Scan-Otp', 'WRONGOTP');
+    expect(wrongHeaderRes.status).toBe(403);
+
     const foreignStoreRes = await request
       .get(`/api/session/${session.sessionId}/items`)
       .set('Cookie', otherStoreCookie)

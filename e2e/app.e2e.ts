@@ -32,7 +32,11 @@ test('validates store code before submitting normal logins', async ({ page }) =>
 });
 
 test('renders mobile scan and submits a manual scan through the browser', async ({ page }) => {
-  await page.route('**/api/session/session-1/items?*', async route => {
+  await page.route('**/api/session/session-1/items', async route => {
+    // The OTP travels as a header, never in the URL.
+    expect(route.request().url()).not.toContain('otp');
+    expect(route.request().headers()['x-scan-otp']).toBe('otp-1');
+
     await route.fulfill({
       json: {
         status: 'active',
@@ -71,8 +75,12 @@ test('renders mobile scan and submits a manual scan through the browser', async 
     });
   });
 
-  await page.goto('/mobile-scan/session-1?otp=otp-1');
+  await page.goto('/mobile-scan/session-1#otp=otp-1');
 
+  await expect(page.getByText('Existing Cola')).toBeVisible();
+  // The page drops the OTP from the address bar, and a refresh still works without it.
+  await expect(page).toHaveURL(/\/mobile-scan\/session-1$/);
+  await page.reload();
   await expect(page.getByText('Existing Cola')).toBeVisible();
   await expect(page.getByText('UPC 111222333444')).toBeVisible();
 
@@ -114,11 +122,11 @@ test('shows camera permission failures once and retries only when requested', as
     });
   });
 
-  await page.route('**/api/session/session-camera/items?*', async route => {
+  await page.route('**/api/session/session-camera/items', async route => {
     await route.fulfill({ json: { status: 'active', items: [] } });
   });
 
-  await page.goto('/mobile-scan/session-camera?otp=otp-camera');
+  await page.goto('/mobile-scan/session-camera#otp=otp-camera');
 
   const permissionError = page.getByText(/camera permission denied/i);
   await expect(permissionError).toBeVisible();
