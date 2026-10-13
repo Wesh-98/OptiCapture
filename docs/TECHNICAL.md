@@ -299,7 +299,7 @@ Google OAuth flow:
 |---|---|---|---|
 | GET | `/api/inventory` | cookie | List/search inventory; always returns `{ items, total, page, limit }` (default 50, maximum 500) |
 | GET | `/api/inventory/ids` | cookie | IDs of every item in one category, for select-all across pages |
-| GET | `/api/inventory/export?format=xlsx|csv|json|pdf` | owner | Export inventory; data files mark rows exported, PDF does not |
+| GET | `/api/inventory/export?format=xlsx\|csv\|json\|pdf` | owner | Export inventory; data files mark rows exported, PDF does not |
 | POST | `/api/inventory` | owner/taker | Create item |
 | PUT | `/api/inventory/:id` | owner/taker | Update item |
 | DELETE | `/api/inventory/:id` | owner/taker | Delete item |
