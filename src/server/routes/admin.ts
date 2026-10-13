@@ -7,12 +7,18 @@ import {
   firstQueryValue,
   generateTempPassword,
   normalizeUsername,
-  saveBase64Image,
   searchCondition,
   UnsupportedImageTypeError,
   upcVariants,
 } from '../helpers.js';
-import { discardUploads, removeUnreferencedUploads } from '../uploads.js';
+import { isEmailShaped } from '../../lib/emailFormat.js';
+import {
+  saveStoreDetails,
+  storeContactFormatError,
+  storeFieldLengthError,
+  storeNameError,
+} from '../storeDetails.js';
+import { removeUnreferencedUploads } from '../uploads.js';
 import type { AuthRequest } from '../types.js';
 import { logError } from '../logger.js';
 import {
@@ -54,8 +60,12 @@ function isStoreRole(value: unknown): value is StoreRole {
   return value === 'owner' || value === 'taker';
 }
 
-function isValidEmail(value: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+function storeUserInputError(username: string, role: unknown, email: string): string | null {
+  if (!username || !isStoreRole(role)) return 'Valid username and role required';
+  if (username.length > 50) return 'Username must be 50 characters or fewer';
+  if (email.length > 200) return 'Email must be 200 characters or fewer';
+  if (email && !isEmailShaped(email)) return 'Invalid email address';
+  return null;
 }
 
 function writeAdminLog(details: string, userId: number, storeId: number) {
@@ -460,7 +470,8 @@ export function describeItemEdit(
   // Descriptions can run to 2,000 characters, so the log only notes that it changed.
   if ((before.description ?? '') !== (after.description ?? '')) parts.push('Description updated');
   if ((before.image ?? '') !== (after.image ?? '')) {
-    parts.push(!after.image ? 'Image removed' : before.image ? 'Image replaced' : 'Image added');
+    const added = before.image ? 'Image replaced' : 'Image added';
+    parts.push(after.image ? added : 'Image removed');
   }
   if (parts.length === 0) return null;
   const line = `Super Admin edited "${after.item_name}": ${parts.join('; ')}`;
@@ -580,18 +591,8 @@ adminRouter.post(
     const normalizedUsername = normalizeUsername(username);
     const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
     const normalizedMode = mode === 'create' ? 'create' : 'existing';
-    if (!normalizedUsername || !isStoreRole(role)) {
-      return res.status(400).json({ error: 'Valid username and role required' });
-    }
-    if (normalizedUsername.length > 50) {
-      return res.status(400).json({ error: 'Username must be 50 characters or fewer' });
-    }
-    if (normalizedEmail.length > 200) {
-      return res.status(400).json({ error: 'Email must be 200 characters or fewer' });
-    }
-    if (normalizedEmail && !isValidEmail(normalizedEmail)) {
-      return res.status(400).json({ error: 'Invalid email address' });
-    }
+    const inputError = storeUserInputError(normalizedUsername, role, normalizedEmail);
+    if (inputError) return res.status(400).json({ error: inputError });
 
     const store = db.prepare('SELECT id, name FROM stores WHERE id = ?').get(storeId) as any;
     if (!store) return res.status(404).json({ error: 'Store not found' });
@@ -846,54 +847,13 @@ adminRouter.put('/stores/:id', authenticateToken, requireSuperadmin, (req: AuthR
   ) {
     return res.status(400).json({ error: 'Store fields must be strings' });
   }
-  if (typeof name !== 'string' || !name.trim())
-    return res.status(400).json({ error: 'Store name is required' });
-  if (name.length > 100)
-    return res.status(400).json({ error: 'Store name must be 100 characters or fewer' });
-  if (street && street.length > 200) {
-    return res.status(400).json({ error: 'Street address must be 200 characters or fewer' });
-  }
-  if (city && city.length > 100) {
-    return res.status(400).json({ error: 'City/Town must be 100 characters or fewer' });
-  }
-  if (email && email.length > 200) {
-    return res.status(400).json({ error: 'Email must be 200 characters or fewer' });
-  }
-  if (email && !isValidEmail(email)) {
-    return res.status(400).json({ error: 'Invalid email address' });
-  }
-  if (phone && !/^\d{10}$/.test(String(phone).replaceAll(/\D/g, ''))) {
-    return res.status(400).json({ error: 'Phone must be 10 digits' });
-  }
-  if (zipcode && !/^\d{5}(-\d{4})?$/.test(zipcode)) {
-    return res.status(400).json({ error: 'Zipcode format: 12345 or 12345-6789' });
-  }
+  const details = { name, street, city, zipcode, state, phone, email };
+  const detailsError =
+    storeNameError(name) ?? storeFieldLengthError(details) ?? storeContactFormatError(details);
+  if (detailsError) return res.status(400).json({ error: detailsError });
   try {
-    const previousLogo = (
-      db.prepare('SELECT logo FROM stores WHERE id = ?').get(storeId) as
-        | { logo: string | null }
-        | undefined
-    )?.logo;
-    // An omitted logo keeps the current one; null or an empty string clears it.
-    const savedLogo = logo === undefined ? undefined : logo ? saveBase64Image(logo) : null;
-    db.prepare(
-      `UPDATE stores SET name = ?, street = ?, city = ?, zipcode = ?, state = ?, phone = ?, email = ?${
-        savedLogo === undefined ? '' : ', logo = ?'
-      } WHERE id = ?`
-    ).run(
-      name.trim(),
-      street || null,
-      city || null,
-      zipcode || null,
-      state || null,
-      phone || null,
-      email || null,
-      ...(savedLogo === undefined ? [] : [savedLogo]),
-      storeId
-    );
-    db.prepare('UPDATE users SET store_name = ? WHERE store_id = ?').run(name.trim(), storeId);
+    saveStoreDetails(storeId, details, logo);
     writeAdminLog(`Updated store "${name.trim()}" (${storeId})`, req.user.id, storeId);
-    if (savedLogo !== undefined) discardUploads([previousLogo]);
 
     const updatedStore = db
       .prepare(

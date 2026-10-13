@@ -5,7 +5,10 @@ interface MobileScanDraftStateProps {
   sessionStatus: 'draft' | 'completed';
 }
 
-export function MobileScanDraftState({ scanCount, sessionStatus }: MobileScanDraftStateProps) {
+export function MobileScanDraftState({
+  scanCount,
+  sessionStatus,
+}: Readonly<MobileScanDraftStateProps>) {
   const isCompleted = sessionStatus === 'completed';
 
   return (

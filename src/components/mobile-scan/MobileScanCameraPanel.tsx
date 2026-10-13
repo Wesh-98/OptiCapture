@@ -19,7 +19,7 @@ export function MobileScanCameraPanel({
   cameraError,
   onResumeCamera,
   onResetCamera,
-}: MobileScanCameraPanelProps) {
+}: Readonly<MobileScanCameraPanelProps>) {
   return (
     <div
       className="shrink-0 mx-4 mt-2 rounded-2xl overflow-hidden relative bg-black"

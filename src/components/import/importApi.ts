@@ -64,6 +64,19 @@ const CANONICAL_HEADERS: Partial<Record<string, DestinationField>> = {
   created_at: '__ignore__',
 };
 
+/** The unclaimed field whose synonym equals the header, or failing that is contained in it. */
+function matchSynonym(
+  lower: string,
+  usedDest: ReadonlySet<AutoDetectField>,
+  synonymEntries: ReadonlyArray<{ dest: AutoDetectField; synonym: string }>
+): AutoDetectField | null {
+  const available = synonymEntries.filter(({ dest }) => !usedDest.has(dest));
+  const match =
+    available.find(({ synonym }) => lower === synonym) ??
+    available.find(({ synonym }) => lower.includes(synonym));
+  return match?.dest ?? null;
+}
+
 export function autoDetect(headers: readonly string[]): ColumnMapping {
   const mapping: ColumnMapping = {};
   const usedDest = new Set<AutoDetectField>();
@@ -73,7 +86,6 @@ export function autoDetect(headers: readonly string[]): ColumnMapping {
 
   for (const header of headers) {
     const lower = header.toLowerCase().trim();
-    let matched: DestinationField = '__ignore__';
 
     const canonical = CANONICAL_HEADERS[lower];
     if (canonical && (canonical === '__ignore__' || !usedDest.has(canonical))) {
@@ -82,29 +94,9 @@ export function autoDetect(headers: readonly string[]): ColumnMapping {
       continue;
     }
 
-    const exactMatch = synonymEntries.find(
-      ({ dest, synonym }) => !usedDest.has(dest) && lower === synonym
-    );
-    const fuzzyMatch =
-      exactMatch ??
-      synonymEntries.find(({ dest, synonym }) => !usedDest.has(dest) && lower.includes(synonym));
-
-    if (fuzzyMatch) {
-      matched = fuzzyMatch.dest;
-      usedDest.add(fuzzyMatch.dest);
-    } else {
-      for (const [dest, synonyms] of Object.entries(SYNONYMS) as Array<
-        [AutoDetectField, readonly string[]]
-      >) {
-        if (!usedDest.has(dest) && synonyms.some(s => lower === s || lower.includes(s))) {
-          matched = dest;
-          usedDest.add(dest);
-          break;
-        }
-      }
-    }
-
-    mapping[header] = matched;
+    const matched = matchSynonym(lower, usedDest, synonymEntries);
+    if (matched) usedDest.add(matched);
+    mapping[header] = matched ?? '__ignore__';
   }
 
   return mapping;

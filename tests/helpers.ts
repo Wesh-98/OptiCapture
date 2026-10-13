@@ -74,7 +74,7 @@ export async function login(
   // supertest exposes Set-Cookie as string | string[] | undefined depending on
   // how many cookies are set. Normalise to string[] — login sets exactly one.
   const raw = res.headers['set-cookie'];
-  const cookies: string[] = Array.isArray(raw) ? raw : raw ? [raw] : [];
+  const cookies: string[] = [raw ?? []].flat();
   if (!cookies.length) throw new Error('login() succeeded but no Set-Cookie header returned');
   return cookies[0];
 }

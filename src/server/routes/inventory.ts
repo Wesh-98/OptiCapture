@@ -128,6 +128,30 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+// ExcelJS hands back an object for hyperlink, formula and rich-text cells. Null means the
+// object has none of the fields those carry.
+function normalizeImportedCellObject(
+  value: Record<string, unknown>
+): string | number | boolean | null {
+  if (typeof value.hyperlink === 'string' && value.hyperlink.trim()) {
+    return value.hyperlink.trim();
+  }
+  if (value.result !== undefined && value.result !== null) {
+    return normalizeImportedCellValue(value.result);
+  }
+  if (Array.isArray(value.richText)) {
+    const text = value.richText
+      .map(entry => (isRecord(entry) && typeof entry.text === 'string' ? entry.text : ''))
+      .join('')
+      .trim();
+    if (text) return text;
+  }
+  if (typeof value.text === 'string' && value.text.trim()) {
+    return value.text.trim();
+  }
+  return null;
+}
+
 function normalizeImportedCellValue(value: unknown): string | number | boolean {
   if (value === null || value === undefined) return '';
   if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
@@ -140,24 +164,10 @@ function normalizeImportedCellValue(value: unknown): string | number | boolean {
     return value.map(entry => String(normalizeImportedCellValue(entry))).join(', ');
   }
   if (isRecord(value)) {
-    if (typeof value.hyperlink === 'string' && value.hyperlink.trim()) {
-      return value.hyperlink.trim();
-    }
-    if (value.result !== undefined && value.result !== null) {
-      return normalizeImportedCellValue(value.result);
-    }
-    if (Array.isArray(value.richText)) {
-      const text = value.richText
-        .map(entry => (isRecord(entry) && typeof entry.text === 'string' ? entry.text : ''))
-        .join('')
-        .trim();
-      if (text) return text;
-    }
-    if (typeof value.text === 'string' && value.text.trim()) {
-      return value.text.trim();
-    }
+    const fromCell = normalizeImportedCellObject(value);
+    if (fromCell !== null) return fromCell;
   }
-  return String(value);
+  return typeof value === 'bigint' ? value.toString() : (JSON.stringify(value) ?? '');
 }
 
 function readImportedString(value: unknown): string {
@@ -306,10 +316,9 @@ function parseInventoryNumber(
     (options.integer === true && !Number.isInteger(parsed)) ||
     (options.max !== undefined && parsed > options.max)
   ) {
-    return {
-      value: null,
-      error: `${field} must be a non-negative${options.integer ? ' integer' : ' number'}${options.max !== undefined ? ` no greater than ${options.max}` : ''}`,
-    };
+    const kind = options.integer ? 'integer' : 'number';
+    const ceiling = options.max === undefined ? '' : ` no greater than ${options.max}`;
+    return { value: null, error: `${field} must be a non-negative ${kind}${ceiling}` };
   }
 
   return { value: parsed };
@@ -332,14 +341,13 @@ function validateInventoryStrings(values: {
       return `${labels[field]} must be a string`;
     }
   }
-  if (values.upc !== undefined && String(values.upc).length > 128)
-    return 'UPC must be 128 characters or fewer';
-  if (values.unit !== undefined && String(values.unit).length > 50)
-    return 'Unit must be 50 characters or fewer';
-  if (values.tag_names !== undefined && String(values.tag_names).length > 1000)
-    return 'Tags must be 1000 characters or fewer';
-  if (values.image !== undefined && String(values.image).length > 7_000_000)
-    return 'Image payload is too large';
+  // Everything left is a string, null or undefined.
+  const longerThan = (value: unknown, max: number) =>
+    typeof value === 'string' && value.length > max;
+  if (longerThan(values.upc, 128)) return 'UPC must be 128 characters or fewer';
+  if (longerThan(values.unit, 50)) return 'Unit must be 50 characters or fewer';
+  if (longerThan(values.tag_names, 1000)) return 'Tags must be 1000 characters or fewer';
+  if (longerThan(values.image, 7_000_000)) return 'Image payload is too large';
   return null;
 }
 
@@ -489,6 +497,111 @@ inventoryRouter.get('/inventory/ids', authenticateToken, (req: AuthRequest, res)
   res.json({ ids: rows.map(row => row.id) });
 });
 
+const EXPORT_COLUMNS = [
+  { key: 'external_system', label: 'external_system' },
+  { key: 'external_store_id', label: 'external_store_id' },
+  { key: 'external_category_id', label: 'external_category_id' },
+  { key: 'external_item_id', label: 'external_item_id' },
+  { key: 'external_sku', label: 'external_sku' },
+  { key: 'item_name', label: 'item_name' },
+  { key: 'brand', label: 'brand' },
+  { key: 'description', label: 'description' },
+  { key: 'quantity', label: 'quantity' },
+  { key: 'unit', label: 'unit' },
+  { key: 'sale_price', label: 'sale_price' },
+  { key: 'tax_percent', label: 'tax_percent' },
+  { key: 'upc', label: 'upc' },
+  { key: 'number', label: 'sku' },
+  { key: 'tag_names', label: 'tag_names' },
+  { key: 'image', label: 'image' },
+  { key: 'category', label: 'category' },
+  { key: 'status', label: 'status' },
+  { key: 'sync_status', label: 'sync_status' },
+  { key: 'last_imported_at', label: 'last_imported_at' },
+  { key: 'last_exported_at', label: 'last_exported_at' },
+  { key: 'created_at', label: 'created_at' },
+] as const;
+
+type ExportGroups = Map<string, any[]>;
+
+function exportCsv(grouped: ExportGroups): string {
+  // Quoting alone does not stop Excel/Sheets treating a leading =, +, -, @ (or a
+  // leading tab/CR) as a formula. An item named `=cmd|'/c calc'!A0` would then
+  // execute when an owner opens the export. Prefix those cells with a single
+  // quote so the spreadsheet renders them as literal text.
+  const csvCell = (v: string | number | null | undefined) => {
+    const raw = String(v ?? '');
+    const escaped = /^[=+\-@\t\r]/.test(raw) ? `'${raw}` : raw;
+    return `"${escaped.replaceAll('"', '""')}"`;
+  };
+  // One header row and data rows only: the category is already a column, and divider
+  // rows would break any system that imports this file.
+  const lines: string[] = [EXPORT_COLUMNS.map(column => csvCell(column.label)).join(',')];
+  for (const items of grouped.values()) {
+    for (const r of items)
+      lines.push(EXPORT_COLUMNS.map(column => csvCell(r[column.key])).join(','));
+  }
+  return lines.join('\n');
+}
+
+async function writeExportPdf(
+  res: express.Response,
+  filename: string,
+  total: number,
+  grouped: ExportGroups
+) {
+  const { default: PDFDocument } = await import('pdfkit');
+  const doc = new PDFDocument({ margin: 40, size: 'A4', layout: 'landscape' });
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}.pdf"`);
+  doc.pipe(res);
+  doc.fontSize(18).font('Helvetica-Bold').text('Inventory Report', { align: 'center' });
+  doc
+    .fontSize(10)
+    .font('Helvetica')
+    .fillColor('#666')
+    .text(`Generated: ${new Date().toLocaleString()}   |   Total items: ${total}`, {
+      align: 'center',
+    });
+  doc.moveDown(1.5);
+  for (const [cat, items] of grouped) {
+    doc.fontSize(12).font('Helvetica-Bold').fillColor('#214c51').text(cat);
+    doc.moveDown(0.3);
+    for (const item of items) {
+      doc
+        .fontSize(9)
+        .font('Helvetica')
+        .fillColor('#333')
+        .text(
+          `  ${item.item_name || '—'}   UPC: ${item.upc || '—'}   Qty: ${item.quantity ?? '—'}   Price: $${item.sale_price ?? '—'}   Unit: ${item.unit || '—'}   Status: ${item.status || '—'}`
+        );
+    }
+    doc.moveDown(0.8);
+  }
+  doc.end();
+}
+
+// xlsx — one sheet per category, sheet name = category name
+function buildExportWorkbook(grouped: ExportGroups) {
+  const wb = new ExcelJS.Workbook();
+  const usedSheetNames = new Set<string>();
+  for (const [cat, items] of grouped) {
+    // Excel sheet names: max 31 chars, strip invalid characters [ ] : * ? / \
+    const baseName = cat.replace(/[[\]:*?/\\]/g, '').slice(0, 31) || 'Sheet';
+    let sheetName = baseName;
+    let suffix = 2;
+    while (usedSheetNames.has(sheetName.toLocaleLowerCase())) {
+      const suffixText = ` (${suffix++})`;
+      sheetName = `${baseName.slice(0, 31 - suffixText.length)}${suffixText}`;
+    }
+    usedSheetNames.add(sheetName.toLocaleLowerCase());
+    const ws = wb.addWorksheet(sheetName);
+    ws.addRow(EXPORT_COLUMNS.map(column => column.label));
+    for (const r of items) ws.addRow(EXPORT_COLUMNS.map(column => r[column.key] ?? ''));
+  }
+  return wb;
+}
+
 // Export inventory — XLSX, CSV, JSON, PDF
 inventoryRouter.get(
   '/inventory/export',
@@ -547,31 +660,6 @@ inventoryRouter.get(
 
     const filename = `inventory-${Date.now()}`;
 
-    const EXPORT_COLUMNS = [
-      { key: 'external_system', label: 'external_system' },
-      { key: 'external_store_id', label: 'external_store_id' },
-      { key: 'external_category_id', label: 'external_category_id' },
-      { key: 'external_item_id', label: 'external_item_id' },
-      { key: 'external_sku', label: 'external_sku' },
-      { key: 'item_name', label: 'item_name' },
-      { key: 'brand', label: 'brand' },
-      { key: 'description', label: 'description' },
-      { key: 'quantity', label: 'quantity' },
-      { key: 'unit', label: 'unit' },
-      { key: 'sale_price', label: 'sale_price' },
-      { key: 'tax_percent', label: 'tax_percent' },
-      { key: 'upc', label: 'upc' },
-      { key: 'number', label: 'sku' },
-      { key: 'tag_names', label: 'tag_names' },
-      { key: 'image', label: 'image' },
-      { key: 'category', label: 'category' },
-      { key: 'status', label: 'status' },
-      { key: 'sync_status', label: 'sync_status' },
-      { key: 'last_imported_at', label: 'last_imported_at' },
-      { key: 'last_exported_at', label: 'last_exported_at' },
-      { key: 'created_at', label: 'created_at' },
-    ] as const;
-
     const serializeExportRow = (row: any) => {
       const { number, ...rest } = row;
       return { ...rest, sku: number };
@@ -587,23 +675,7 @@ inventoryRouter.get(
     }
 
     if (fmt === 'csv') {
-      // Quoting alone does not stop Excel/Sheets treating a leading =, +, -, @ (or a
-      // leading tab/CR) as a formula. An item named `=cmd|'/c calc'!A0` would then
-      // execute when an owner opens the export. Prefix those cells with a single
-      // quote so the spreadsheet renders them as literal text.
-      const csvCell = (v: unknown) => {
-        const raw = String(v ?? '');
-        const escaped = /^[=+\-@\t\r]/.test(raw) ? `'${raw}` : raw;
-        return `"${escaped.replaceAll('"', '""')}"`;
-      };
-      // One header row and data rows only: the category is already a column, and divider
-      // rows would break any system that imports this file.
-      const lines: string[] = [EXPORT_COLUMNS.map(column => csvCell(column.label)).join(',')];
-      for (const items of grouped.values()) {
-        for (const r of items)
-          lines.push(EXPORT_COLUMNS.map(column => csvCell(r[column.key])).join(','));
-      }
-      const body = lines.join('\n');
+      const body = exportCsv(grouped);
       markExported();
       res.setHeader('Content-Type', 'text/csv');
       res.setHeader('Content-Disposition', `attachment; filename="${filename}.csv"`);
@@ -627,55 +699,11 @@ inventoryRouter.get(
     }
 
     if (fmt === 'pdf') {
-      const { default: PDFDocument } = await import('pdfkit');
-      const doc = new PDFDocument({ margin: 40, size: 'A4', layout: 'landscape' });
-      res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `attachment; filename="${filename}.pdf"`);
-      doc.pipe(res);
-      doc.fontSize(18).font('Helvetica-Bold').text('Inventory Report', { align: 'center' });
-      doc
-        .fontSize(10)
-        .font('Helvetica')
-        .fillColor('#666')
-        .text(`Generated: ${new Date().toLocaleString()}   |   Total items: ${rows.length}`, {
-          align: 'center',
-        });
-      doc.moveDown(1.5);
-      for (const [cat, items] of grouped) {
-        doc.fontSize(12).font('Helvetica-Bold').fillColor('#214c51').text(cat);
-        doc.moveDown(0.3);
-        for (const item of items) {
-          doc
-            .fontSize(9)
-            .font('Helvetica')
-            .fillColor('#333')
-            .text(
-              `  ${item.item_name || '—'}   UPC: ${item.upc || '—'}   Qty: ${item.quantity ?? '—'}   Price: $${item.sale_price ?? '—'}   Unit: ${item.unit || '—'}   Status: ${item.status || '—'}`
-            );
-        }
-        doc.moveDown(0.8);
-      }
-      doc.end();
+      await writeExportPdf(res, filename, rows.length, grouped);
       return;
     }
 
-    // xlsx — one sheet per category, sheet name = category name
-    const wb = new ExcelJS.Workbook();
-    const usedSheetNames = new Set<string>();
-    for (const [cat, items] of grouped) {
-      // Excel sheet names: max 31 chars, strip invalid characters [ ] : * ? / \
-      const baseName = cat.replace(/[[\]:*?/\\]/g, '').slice(0, 31) || 'Sheet';
-      let sheetName = baseName;
-      let suffix = 2;
-      while (usedSheetNames.has(sheetName.toLocaleLowerCase())) {
-        const suffixText = ` (${suffix++})`;
-        sheetName = `${baseName.slice(0, 31 - suffixText.length)}${suffixText}`;
-      }
-      usedSheetNames.add(sheetName.toLocaleLowerCase());
-      const ws = wb.addWorksheet(sheetName);
-      ws.addRow(EXPORT_COLUMNS.map(column => column.label));
-      for (const r of items) ws.addRow(EXPORT_COLUMNS.map(column => r[column.key] ?? ''));
-    }
+    const wb = buildExportWorkbook(grouped);
     const buf = await wb.xlsx.writeBuffer();
     markExported();
     res.setHeader(
@@ -687,62 +715,88 @@ inventoryRouter.get(
   })
 );
 
+// The checks on a new item run in this order so the first problem reported is the same one
+// the form shows first: name and description, then the numbers, then everything else.
+
+function categoryIdOrNull(value: unknown): number | null {
+  return value === '' || value === null || value === undefined ? null : Number(value);
+}
+
+function createItemFailure(err: any): { status: number; error: string } {
+  if (err instanceof UnsupportedImageTypeError) return { status: 400, error: err.message };
+  // A concurrent insert can still hit the unique (upc, store_id) or item-number index.
+  if (err.message?.includes('UNIQUE')) {
+    return { status: 409, error: 'An item with that UPC or number already exists' };
+  }
+  logError('inventory:create', err);
+  return { status: 500, error: 'An internal error occurred' };
+}
+
+function newItemTextError(body: any): string | null {
+  const { item_name, description } = body;
+  if (!item_name || typeof item_name !== 'string' || item_name.trim().length === 0)
+    return 'Item name is required';
+  if (item_name.length > 500) return 'Item name must be 500 characters or fewer';
+  if (description !== undefined && description !== null && typeof description !== 'string')
+    return 'Description must be a string';
+  if (description && description.length > 2000)
+    return 'Description must be 2000 characters or fewer';
+  return null;
+}
+
+interface ItemNumbers {
+  quantity: number | null;
+  salePrice: number | null;
+  tax: number | null;
+}
+
+/** `quantityFallback` is the quantity of a new item that names none; an update has no fallback. */
+function parseItemNumbers(body: any, quantityFallback?: number): { error: string } | ItemNumbers {
+  if (body.quantity === null) return { error: 'quantity must be a number' };
+  const quantity = parseInventoryNumber(body.quantity, 'quantity', {
+    integer: true,
+    max: 1_000_000,
+    fallback: quantityFallback,
+  });
+  if (quantity.error) return { error: quantity.error };
+  const salePrice = parseInventoryNumber(body.sale_price, 'sale_price', { max: 1_000_000 });
+  if (salePrice.error) return { error: salePrice.error };
+  const tax = parseInventoryNumber(body.tax_percent, 'tax_percent', { max: 100 });
+  if (tax.error) return { error: tax.error };
+  return { quantity: quantity.value, salePrice: salePrice.value, tax: tax.value };
+}
+
+function newItemAttributeError(body: any, storeId: number | undefined): string | null {
+  const { upc, unit, tag_names, image, status, category_id } = body;
+  const stringError = validateInventoryStrings({ upc, unit, tag_names, image });
+  if (stringError) return stringError;
+  // A manual add must carry a UPC; the image is optional.
+  if (typeof upc !== 'string' || !upc.trim()) return 'UPC is required';
+  if (status !== undefined && !['Active', 'Inactive'].includes(status))
+    return 'status must be Active or Inactive';
+  if (!isCategoryInStore(category_id, storeId)) return 'Invalid category';
+  return null;
+}
+
 inventoryRouter.post(
   '/inventory',
   authenticateToken,
   requireOwnerOrTaker,
   (req: AuthRequest, res) => {
-    const {
-      item_name,
-      quantity,
-      category_id,
-      status,
-      image,
-      unit,
-      sale_price,
-      tax_percent,
-      description,
-      tag_names,
-      upc,
-    } = req.body;
+    const { item_name, category_id, status, image, unit, description, tag_names, upc } = req.body;
     const user = req.user;
 
-    if (!item_name || typeof item_name !== 'string' || item_name.trim().length === 0)
-      return res.status(400).json({ error: 'Item name is required' });
-    if (item_name.length > 500)
-      return res.status(400).json({ error: 'Item name must be 500 characters or fewer' });
-    if (description !== undefined && description !== null && typeof description !== 'string')
-      return res.status(400).json({ error: 'Description must be a string' });
-    if (description && description.length > 2000)
-      return res.status(400).json({ error: 'Description must be 2000 characters or fewer' });
-    if (quantity === null) return res.status(400).json({ error: 'quantity must be a number' });
-    const quantityValue = parseInventoryNumber(quantity, 'quantity', {
-      integer: true,
-      max: 1_000_000,
-      fallback: 0,
-    });
-    if (quantityValue.error) return res.status(400).json({ error: quantityValue.error });
-    const salePriceValue = parseInventoryNumber(sale_price, 'sale_price', { max: 1_000_000 });
-    if (salePriceValue.error) return res.status(400).json({ error: salePriceValue.error });
-    const taxValue = parseInventoryNumber(tax_percent, 'tax_percent', { max: 100 });
-    if (taxValue.error) return res.status(400).json({ error: taxValue.error });
-    const stringError = validateInventoryStrings({ upc, unit, tag_names, image });
-    if (stringError) return res.status(400).json({ error: stringError });
-    // A manual add must carry a UPC; the image is optional.
-    if (typeof upc !== 'string' || !upc.trim())
-      return res.status(400).json({ error: 'UPC is required' });
-    if (status !== undefined && !['Active', 'Inactive'].includes(status))
-      return res.status(400).json({ error: 'status must be Active or Inactive' });
-    if (!isCategoryInStore(category_id, user.store_id))
-      return res.status(400).json({ error: 'Invalid category' });
+    const textError = newItemTextError(req.body);
+    if (textError) return res.status(400).json({ error: textError });
+    const numbers = parseItemNumbers(req.body, 0);
+    if ('error' in numbers) return res.status(400).json({ error: numbers.error });
+    const attributeError = newItemAttributeError(req.body, user.store_id);
+    if (attributeError) return res.status(400).json({ error: attributeError });
 
     const itemName = item_name.trim();
     // '' is an absent category, not category 0. Passing it straight through hit the
     // category_id foreign key and surfaced as a 500; the PUT route already normalises it.
-    const categoryIdValue =
-      category_id === '' || category_id === null || category_id === undefined
-        ? null
-        : Number(category_id);
+    const categoryIdValue = categoryIdOrNull(category_id);
     const cleanUpc = typeof upc === 'string' ? upc.trim() : '';
     // Two items may share a name (the same product in two sizes); they may not share a UPC.
     if (cleanUpc && findItemIdByUpc(cleanUpc, user.store_id) !== null) {
@@ -766,13 +820,13 @@ inventoryRouter.post(
           )
           .run(
             itemName,
-            quantityValue.value,
+            numbers.quantity,
             categoryIdValue,
             status ?? 'Active',
             savedImage,
             unit,
-            salePriceValue.value,
-            taxValue.value,
+            numbers.salePrice,
+            numbers.tax,
             description,
             tag_names,
             cleanUpc || null,
@@ -790,15 +844,8 @@ inventoryRouter.post(
       res.json({ id: info.lastInsertRowid });
     } catch (err: any) {
       if (createdUpload) void removeUploadedFiles([createdUpload]);
-      if (err instanceof UnsupportedImageTypeError) {
-        return res.status(400).json({ error: err.message });
-      }
-      // A concurrent insert can still hit the unique (upc, store_id) or item-number index.
-      if (err.message?.includes('UNIQUE')) {
-        return res.status(409).json({ error: 'An item with that UPC or number already exists' });
-      }
-      logError('inventory:create', err);
-      res.status(500).json({ error: 'An internal error occurred' });
+      const failure = createItemFailure(err);
+      res.status(failure.status).json({ error: failure.error });
     }
   }
 );
@@ -874,71 +921,182 @@ export function itemRevision(row: object): string {
   return createHash('sha256').update(JSON.stringify(values)).digest('hex').slice(0, 24);
 }
 
+type ItemUpdateResult = { status: number; body: Record<string, unknown> };
+
+/** How each plain column's value is read from an update. A column the body omits is left alone. */
+const UPDATE_COLUMNS: Record<string, (value: any, numbers: ItemNumbers) => unknown> = {
+  item_name: value => value.trim(),
+  quantity: (_value, numbers) => numbers.quantity,
+  category_id: categoryIdOrNull,
+  status: value => value,
+  unit: value => (value === '' || value === null ? null : String(value)),
+  sale_price: (_value, numbers) => numbers.salePrice,
+  tax_percent: (_value, numbers) => numbers.tax,
+  description: value => value || null,
+  tag_names: value => value || null,
+  upc: value => (value === null ? null : String(value).trim() || null),
+};
+
+function updateTextError(body: Record<string, any>): string | null {
+  const { item_name, description } = body;
+  // An edit that names no field used to answer 200 and write an "Updated item" audit row.
+  if (body.image === undefined && Object.keys(UPDATE_COLUMNS).every(c => body[c] === undefined))
+    return 'Nothing to change';
+  // Reject blank strings — the POST route already guards this but PUT skipped the trim check
+  if (
+    item_name !== undefined &&
+    (typeof item_name !== 'string' || item_name.trim().length === 0 || item_name.length > 500)
+  )
+    return 'Item name must be a non-empty string of 500 characters or fewer';
+  if (description !== undefined && description !== null && typeof description !== 'string')
+    return 'Description must be a string';
+  if (description && description.length > 2000)
+    return 'Description must be 2000 characters or fewer';
+  return null;
+}
+
+function updateAttributeError(
+  body: Record<string, any>,
+  storeId: number | undefined
+): string | null {
+  const { upc, unit, tag_names, image, status, category_id } = body;
+  const stringError = validateInventoryStrings({ upc, unit, tag_names, image });
+  if (stringError) return stringError;
+  if (status !== undefined && !['Active', 'Inactive'].includes(status))
+    return 'status must be Active or Inactive';
+  if (!isCategoryInStore(category_id, storeId)) return 'Invalid category';
+  return null;
+}
+
+// A UPC can be changed but not removed: scans, import matching and the cross-store view
+// all find the item by it. Items that never had one can still be edited without one.
+function upcChangeError(
+  upc: unknown,
+  currentUpc: string | null,
+  itemId: unknown,
+  storeId: number | undefined
+): ItemUpdateResult | null {
+  const newUpc = typeof upc === 'string' ? upc.trim() : '';
+  if (upc !== undefined && currentUpc?.trim() && !newUpc) {
+    return { status: 400, body: { error: 'UPC can be changed but not removed' } };
+  }
+  if (!newUpc) return null;
+  const holder = findItemIdByUpc(newUpc, storeId);
+  if (holder !== null && holder !== Number(itemId)) {
+    return { status: 409, body: { error: 'An item with that UPC already exists' } };
+  }
+  return null;
+}
+
+// Builds the SET list from the fields the client sent. A new image is written to disk here,
+// before the update runs; `createdUpload` names that file so it can be removed if the update
+// then fails and no row points at it.
+function buildItemUpdate(body: Record<string, any>, numbers: ItemNumbers) {
+  const assignments = ['updated_at = CURRENT_TIMESTAMP'];
+  const values: unknown[] = [];
+  const assign = (column: string, value: unknown) => {
+    assignments.push(`${column} = ?`);
+    values.push(value);
+  };
+
+  for (const [column, toValue] of Object.entries(UPDATE_COLUMNS)) {
+    if (body[column] !== undefined) assign(column, toValue(body[column], numbers));
+  }
+  let createdUpload: string | null = null;
+  if (body.image !== undefined) {
+    const normalizedImage = body.image ? normalizeImageUrl(String(body.image)) : null;
+    const savedImage = normalizedImage ? saveBase64Image(normalizedImage) : null;
+    createdUpload =
+      normalizedImage && savedImage ? savedUploadPath(normalizedImage, savedImage) : null;
+    assign('image', savedImage);
+  }
+  return { assignments, values, createdUpload };
+}
+
+// Runs the UPDATE and its log line in one transaction and returns the rows changed.
+// 0 changes means either the id doesn't exist or it belongs to a different
+// store. The caller answers 404 either way — this prevents cross-tenant writes from
+// silently succeeding with a 200 while actually touching nothing.
+function applyItemUpdate(
+  target: { itemId: unknown; storeId: number | undefined; userId: number },
+  update: { assignments: string[]; values: unknown[] },
+  defaultDetails: string,
+  options: ItemUpdateOptions
+): number {
+  const { itemId, storeId, userId } = target;
+  return db.transaction(() => {
+    // Read inside the transaction so the conflict check and the "before" values
+    // describe exactly the row this update replaces.
+    const before =
+      options.describe || options.expectedRevision !== undefined
+        ? readItemSnapshot(itemId, storeId)
+        : undefined;
+    if (
+      options.expectedRevision !== undefined &&
+      before &&
+      itemRevision(before) !== options.expectedRevision
+    ) {
+      throw new ItemUpdateConflict();
+    }
+    const r = db
+      .prepare(
+        `UPDATE inventory
+           SET ${update.assignments.join(', ')}
+           WHERE id = ? AND store_id = ?`
+      )
+      .run(...update.values, itemId, storeId);
+    if (r.changes === 0) return 0;
+
+    let details = defaultDetails;
+    if (options.describe && before) {
+      const after = readItemSnapshot(itemId, storeId);
+      const described = after ? options.describe(before, after) : null;
+      if (described === null) throw new ItemUpdateNoChange();
+      details = described;
+    }
+    db.prepare('INSERT INTO logs (action, details, user_id, store_id) VALUES (?, ?, ?, ?)').run(
+      'UPDATE',
+      details,
+      userId,
+      storeId
+    );
+    return r.changes;
+  })();
+}
+
+function itemUpdateFailure(err: any, itemId: unknown): ItemUpdateResult {
+  if (err instanceof ItemUpdateConflict) {
+    return {
+      status: 409,
+      body: { error: 'This item was changed since you opened it. Reload it and try again.' },
+    };
+  }
+  if (err instanceof ItemUpdateNoChange)
+    return { status: 400, body: { error: 'Nothing to change' } };
+  if (err instanceof UnsupportedImageTypeError)
+    return { status: 400, body: { error: err.message } };
+  if (err.message?.includes('UNIQUE')) {
+    return { status: 409, body: { error: 'An item with that UPC or number already exists' } };
+  }
+  logError('inventory:update', err, 'Failed to update inventory item', { itemId });
+  return { status: 500, body: { error: 'An internal error occurred' } };
+}
+
 export function updateInventoryItem(
   storeId: number | undefined,
   userId: number,
   itemId: unknown,
   body: Record<string, any>,
   options: ItemUpdateOptions = {}
-): { status: number; body: Record<string, unknown> } {
-  const {
-    item_name,
-    quantity,
-    category_id,
-    status,
-    unit,
-    sale_price,
-    tax_percent,
-    description,
-    tag_names,
-    image,
-    upc,
-  } = body;
+): ItemUpdateResult {
   const bad = (error: string) => ({ status: 400, body: { error } });
 
-  // An edit that names no field used to answer 200 and write an "Updated item" audit row.
-  if (
-    [
-      item_name,
-      quantity,
-      category_id,
-      status,
-      unit,
-      sale_price,
-      tax_percent,
-      description,
-      tag_names,
-      image,
-      upc,
-    ].every(value => value === undefined)
-  )
-    return bad('Nothing to change');
-
-  // Reject blank strings — the POST route already guards this but PUT skipped the trim check
-  if (
-    item_name !== undefined &&
-    (typeof item_name !== 'string' || item_name.trim().length === 0 || item_name.length > 500)
-  )
-    return bad('Item name must be a non-empty string of 500 characters or fewer');
-  if (description !== undefined && description !== null && typeof description !== 'string')
-    return bad('Description must be a string');
-  if (description && description.length > 2000)
-    return bad('Description must be 2000 characters or fewer');
-  if (quantity === null) return bad('quantity must be a number');
-  const quantityValue = parseInventoryNumber(quantity, 'quantity', {
-    integer: true,
-    max: 1_000_000,
-  });
-  if (quantityValue.error) return bad(quantityValue.error);
-  const salePriceValue = parseInventoryNumber(sale_price, 'sale_price', { max: 1_000_000 });
-  if (salePriceValue.error) return bad(salePriceValue.error);
-  const taxValue = parseInventoryNumber(tax_percent, 'tax_percent', { max: 100 });
-  if (taxValue.error) return bad(taxValue.error);
-  const stringError = validateInventoryStrings({ upc, unit, tag_names, image });
-  if (stringError) return bad(stringError);
-  if (status !== undefined && !['Active', 'Inactive'].includes(status))
-    return bad('status must be Active or Inactive');
-  if (!isCategoryInStore(category_id, storeId)) return bad('Invalid category');
+  const textError = updateTextError(body);
+  if (textError) return bad(textError);
+  const numbers = parseItemNumbers(body);
+  if ('error' in numbers) return bad(numbers.error);
+  const attributeError = updateAttributeError(body, storeId);
+  if (attributeError) return bad(attributeError);
 
   const existingItem = db
     .prepare('SELECT item_name, upc, image FROM inventory WHERE id = ? AND store_id = ?')
@@ -946,119 +1104,31 @@ export function updateInventoryItem(
     | { item_name: string; upc: string | null; image: string | null }
     | undefined;
   if (!existingItem) return { status: 404, body: { error: 'Item not found' } };
-  // A UPC can be changed but not removed: scans, import matching and the cross-store view
-  // all find the item by it. Items that never had one can still be edited without one.
-  if (upc !== undefined && existingItem.upc?.trim() && !(typeof upc === 'string' && upc.trim()))
-    return bad('UPC can be changed but not removed');
-  if (typeof upc === 'string' && upc.trim()) {
-    const holder = findItemIdByUpc(upc.trim(), storeId);
-    if (holder !== null && holder !== Number(itemId)) {
-      return { status: 409, body: { error: 'An item with that UPC already exists' } };
-    }
-  }
+  const upcError = upcChangeError(body.upc, existingItem.upc, itemId, storeId);
+  if (upcError) return upcError;
 
-  // A new image is written to disk before the update runs. If the update then fails, no row
-  // points at that file, so it is removed rather than left behind.
   let createdUpload: string | null = null;
   const discardUpload = () => {
     if (createdUpload) void removeUploadedFiles([createdUpload]);
   };
 
   try {
-    const assignments = ['updated_at = CURRENT_TIMESTAMP'];
-    const values: unknown[] = [];
-    const assign = (column: string, value: unknown) => {
-      assignments.push(`${column} = ?`);
-      values.push(value);
-    };
-
-    if (item_name !== undefined) assign('item_name', item_name.trim());
-    if (quantity !== undefined) assign('quantity', quantityValue.value);
-    if (category_id !== undefined)
-      assign(
-        'category_id',
-        category_id === '' || category_id === null ? null : Number(category_id)
-      );
-    if (status !== undefined) assign('status', status);
-    if (unit !== undefined) assign('unit', unit === '' || unit === null ? null : String(unit));
-    if (sale_price !== undefined) assign('sale_price', salePriceValue.value);
-    if (tax_percent !== undefined) assign('tax_percent', taxValue.value);
-    if (description !== undefined) assign('description', description || null);
-    if (tag_names !== undefined) assign('tag_names', tag_names || null);
-    if (image !== undefined) {
-      const normalizedImage = image ? normalizeImageUrl(String(image)) : null;
-      const savedImage = normalizedImage ? saveBase64Image(normalizedImage) : null;
-      createdUpload =
-        normalizedImage && savedImage ? savedUploadPath(normalizedImage, savedImage) : null;
-      assign('image', savedImage);
-    }
-    if (upc !== undefined) assign('upc', upc === null ? null : String(upc).trim() || null);
-    // 0 changes means either the id doesn't exist or it belongs to a different
-    // store. Return 404 either way — this prevents cross-tenant writes from
-    // silently succeeding with a 200 while actually touching nothing.
-    const changes = db.transaction(() => {
-      // Read inside the transaction so the conflict check and the "before" values
-      // describe exactly the row this update replaces.
-      const before =
-        options.describe || options.expectedRevision !== undefined
-          ? readItemSnapshot(itemId, storeId)
-          : undefined;
-      if (
-        options.expectedRevision !== undefined &&
-        before &&
-        itemRevision(before) !== options.expectedRevision
-      ) {
-        throw new ItemUpdateConflict();
-      }
-      const r = db
-        .prepare(
-          `UPDATE inventory
-           SET ${assignments.join(', ')}
-           WHERE id = ? AND store_id = ?`
-        )
-        .run(...values, itemId, storeId);
-      if (r.changes > 0) {
-        let details = `Updated item "${item_name?.trim() || existingItem.item_name}"`;
-        if (options.describe && before) {
-          const after = readItemSnapshot(itemId, storeId);
-          const described = after ? options.describe(before, after) : null;
-          if (described === null) throw new ItemUpdateNoChange();
-          details = described;
-        }
-        db.prepare('INSERT INTO logs (action, details, user_id, store_id) VALUES (?, ?, ?, ?)').run(
-          'UPDATE',
-          details,
-          userId,
-          storeId
-        );
-      }
-      return r.changes;
-    })();
-
+    const update = buildItemUpdate(body, numbers);
+    createdUpload = update.createdUpload;
+    const defaultDetails = `Updated item "${body.item_name?.trim() || existingItem.item_name}"`;
+    const changes = applyItemUpdate({ itemId, storeId, userId }, update, defaultDetails, options);
     if (changes === 0) {
       discardUpload();
       return { status: 404, body: { error: 'Item not found' } };
     }
 
     // A replaced or cleared image is removed unless something still points at it.
-    if (image !== undefined) discardUploads([existingItem.image]);
+    if (body.image !== undefined) discardUploads([existingItem.image]);
 
     return { status: 200, body: { success: true } };
   } catch (err: any) {
     discardUpload();
-    if (err instanceof ItemUpdateConflict) {
-      return {
-        status: 409,
-        body: { error: 'This item was changed since you opened it. Reload it and try again.' },
-      };
-    }
-    if (err instanceof ItemUpdateNoChange) return bad('Nothing to change');
-    if (err instanceof UnsupportedImageTypeError) return bad(err.message);
-    if (err.message?.includes('UNIQUE')) {
-      return { status: 409, body: { error: 'An item with that UPC or number already exists' } };
-    }
-    logError('inventory:update', err, 'Failed to update inventory item', { itemId });
-    return { status: 500, body: { error: 'An internal error occurred' } };
+    return itemUpdateFailure(err, itemId);
   }
 }
 
@@ -1210,6 +1280,65 @@ inventoryRouter.post(
 );
 
 // Batch Confirm — full sync with per-sheet column mapping
+// A sheet's chosen category, or its own name when none was chosen and the name says something.
+function sheetFallbackCategory(sheet: { sheetName: string; categoryName?: string | null }): string {
+  if (Object.hasOwn(sheet, 'categoryName')) return readImportedString(sheet.categoryName);
+  return isGenericImportSheetName(sheet.sheetName) ? '' : sheet.sheetName;
+}
+
+// True when the confirm payload is not a list of sheets shaped the way the mapping page sends them.
+function hasInvalidSheetsData(sheetsData: any): boolean {
+  return (
+    !Array.isArray(sheetsData) ||
+    sheetsData.length === 0 ||
+    sheetsData.some(
+      sheet =>
+        !isRecord(sheet) ||
+        typeof sheet.sheetName !== 'string' ||
+        (sheet.categoryName !== undefined &&
+          sheet.categoryName !== null &&
+          (typeof sheet.categoryName !== 'string' ||
+            sheet.categoryName.length > ITEM_LIMITS.category)) ||
+        !Array.isArray(sheet.rows) ||
+        !isRecord(sheet.mapping) ||
+        Object.values(sheet.mapping).some(
+          destination =>
+            typeof destination !== 'string' || !IMPORT_DESTINATION_FIELDS.has(destination)
+        ) ||
+        sheet.rows.some(row => !isRecord(row))
+    )
+  );
+}
+
+// What is wrong with one sheet's column mapping, or null.
+function sheetMappingError(sheet: {
+  sheetName: string;
+  categoryName?: string | null;
+  mapping: Record<string, string>;
+}): string | null {
+  // A sheet's own name becomes its category when none was chosen, so it is held to the
+  // category limit too.
+  if (!Object.hasOwn(sheet, 'categoryName') && sheet.sheetName.length > ITEM_LIMITS.category) {
+    return `A sheet name is longer than ${ITEM_LIMITS.category} characters. Choose a category for that sheet instead.`;
+  }
+  const destinations = Object.values(sheet.mapping).filter(
+    destination => destination !== '__ignore__'
+  );
+  const duplicateDestination = destinations.find(
+    (destination, index) => destinations.indexOf(destination) !== index
+  );
+  if (duplicateDestination) {
+    return `Sheet "${sheet.sheetName}" maps more than one column to ${duplicateDestination}.`;
+  }
+  if (!destinations.some(destination => IMPORT_IDENTIFIER_FIELDS.has(destination))) {
+    return `Sheet "${sheet.sheetName}" must map UPC, SKU / Item Number, External Item ID, or External SKU.`;
+  }
+  if (destinations.includes('external_item_id') && !destinations.includes('external_system')) {
+    return `Sheet "${sheet.sheetName}" maps External Item ID but not External System. Map the column that names the source platform, or unmap External Item ID.`;
+  }
+  return null;
+}
+
 // Accepts JSON body: { sheetsData: [{ sheetName, categoryName, rows, mapping }] }
 // M-3: Only this route needs large payloads (full sheet rows)
 inventoryRouter.post(
@@ -1225,59 +1354,12 @@ inventoryRouter.post(
         mapping: Record<string, string>;
       }[];
     };
-    if (
-      !Array.isArray(sheetsData) ||
-      sheetsData.length === 0 ||
-      sheetsData.some(
-        sheet =>
-          !isRecord(sheet) ||
-          typeof sheet.sheetName !== 'string' ||
-          (sheet.categoryName !== undefined &&
-            sheet.categoryName !== null &&
-            (typeof sheet.categoryName !== 'string' ||
-              sheet.categoryName.length > ITEM_LIMITS.category)) ||
-          !Array.isArray(sheet.rows) ||
-          !isRecord(sheet.mapping) ||
-          Object.values(sheet.mapping).some(
-            destination =>
-              typeof destination !== 'string' || !IMPORT_DESTINATION_FIELDS.has(destination)
-          ) ||
-          sheet.rows.some(row => !isRecord(row))
-      )
-    ) {
+    if (hasInvalidSheetsData(sheetsData)) {
       return res.status(400).json({ error: 'Invalid sheets data' });
     }
 
-    for (const sheet of sheetsData) {
-      // A sheet's own name becomes its category when none was chosen, so it is held to the
-      // category limit too.
-      if (!Object.hasOwn(sheet, 'categoryName') && sheet.sheetName.length > ITEM_LIMITS.category) {
-        return res.status(400).json({
-          error: `A sheet name is longer than ${ITEM_LIMITS.category} characters. Choose a category for that sheet instead.`,
-        });
-      }
-      const destinations = Object.values(sheet.mapping).filter(
-        destination => destination !== '__ignore__'
-      );
-      const duplicateDestination = destinations.find(
-        (destination, index) => destinations.indexOf(destination) !== index
-      );
-      if (duplicateDestination) {
-        return res.status(400).json({
-          error: `Sheet "${sheet.sheetName}" maps more than one column to ${duplicateDestination}.`,
-        });
-      }
-      if (!destinations.some(destination => IMPORT_IDENTIFIER_FIELDS.has(destination))) {
-        return res.status(400).json({
-          error: `Sheet "${sheet.sheetName}" must map UPC, SKU / Item Number, External Item ID, or External SKU.`,
-        });
-      }
-      if (destinations.includes('external_item_id') && !destinations.includes('external_system')) {
-        return res.status(400).json({
-          error: `Sheet "${sheet.sheetName}" maps External Item ID but not External System. Map the column that names the source platform, or unmap External Item ID.`,
-        });
-      }
-    }
+    const mappingError = sheetsData.map(sheetMappingError).find(Boolean);
+    if (mappingError) return res.status(400).json({ error: mappingError });
 
     const requestedRows = sheetsData.reduce((n, sheet) => n + sheet.rows.length, 0);
     if (requestedRows > MAX_IMPORT_ROWS) {
@@ -1511,7 +1593,9 @@ inventoryRouter.post(
       sheetCatId: number | null;
     }
 
-    const processRow = ({ sheet, row, rowIdx, sheetCatId }: ImportWorkItem) => {
+    // Reads one row through its sheet mapping and checks it. A row that cannot be imported is
+    // reported (skipped or as an error) and comes back as null.
+    const prepareRow = ({ sheet, row, rowIdx }: ImportWorkItem) => {
       const item: Record<string, any> = {};
       for (const [src, dest] of Object.entries(sheet.mapping)) {
         if (dest && dest !== '__ignore__') item[dest] = row[src];
@@ -1537,7 +1621,7 @@ inventoryRouter.post(
           sheet: sheet.sheetName,
           item_name: rawName,
         });
-        return;
+        return null;
       }
 
       // An external item ID is only an identity together with its source system;
@@ -1546,7 +1630,7 @@ inventoryRouter.post(
         addError(
           `"${itemName || upc || number || externalItemId}": External System is required when External Item ID is set`
         );
-        return;
+        return null;
       }
 
       const rowLabel = (itemName || upc || number || externalItemId || externalSku).slice(0, 80);
@@ -1569,7 +1653,7 @@ inventoryRouter.post(
       const tooLong = lengthChecks.find(([, value, max]) => value.length > max);
       if (tooLong) {
         addError(`"${rowLabel}": ${tooLong[0]} must be ${tooLong[2]} characters or fewer`);
-        return;
+        return null;
       }
       const qtyResult = parseImportNumber(item.quantity, 'Quantity', { integer: true });
       const priceResult = parseImportNumber(item.sale_price, 'Sale price');
@@ -1577,114 +1661,174 @@ inventoryRouter.post(
       const numberError = qtyResult.error ?? priceResult.error ?? taxResult.error;
       if (numberError) {
         addError(`"${rowLabel}": ${numberError}`);
+        return null;
+      }
+      return {
+        item,
+        itemName,
+        upc,
+        number,
+        externalSystem,
+        externalStoreId,
+        externalCategoryId,
+        externalItemId,
+        externalSku,
+        rowLabel,
+        qty: qtyResult.value,
+        salePrice: priceResult.value,
+        taxPct: taxResult.value,
+      };
+    };
+    type PreparedRow = NonNullable<ReturnType<typeof prepareRow>>;
+
+    // The item this row updates: matched by external ID, then UPC, then item number, then
+    // external SKU.
+    const findExistingItem = (p: PreparedRow): { id: number } | null | undefined =>
+      (p.externalItemId
+        ? checkExternalItem.get(p.externalItemId, user.store_id, p.externalSystem)
+        : null) ??
+      (p.upc ? findByUpc(p.upc) : null) ??
+      (p.number ? checkNum.get(p.number, user.store_id) : null) ??
+      (p.externalSku ? checkExternalSku.get(p.externalSku, user.store_id) : null);
+
+    // Saves the row's image and returns the value to store. `upload.path` is set to the file
+    // this import wrote, if any, before anything else can fail, so a failed write can still
+    // be cleaned up.
+    const saveRowImage = (rawImage: string, rowLabel: string, upload: { path: string | null }) => {
+      const normalizedImage = rawImage ? normalizeImageUrl(rawImage) : null;
+      const image = normalizedImage ? saveBase64Image(normalizedImage) : null;
+      // Only what this import actually wrote counts as its own, so a rollback cannot
+      // delete a file the sheet merely referenced.
+      upload.path = normalizedImage && image ? savedUploadPath(normalizedImage, image) : null;
+      if (
+        !upload.path &&
+        image?.startsWith('/uploads/') &&
+        !storeOwnsUpload.get(user.store_id, image)
+      ) {
+        addError(
+          `"${rowLabel}": image "${image}" is not an upload of this store, so it was left off the item`
+        );
+        return null;
+      }
+      return image;
+    };
+
+    interface RowFields {
+      desc: string;
+      unit: string;
+      tags: string;
+      catId: number | null;
+      status: string | null;
+      image: string | null;
+      importedAt: string;
+    }
+
+    const updateRow = (existingId: number, p: PreparedRow, fields: RowFields) =>
+      updateStmt.run(
+        p.itemName,
+        fields.desc,
+        p.qty,
+        fields.unit,
+        p.salePrice,
+        p.taxPct,
+        fields.tags,
+        fields.catId,
+        fields.status,
+        fields.image,
+        p.externalSystem,
+        p.externalStoreId,
+        p.externalCategoryId,
+        p.externalItemId,
+        p.externalSku,
+        fields.importedAt,
+        existingId,
+        user.store_id
+      );
+
+    // Quantity stays empty rather than inventing stock.
+    const insertRow = (p: PreparedRow, fields: RowFields) =>
+      insertStmt.run(
+        p.itemName,
+        fields.desc,
+        p.qty,
+        fields.unit,
+        p.salePrice,
+        p.taxPct,
+        p.upc || null,
+        p.number || null,
+        fields.tags,
+        fields.catId,
+        fields.status ?? 'Active',
+        fields.image,
+        p.externalSystem || null,
+        p.externalStoreId || null,
+        p.externalCategoryId || null,
+        p.externalItemId || null,
+        p.externalSku || null,
+        fields.importedAt,
+        'imported',
+        user.store_id
+      );
+
+    const writeRow = (
+      p: PreparedRow,
+      sheetCatId: number | null,
+      upload: { path: string | null }
+    ) => {
+      const { item } = p;
+      const statusText = readImportedString(item.status);
+      const status = statusText ? normalizeInventoryStatus(statusText) : null;
+      const desc = readImportedString(item.description);
+      const unit = readImportedString(item.unit);
+      const tags = readImportedString(item.tag_names);
+      const rowCategory = readImportedString(item.category);
+      const catId = rowCategory ? getCategoryId(rowCategory) : sheetCatId;
+
+      const existing = findExistingItem(p);
+      // A new item needs a real name; a placeholder would reach the catalog as if it were
+      // one. Checked before the image is saved, so a rejected row writes nothing to disk.
+      if (!existing && !p.itemName) {
+        addError(`"${p.rowLabel}": Item name is required for a new item`);
         return;
       }
 
+      const image = saveRowImage(readImportedString(item.image), p.rowLabel, upload);
+      const fields: RowFields = {
+        desc,
+        unit,
+        tags,
+        catId,
+        status,
+        image,
+        importedAt: toSqliteUtc(),
+      };
+      if (existing) {
+        updateRow(existing.id, p, fields);
+        results.updated++;
+      } else {
+        insertRow(p, fields);
+        results.added++;
+      }
+    };
+
+    const processRow = (workItem: ImportWorkItem) => {
+      const prepared = prepareRow(workItem);
+      if (!prepared) return;
+
       // The file this row saved, if any — known before the write so a failed write can
       // still be cleaned up.
-      let createdUpload: string | null = null;
+      const upload: { path: string | null } = { path: null };
       try {
-        const qty = qtyResult.value;
-        const salePrice = priceResult.value;
-        const taxPct = taxResult.value;
-        const statusText = readImportedString(item.status);
-        const status = statusText ? normalizeInventoryStatus(statusText) : null;
-        const desc = readImportedString(item.description);
-        const unit = readImportedString(item.unit);
-        const tags = readImportedString(item.tag_names);
-        const rowCategory = readImportedString(item.category);
-        const catId = rowCategory ? getCategoryId(rowCategory) : sheetCatId;
-
-        const existing: any =
-          (externalItemId
-            ? checkExternalItem.get(externalItemId, user.store_id, externalSystem)
-            : null) ??
-          (upc ? findByUpc(upc) : null) ??
-          (number ? checkNum.get(number, user.store_id) : null) ??
-          (externalSku ? checkExternalSku.get(externalSku, user.store_id) : null);
-
-        // A new item needs a real name; a placeholder would reach the catalog as if it were
-        // one. Checked before the image is saved, so a rejected row writes nothing to disk.
-        if (!existing && !itemName) {
-          addError(`"${rowLabel}": Item name is required for a new item`);
-          return;
-        }
-
-        const rawImage = readImportedString(item.image);
-        const normalizedImage = rawImage ? normalizeImageUrl(rawImage) : null;
-        let image = normalizedImage ? saveBase64Image(normalizedImage) : null;
-        // Only what this import actually wrote counts as its own, so a rollback cannot
-        // delete a file the sheet merely referenced.
-        createdUpload = normalizedImage && image ? savedUploadPath(normalizedImage, image) : null;
-        if (
-          !createdUpload &&
-          image?.startsWith('/uploads/') &&
-          !storeOwnsUpload.get(user.store_id, image)
-        ) {
-          addError(
-            `"${rowLabel}": image "${image}" is not an upload of this store, so it was left off the item`
-          );
-          image = null;
-        }
-        const importedAt = toSqliteUtc();
-
-        if (existing) {
-          updateStmt.run(
-            itemName,
-            desc,
-            qty,
-            unit,
-            salePrice,
-            taxPct,
-            tags,
-            catId,
-            status,
-            image,
-            externalSystem,
-            externalStoreId,
-            externalCategoryId,
-            externalItemId,
-            externalSku,
-            importedAt,
-            existing.id,
-            user.store_id
-          );
-          results.updated++;
-        } else {
-          // Quantity stays empty rather than inventing stock.
-          insertStmt.run(
-            itemName,
-            desc,
-            qty,
-            unit,
-            salePrice,
-            taxPct,
-            upc || null,
-            number || null,
-            tags,
-            catId,
-            status ?? 'Active',
-            image,
-            externalSystem || null,
-            externalStoreId || null,
-            externalCategoryId || null,
-            externalItemId || null,
-            externalSku || null,
-            importedAt,
-            'imported',
-            user.store_id
-          );
-          results.added++;
-        }
-        if (createdUpload) savedImagePaths.push(createdUpload);
+        writeRow(prepared, workItem.sheetCatId, upload);
+        if (upload.path) savedImagePaths.push(upload.path);
       } catch (err: any) {
         // The row was not written, so nothing refers to the image it saved. The chunk still
         // commits, so the rollback cleanup would never see this file.
-        if (createdUpload) rejectedUploads.push(createdUpload);
+        if (upload.path) rejectedUploads.push(upload.path);
         // A full disk or an I/O error makes SQLite roll back the whole transaction. Every
         // later row would then commit on its own, outside the chunk, so stop the chunk here.
         if (!db.inTransaction) throw err;
-        addError(`"${itemName || upc || number}": ${err.message}`);
+        addError(`"${prepared.itemName || prepared.upc || prepared.number}": ${err.message}`);
       }
     };
 
@@ -1696,11 +1840,7 @@ inventoryRouter.post(
     // the commit loop below can slice it into chunks regardless of sheet boundaries.
     const work: ImportWorkItem[] = [];
     for (const sheet of sheetsData) {
-      const fallbackCategoryName = Object.hasOwn(sheet, 'categoryName')
-        ? readImportedString(sheet.categoryName)
-        : !isGenericImportSheetName(sheet.sheetName)
-          ? sheet.sheetName
-          : '';
+      const fallbackCategoryName = sheetFallbackCategory(sheet);
       const sheetCatId = fallbackCategoryName ? getCategoryId(fallbackCategoryName) : null;
       for (const [rowIdx, row] of sheet.rows.entries()) {
         work.push({ sheet, row, rowIdx, sheetCatId });
@@ -1711,43 +1851,36 @@ inventoryRouter.post(
     // rolls back, so a failure partway through reports from this instead.
     const committed = { rows: 0, added: 0, updated: 0, skipped: 0, errors_total: 0 };
 
-    try {
-      for (let start = 0; start < work.length; start += IMPORT_CHUNK_ROWS) {
-        const chunk = work.slice(start, start + IMPORT_CHUNK_ROWS);
-        const imagesBeforeChunk = savedImagePaths.length;
-        try {
-          commitChunk(chunk);
-        } catch (chunkError) {
-          // The chunk rolled back, so the images it wrote belong to no row any more.
-          await removeUploadedFiles(savedImagePaths.splice(imagesBeforeChunk));
-          throw chunkError;
-        } finally {
-          await removeUploadedFiles(rejectedUploads.splice(0));
-        }
-        Object.assign(committed, {
-          rows: start + chunk.length,
-          added: results.added,
-          updated: results.updated,
-          skipped: results.skipped,
-          errors_total: results.errors_total,
-        });
-        // Hand the event loop a turn between chunks so health checks and phone scans are
-        // still answered while a large import runs.
-        if (start + IMPORT_CHUNK_ROWS < work.length) {
-          await new Promise(resolve => setImmediate(resolve));
-        }
+    // Commits one chunk and cleans up after it.
+    const commitChunkAt = async (start: number) => {
+      const chunk = work.slice(start, start + IMPORT_CHUNK_ROWS);
+      const imagesBeforeChunk = savedImagePaths.length;
+      try {
+        commitChunk(chunk);
+      } catch (chunkError) {
+        // The chunk rolled back, so the images it wrote belong to no row any more.
+        await removeUploadedFiles(savedImagePaths.splice(imagesBeforeChunk));
+        throw chunkError;
+      } finally {
+        await removeUploadedFiles(rejectedUploads.splice(0));
       }
+      Object.assign(committed, {
+        rows: start + chunk.length,
+        added: results.added,
+        updated: results.updated,
+        skipped: results.skipped,
+        errors_total: results.errors_total,
+      });
+      // Hand the event loop a turn between chunks so health checks and phone scans are
+      // still answered while a large import runs.
+      if (start + IMPORT_CHUNK_ROWS < work.length) {
+        await new Promise(resolve => setImmediate(resolve));
+      }
+    };
 
-      // Counts only: the full skipped-row list used to be serialised into this one column.
-      db.prepare('INSERT INTO logs (action, details, user_id, store_id) VALUES (?, ?, ?, ?)').run(
-        'IMPORT',
-        `Imported ${work.length} rows across ${sheetsData.length} sheet(s): +${results.added} new, ~${results.updated} updated, ${results.skipped} skipped, ${results.errors_total} failed`,
-        user.id,
-        user.store_id
-      );
-      res.json(results);
-    } catch (err: any) {
-      logError('inventory:batch-confirm', err);
+    // Answers a failed import. Chunks committed before the failure stay in the database, so
+    // they are logged and reported rather than passed off as a total failure.
+    const respondImportStopped = () => {
       if (committed.rows === 0) {
         res.status(500).json({ error: 'An internal error occurred' });
         return;
@@ -1777,6 +1910,24 @@ inventoryRouter.post(
         skipped: committed.skipped,
         errors_total: committed.errors_total,
       });
+    };
+
+    try {
+      for (let start = 0; start < work.length; start += IMPORT_CHUNK_ROWS) {
+        await commitChunkAt(start); // NOSONAR: chunks commit in order, one transaction each
+      }
+
+      // Counts only: the full skipped-row list used to be serialised into this one column.
+      db.prepare('INSERT INTO logs (action, details, user_id, store_id) VALUES (?, ?, ?, ?)').run(
+        'IMPORT',
+        `Imported ${work.length} rows across ${sheetsData.length} sheet(s): +${results.added} new, ~${results.updated} updated, ${results.skipped} skipped, ${results.errors_total} failed`,
+        user.id,
+        user.store_id
+      );
+      res.json(results);
+    } catch (err: any) {
+      logError('inventory:batch-confirm', err);
+      respondImportStopped();
     }
   })
 );

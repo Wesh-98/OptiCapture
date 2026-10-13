@@ -2,6 +2,7 @@ import { useCallback, useState, type ChangeEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   StoreRow,
+  type StoreStatusFilter,
   validateEmail,
   validatePhone,
   validateZipcode,
@@ -23,6 +24,20 @@ async function readErrorMessage(res: Response, fallback: string): Promise<string
 }
 
 //Store list, create/edit/suspend/delete stores, logo upload
+function validateStoreEdit(store: StoreRow): Record<string, string> {
+  const errs: Record<string, string> = {};
+  if (!store.name.trim()) errs.name = 'Store name is required';
+  if (store.street && store.street.length > 200)
+    errs.street = 'Street address must be 200 characters or fewer';
+  if (store.email && !validateEmail(store.email)) errs.email = 'Enter a valid email';
+  if (store.phone && !validatePhone(store.phone)) errs.phone = 'Phone must be 10 digits';
+  if (store.city && store.city.length > 100)
+    errs.city = 'City/Town must be 100 characters or fewer';
+  if (store.zipcode && !validateZipcode(store.zipcode))
+    errs.zipcode = 'Format: 12345 or 12345-6789';
+  return errs;
+}
+
 export function useAdminStores() {
   const navigate = useNavigate();
   const { addToast } = useToast();
@@ -47,7 +62,7 @@ export function useAdminStores() {
 
   // --- Filter / sort ---
   const [storeSearch, setStoreSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'suspended'>('all');
+  const [statusFilter, setStatusFilter] = useState<StoreStatusFilter>('all');
   const [joinedSort, setJoinedSort] = useState<'newest' | 'oldest'>('newest');
 
   const fetchStores = useCallback(async () => {
@@ -97,16 +112,7 @@ export function useAdminStores() {
 
   const handleEditSave = async () => {
     if (!editStore) return;
-    const errs: Record<string, string> = {};
-    if (!editStore.name.trim()) errs.name = 'Store name is required';
-    if (editStore.street && editStore.street.length > 200)
-      errs.street = 'Street address must be 200 characters or fewer';
-    if (editStore.email && !validateEmail(editStore.email)) errs.email = 'Enter a valid email';
-    if (editStore.phone && !validatePhone(editStore.phone)) errs.phone = 'Phone must be 10 digits';
-    if (editStore.city && editStore.city.length > 100)
-      errs.city = 'City/Town must be 100 characters or fewer';
-    if (editStore.zipcode && !validateZipcode(editStore.zipcode))
-      errs.zipcode = 'Format: 12345 or 12345-6789';
+    const errs = validateStoreEdit(editStore);
     if (Object.keys(errs).length) {
       setEditErrors(errs);
       return;

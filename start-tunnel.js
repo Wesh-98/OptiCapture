@@ -1,7 +1,7 @@
-import { spawn } from 'child_process';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TUNNEL_FILE = path.join(__dirname, '.tunnel-url');
@@ -15,7 +15,8 @@ process.on('exit', cleanup);
 process.on('SIGINT', () => { cleanup(); process.exit(0); });
 process.on('SIGTERM', () => { cleanup(); process.exit(0); });
 
-const child = spawn('cloudflared', [
+// Dev-only helper: cloudflared is whatever the developer installed, found through their PATH.
+const child = spawn('cloudflared', [ // NOSONAR
   'tunnel', '--url', 'https://localhost:3000', '--no-tls-verify'
 ], { stdio: ['ignore', 'pipe', 'pipe'] });
 

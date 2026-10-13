@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import type { SessionItem, UiStatus } from '../components/scan/types';
+import type { SessionItem, SessionStatus, UiStatus } from '../components/scan/types';
 import { parseServerTimestamp } from '../lib/utils';
 type FetchInit = Parameters<typeof globalThis.fetch>[1];
 
@@ -27,7 +27,7 @@ export function buildPollUrl(sessionId: string, cursor: PollCursor | null): stri
 export function parseSessionEnvelope(raw: unknown): {
   items: SessionItem[];
   expiresAt: string | null;
-  status: 'active' | 'draft' | 'completed' | null;
+  status: SessionStatus | null;
   label: string | null;
 } {
   if (Array.isArray(raw)) {
@@ -37,7 +37,7 @@ export function parseSessionEnvelope(raw: unknown): {
   const obj = raw as {
     items?: SessionItem[];
     expires_at?: string;
-    status?: 'active' | 'draft' | 'completed';
+    status?: SessionStatus;
     label?: string | null;
   };
 
@@ -96,7 +96,7 @@ export function getLatestCursor(items: SessionItem[]): PollCursor | null {
 
 interface SessionDraftAlertEvaluation {
   incomingCount: number;
-  sessionStatus: 'active' | 'draft' | 'completed' | null;
+  sessionStatus: SessionStatus | null;
   sessionStartTime: number | null;
   lastLongSessionAlertAt: number | null;
   lastItemAddedAt: number | null;
@@ -254,7 +254,7 @@ export function getPollFailureOutcome(failCount: number): {
 
 export function getSessionExpiryWarningMessage(
   sessionExpiresAt: string | null,
-  sessionStatus: 'active' | 'draft' | 'completed' | null,
+  sessionStatus: SessionStatus | null,
   now = Date.now()
 ): string | null {
   if (!sessionExpiresAt || sessionStatus !== 'active') {
@@ -296,7 +296,7 @@ export function shouldClearStoredSessionForStore(
 interface ParamSessionSummary {
   session_id: string;
   otp: string;
-  status: 'active' | 'draft' | 'completed';
+  status: SessionStatus;
   label?: string | null;
 }
 
@@ -307,7 +307,7 @@ export function resolveParamResumeMatch(
 ): {
   sessionId: string;
   otp: string;
-  sessionStatus: 'active' | 'draft' | 'completed';
+  sessionStatus: SessionStatus;
   sessionLabel: string | null;
   storageEntries: Array<[key: string, value: string]>;
   shouldClearStoredSession: boolean;
@@ -333,7 +333,7 @@ export function resolveStoredSessionResume(
   savedId: string,
   savedOtp: string,
   envelope: ReturnType<typeof parseSessionEnvelope>,
-  fallbackStatus: 'active' | 'draft' | 'completed' | null | undefined,
+  fallbackStatus: SessionStatus | null | undefined,
   fallbackLabel: string | null | undefined,
   manuallyDeselected: Set<number>,
   now = Date.now()
@@ -343,7 +343,7 @@ export function resolveStoredSessionResume(
       kind: 'resumed';
       sessionId: string;
       otp: string;
-      sessionStatus: 'active' | 'draft' | 'completed' | null;
+      sessionStatus: SessionStatus | null;
       sessionLabel: string | null;
       items: SessionItem[];
       uiStatus: UiStatus;
@@ -382,7 +382,7 @@ export function resolveStoredSessionResume(
 
 export function getSessionActivationAction(
   sessionId: string | null,
-  sessionStatus: 'active' | 'draft' | 'completed' | null
+  sessionStatus: SessionStatus | null
 ): 'stop' | 'poll' | 'view_only' {
   if (!sessionId) {
     return 'stop';
@@ -484,7 +484,7 @@ export function useScanSession(
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [otp, setOtp] = useState<string | null>(null);
   const [items, setItems] = useState<SessionItem[]>([]);
-  const [sessionStatus, setSessionStatus] = useState<'active' | 'draft' | 'completed' | null>(null);
+  const [sessionStatus, setSessionStatus] = useState<SessionStatus | null>(null);
   const [sessionLabel, setSessionLabel] = useState<string | null>(null);
   const [sessionExpiresAt, setSessionExpiresAt] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -511,7 +511,7 @@ export function useScanSession(
   const lastItemAddedAtRef = useRef<number | null>(null);
   const idleAlertFiredRef = useRef(false);
   const lastLongSessionAlertRef = useRef<number | null>(null);
-  const sessionStatusRef = useRef<'active' | 'draft' | 'completed' | null>(null);
+  const sessionStatusRef = useRef<SessionStatus | null>(null);
   const expiryWarnedRef = useRef(false);
   const itemsRef = useRef<SessionItem[]>([]);
   const selectedIdsRef = useRef<Set<number>>(new Set());
@@ -602,6 +602,69 @@ export function useScanSession(
     }
   }, [clearStoredSession, user]);
 
+  // Folds one poll response into the feed, the selection and the draft reminders.
+  const applyPolledItems = useCallback(
+    (data: SessionItem[], status: SessionStatus | null, replaceAll: boolean) => {
+      const nextCursor = getLatestCursor(data);
+      if (nextCursor) {
+        lastPollCursorRef.current = nextCursor;
+        lastItemAddedAtRef.current = Date.now();
+      }
+
+      const nextItems = mergeSessionItems(itemsRef.current, data, replaceAll);
+      setItems(nextItems);
+      if (status !== 'completed') {
+        setSelectedIds(
+          reconcileSelectedIds(
+            selectedIdsRef.current,
+            nextItems,
+            data,
+            manuallyDeselectedRef.current
+          )
+        );
+      }
+
+      const alertResult = evaluateSessionDraftAlert({
+        incomingCount: data.length,
+        sessionStatus: sessionStatusRef.current,
+        sessionStartTime: sessionStartTimeRef.current,
+        lastLongSessionAlertAt: lastLongSessionAlertRef.current,
+        lastItemAddedAt: lastItemAddedAtRef.current,
+        idleAlertFired: idleAlertFiredRef.current,
+      });
+      lastLongSessionAlertRef.current = alertResult.nextLastLongSessionAlertAt;
+      idleAlertFiredRef.current = alertResult.nextIdleAlertFired;
+      if (alertResult.alert) {
+        setDraftAlert(alertResult.alert);
+      }
+    },
+    []
+  );
+
+  const handlePollFailure = useCallback((error: unknown) => {
+    // A response with a status is the server telling us something specific; only a
+    // transport failure means it might be unreachable.
+    const responseOutcome =
+      error instanceof PollResponseError ? getPollResponseOutcome(error.status) : null;
+
+    let failure: ReturnType<typeof getPollFailureOutcome>;
+    if (responseOutcome) {
+      failure = responseOutcome;
+      if (responseOutcome.shouldStopPolling) pollHaltedRef.current = true;
+    } else {
+      pollFailCountRef.current += 1;
+      failure = getPollFailureOutcome(pollFailCountRef.current);
+    }
+
+    if (failure.shouldStopPolling && pollIntervalRef.current) {
+      globalThis.clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+    if (failure.uiStatus) setUiStatus(failure.uiStatus);
+    if (failure.statusMessage) setStatusMessage(failure.statusMessage);
+    setPollError(failure.pollError);
+  }, []);
+
   const fetchSessionItems = useCallback(
     async (fullRefresh = false) => {
       if (!sessionId) return;
@@ -627,65 +690,14 @@ export function useScanSession(
 
         pollFailCountRef.current = 0;
 
-        const nextCursor = getLatestCursor(data);
-        if (nextCursor) {
-          lastPollCursorRef.current = nextCursor;
-          lastItemAddedAtRef.current = Date.now();
-        }
-
-        const nextItems = mergeSessionItems(itemsRef.current, data, fullRefresh || cursor == null);
-        setItems(nextItems);
-        if (status !== 'completed') {
-          setSelectedIds(
-            reconcileSelectedIds(
-              selectedIdsRef.current,
-              nextItems,
-              data,
-              manuallyDeselectedRef.current
-            )
-          );
-        }
-
-        const alertResult = evaluateSessionDraftAlert({
-          incomingCount: data.length,
-          sessionStatus: sessionStatusRef.current,
-          sessionStartTime: sessionStartTimeRef.current,
-          lastLongSessionAlertAt: lastLongSessionAlertRef.current,
-          lastItemAddedAt: lastItemAddedAtRef.current,
-          idleAlertFired: idleAlertFiredRef.current,
-        });
-        lastLongSessionAlertRef.current = alertResult.nextLastLongSessionAlertAt;
-        idleAlertFiredRef.current = alertResult.nextIdleAlertFired;
-        if (alertResult.alert) {
-          setDraftAlert(alertResult.alert);
-        }
+        applyPolledItems(data, status, fullRefresh || cursor == null);
 
         setPollError(null);
       } catch (error) {
-        // A response with a status is the server telling us something specific; only a
-        // transport failure means it might be unreachable.
-        const responseOutcome =
-          error instanceof PollResponseError ? getPollResponseOutcome(error.status) : null;
-
-        let failure: ReturnType<typeof getPollFailureOutcome>;
-        if (responseOutcome) {
-          failure = responseOutcome;
-          if (responseOutcome.shouldStopPolling) pollHaltedRef.current = true;
-        } else {
-          pollFailCountRef.current += 1;
-          failure = getPollFailureOutcome(pollFailCountRef.current);
-        }
-
-        if (failure.shouldStopPolling && pollIntervalRef.current) {
-          globalThis.clearInterval(pollIntervalRef.current);
-          pollIntervalRef.current = null;
-        }
-        if (failure.uiStatus) setUiStatus(failure.uiStatus);
-        if (failure.statusMessage) setStatusMessage(failure.statusMessage);
-        setPollError(failure.pollError);
+        handlePollFailure(error);
       }
     },
-    [clearStoredSession, sessionId]
+    [applyPolledItems, clearStoredSession, handlePollFailure, sessionId]
   );
 
   const stopPolling = useCallback(() => {

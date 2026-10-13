@@ -115,6 +115,7 @@ export default function AdminDashboard() {
       .filter(s => !needle || s.name.toLowerCase().includes(needle))
       .sort(SORTS[sort]);
   }, [stores, search, statusFilter, sort]);
+  const storesNotice = storesNoticeFor(admin.isLoading, stores.length, visible.length);
 
   const attention = useMemo(() => needsAttention(stores), [stores]);
 
@@ -158,10 +159,9 @@ export default function AdminDashboard() {
                 className={cn('w-full h-10 pl-9 pr-3', FILTER_INPUT)}
               />
             </label>
-            <div
-              role="group"
+            <fieldset
               aria-label="Status filter"
-              className="flex gap-1 rounded-lg bg-theme-canvas p-1"
+              className="flex min-w-0 gap-1 rounded-lg bg-theme-canvas p-1"
             >
               {(['all', 'active', 'suspended'] as const).map(value => (
                 <button
@@ -178,7 +178,7 @@ export default function AdminDashboard() {
                   {value}
                 </button>
               ))}
-            </div>
+            </fieldset>
             <div className="flex-1" />
             <label className="sr-only" htmlFor="store-sort">
               Sort stores
@@ -202,12 +202,8 @@ export default function AdminDashboard() {
             </SelectIcon>
           </div>
 
-          {admin.isLoading ? (
-            <p className="p-12 text-center text-sm text-theme-muted">Loading stores...</p>
-          ) : visible.length === 0 ? (
-            <p className="p-12 text-center text-sm text-theme-muted">
-              {stores.length === 0 ? 'No stores registered yet.' : 'No stores match.'}
-            </p>
+          {storesNotice ? (
+            <p className="p-12 text-center text-sm text-theme-muted">{storesNotice}</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-left">
@@ -332,6 +328,13 @@ const CHANGE_ICONS: Record<ActivityKind, { icon: LucideIcon; tone: string }> = {
   deleted: { icon: Trash2, tone: 'bg-accent-50 text-accent-600' },
 };
 
+function storesNoticeFor(isLoading: boolean, total: number, shown: number): string | null {
+  if (isLoading) return 'Loading stores...';
+  if (total === 0) return 'No stores registered yet.';
+  if (shown === 0) return 'No stores match.';
+  return null;
+}
+
 // Store events (registered, suspended, reactivated, updated, deleted) and new captures.
 // Catalog edits are left to each store's own portal.
 function RecentChanges() {
@@ -344,12 +347,10 @@ function RecentChanges() {
         <History size={18} className="text-brand-600" />
         Recent changes
       </h2>
-      {error ? (
-        <p className="px-4 py-6 text-sm text-accent-600">{error}</p>
-      ) : entries === null ? (
-        <p className="px-4 py-6 text-sm text-theme-muted">Loading changes...</p>
-      ) : entries.length === 0 ? (
-        <p className="px-4 py-6 text-sm text-theme-muted">No changes in the last 90 days.</p>
+      {entries === null || entries.length === 0 || error ? (
+        <p className={cn('px-4 py-6 text-sm', error ? 'text-accent-600' : 'text-theme-muted')}>
+          {error || (entries === null ? 'Loading changes...' : 'No changes in the last 90 days.')}
+        </p>
       ) : (
         <ul
           className={cn(

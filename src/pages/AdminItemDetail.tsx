@@ -45,6 +45,239 @@ const PANE_HEADING =
 // Superadmin: one item in context. Store | items (by category) | detail, with editing
 // for active stores.
 // Without an item in the URL the detail pane waits for a pick.
+function SelectedItemDetail({
+  itemId,
+  savedFor,
+  detail,
+  view,
+}: Readonly<{
+  itemId: string | undefined;
+  savedFor: string | null;
+  detail: ReturnType<typeof useAdminItemDetail>;
+  view: ReturnType<typeof useAdminStoreInventory>;
+}>) {
+  if (!itemId) {
+    return (
+      <p className="text-sm text-theme-muted">Select an item from the list to see its details.</p>
+    );
+  }
+  return (
+    <>
+      {savedFor === itemId && (
+        <output className="mb-4 block rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-sm font-medium text-brand-700">
+          Changes saved and recorded in the store's activity log.
+        </output>
+      )}
+      <ItemDetailBody detail={detail} storeName={view.store?.name} loading={detail.loading} />
+    </>
+  );
+}
+
+function itemListNotice(
+  view: ReturnType<typeof useAdminStoreInventory>
+): { text: string; tone: string } | null {
+  if (view.itemsError) return { text: view.itemsError, tone: 'text-accent-600' };
+  if (view.items.length > 0) return null;
+  return {
+    text: view.itemsLoading ? 'Loading items...' : 'No items match.',
+    tone: 'text-theme-muted',
+  };
+}
+
+function ItemsPane({
+  view,
+  storeHref,
+  itemId,
+  categoryTitle,
+  categoryQuery,
+}: Readonly<{
+  view: ReturnType<typeof useAdminStoreInventory>;
+  storeHref: string;
+  itemId: string | undefined;
+  categoryTitle: string;
+  categoryQuery: string;
+}>) {
+  const listNotice = itemListNotice(view);
+  return (
+    <section
+      aria-label="Items"
+      className="order-2 lg:order-none flex-1 min-w-0 flex flex-col bg-white min-h-0"
+    >
+      <div className="px-5 py-4 border-b border-theme-border space-y-3">
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <div className="min-w-0">
+            <h1 className="text-xl font-bold text-black truncate">
+              {categoryTitle}{' '}
+              <span className="text-sm font-normal text-theme-muted">
+                · {view.total.toLocaleString()} items
+              </span>
+            </h1>
+          </div>
+          {view.store && view.store.status !== 'active' && (
+            <span className="inline-flex items-center gap-1.5 text-sm text-accent-600">
+              <Eye size={15} />
+              Read-only while suspended
+            </span>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <label className="sr-only" htmlFor="detail-item-category">
+            Category
+          </label>
+          <SelectIcon icon={TagIcon} className="max-w-full">
+            <select
+              id="detail-item-category"
+              value={view.categoryId ?? ''}
+              onChange={e =>
+                view.setCategoryId(e.target.value === '' ? null : Number(e.target.value))
+              }
+              className={cn('h-9 max-w-full', FILTER_SELECT, 'pl-8')}
+            >
+              <option value="">Select Category</option>
+              {view.categories.map(category => (
+                <option key={category.id} value={category.id}>
+                  {category.name} ({category.item_count.toLocaleString()})
+                </option>
+              ))}
+            </select>
+          </SelectIcon>
+          <label className="relative flex-[1_1_200px]">
+            <span className="sr-only">Search items</span>
+            <Search
+              size={15}
+              className="absolute left-3 top-1/2 -translate-y-1/2 text-theme-muted"
+            />
+            <input
+              type="search"
+              value={view.search}
+              onChange={e => view.setSearch(e.target.value)}
+              placeholder={`Search in ${categoryTitle}…`}
+              className={cn('w-full h-9 pl-9 pr-3', FILTER_INPUT)}
+            />
+          </label>
+          <label className="sr-only" htmlFor="detail-item-status">
+            Item status
+          </label>
+          <SelectIcon
+            icon={FilterIcon}
+            iconOnly
+            active={view.statusFilter !== 'all'}
+            title={`Status: ${STATUS_LABELS[view.statusFilter]}`}
+            className="w-9 h-9"
+          >
+            <select
+              id="detail-item-status"
+              value={view.statusFilter}
+              onChange={e => view.setStatusFilter(e.target.value as ItemStatusFilter)}
+              className={ICON_ONLY_SELECT}
+            >
+              <option value="all">All status</option>
+              <option value="Active">Active</option>
+              <option value="Inactive">In-Active</option>
+            </select>
+          </SelectIcon>
+          <label className="sr-only" htmlFor="detail-item-sort">
+            Sort items
+          </label>
+          <SelectIcon
+            icon={ArrowDownUpIcon}
+            iconOnly
+            active={view.sort !== 'recent'}
+            title={`Sort: ${ITEM_SORT_LABELS[view.sort]}`}
+            className="w-9 h-9"
+          >
+            <select
+              id="detail-item-sort"
+              value={view.sort}
+              onChange={e => view.setSort(e.target.value as ItemSort)}
+              className={ICON_ONLY_SELECT}
+            >
+              {(Object.keys(ITEM_SORT_LABELS) as ItemSort[]).map(value => (
+                <option key={value} value={value}>
+                  {ITEM_SORT_LABELS[value]}
+                </option>
+              ))}
+            </select>
+          </SelectIcon>
+        </div>
+      </div>
+
+      <div className={cn('flex-1 overflow-y-auto', view.itemsLoading && 'opacity-60')}>
+        {listNotice ? (
+          <p className={cn('p-8 text-center text-sm', listNotice.tone)}>{listNotice.text}</p>
+        ) : (
+          <ul>
+            {view.items.map(item => {
+              const selected = String(item.id) === itemId;
+              return (
+                <li key={item.id}>
+                  <Link
+                    to={`${storeHref}/items/${item.id}${categoryQuery}`}
+                    aria-current={selected ? 'page' : undefined}
+                    className={cn(
+                      'flex items-center gap-3.5 px-5 py-3 border-b border-theme-border/60 transition-colors',
+                      selected
+                        ? 'bg-brand-50 shadow-[inset_3px_0_0_var(--color-brand-400)]'
+                        : 'hover:bg-theme-subtle'
+                    )}
+                  >
+                    <ItemThumb src={item.image} />
+                    <span className="flex-1 min-w-0">
+                      <span className="block truncate text-sm font-semibold text-black">
+                        {item.item_name}
+                      </span>
+                      <span
+                        className={cn(
+                          'block font-mono text-xs',
+                          item.upc ? 'text-theme-muted' : 'text-accent-600'
+                        )}
+                      >
+                        {item.upc || 'No UPC'}
+                      </span>
+                    </span>
+                    <span className="flex flex-col items-end gap-1">
+                      <span className="font-mono text-sm text-black">
+                        {formatPrice(item.sale_price)}
+                      </span>
+                      <ItemStatusText status={item.status} />
+                    </span>
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+
+      {view.total > view.pageSize && (
+        <div className="px-5 py-2.5 border-t border-theme-border flex items-center justify-between text-xs text-theme-muted">
+          <span>
+            Page {view.page} of {Math.ceil(view.total / view.pageSize)}
+          </span>
+          <div className="flex gap-1">
+            <button
+              onClick={() => view.setPage(Math.max(1, view.page - 1))}
+              disabled={view.page === 1}
+              aria-label="Previous page"
+              className="p-1.5 rounded-lg border border-theme-border text-brand-600 hover:bg-brand-50 disabled:opacity-30"
+            >
+              <ChevronLeft size={15} />
+            </button>
+            <button
+              onClick={() => view.setPage(view.page + 1)}
+              disabled={view.page * view.pageSize >= view.total}
+              aria-label="Next page"
+              className="p-1.5 rounded-lg border border-theme-border text-brand-600 hover:bg-brand-50 disabled:opacity-30"
+            >
+              <ChevronRight size={15} />
+            </button>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default function AdminItemDetail() {
   const { id, itemId } = useParams<{ id: string; itemId: string }>();
   const view = useAdminStoreInventory(id);
@@ -123,186 +356,13 @@ export default function AdminItemDetail() {
           <StoresPane stores={stores} current={view.store} onSelect={switchStore} />
 
           {/* Items */}
-          <section
-            aria-label="Items"
-            className="order-2 lg:order-none flex-1 min-w-0 flex flex-col bg-white min-h-0"
-          >
-            <div className="px-5 py-4 border-b border-theme-border space-y-3">
-              <div className="flex flex-wrap items-end justify-between gap-2">
-                <div className="min-w-0">
-                  <h1 className="text-xl font-bold text-black truncate">
-                    {categoryTitle}{' '}
-                    <span className="text-sm font-normal text-theme-muted">
-                      · {view.total.toLocaleString()} items
-                    </span>
-                  </h1>
-                </div>
-                {view.store && view.store.status !== 'active' && (
-                  <span className="inline-flex items-center gap-1.5 text-sm text-accent-600">
-                    <Eye size={15} />
-                    Read-only while suspended
-                  </span>
-                )}
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <label className="sr-only" htmlFor="detail-item-category">
-                  Category
-                </label>
-                <SelectIcon icon={TagIcon} className="max-w-full">
-                  <select
-                    id="detail-item-category"
-                    value={view.categoryId ?? ''}
-                    onChange={e =>
-                      view.setCategoryId(e.target.value === '' ? null : Number(e.target.value))
-                    }
-                    className={cn('h-9 max-w-full', FILTER_SELECT, 'pl-8')}
-                  >
-                    <option value="">Select Category</option>
-                    {view.categories.map(category => (
-                      <option key={category.id} value={category.id}>
-                        {category.name} ({category.item_count.toLocaleString()})
-                      </option>
-                    ))}
-                  </select>
-                </SelectIcon>
-                <label className="relative flex-[1_1_200px]">
-                  <span className="sr-only">Search items</span>
-                  <Search
-                    size={15}
-                    className="absolute left-3 top-1/2 -translate-y-1/2 text-theme-muted"
-                  />
-                  <input
-                    type="search"
-                    value={view.search}
-                    onChange={e => view.setSearch(e.target.value)}
-                    placeholder={`Search in ${categoryTitle}…`}
-                    className={cn('w-full h-9 pl-9 pr-3', FILTER_INPUT)}
-                  />
-                </label>
-                <label className="sr-only" htmlFor="detail-item-status">
-                  Item status
-                </label>
-                <SelectIcon
-                  icon={FilterIcon}
-                  iconOnly
-                  active={view.statusFilter !== 'all'}
-                  title={`Status: ${STATUS_LABELS[view.statusFilter]}`}
-                  className="w-9 h-9"
-                >
-                  <select
-                    id="detail-item-status"
-                    value={view.statusFilter}
-                    onChange={e => view.setStatusFilter(e.target.value as ItemStatusFilter)}
-                    className={ICON_ONLY_SELECT}
-                  >
-                    <option value="all">All status</option>
-                    <option value="Active">Active</option>
-                    <option value="Inactive">In-Active</option>
-                  </select>
-                </SelectIcon>
-                <label className="sr-only" htmlFor="detail-item-sort">
-                  Sort items
-                </label>
-                <SelectIcon
-                  icon={ArrowDownUpIcon}
-                  iconOnly
-                  active={view.sort !== 'recent'}
-                  title={`Sort: ${ITEM_SORT_LABELS[view.sort]}`}
-                  className="w-9 h-9"
-                >
-                  <select
-                    id="detail-item-sort"
-                    value={view.sort}
-                    onChange={e => view.setSort(e.target.value as ItemSort)}
-                    className={ICON_ONLY_SELECT}
-                  >
-                    {(Object.keys(ITEM_SORT_LABELS) as ItemSort[]).map(value => (
-                      <option key={value} value={value}>
-                        {ITEM_SORT_LABELS[value]}
-                      </option>
-                    ))}
-                  </select>
-                </SelectIcon>
-              </div>
-            </div>
-
-            <div className={cn('flex-1 overflow-y-auto', view.itemsLoading && 'opacity-60')}>
-              {view.itemsError ? (
-                <p className="p-8 text-center text-sm text-accent-600">{view.itemsError}</p>
-              ) : view.items.length === 0 ? (
-                <p className="p-8 text-center text-sm text-theme-muted">
-                  {view.itemsLoading ? 'Loading items...' : 'No items match.'}
-                </p>
-              ) : (
-                <ul>
-                  {view.items.map(item => {
-                    const selected = String(item.id) === itemId;
-                    return (
-                      <li key={item.id}>
-                        <Link
-                          to={`${storeHref}/items/${item.id}${categoryQuery}`}
-                          aria-current={selected ? 'page' : undefined}
-                          className={cn(
-                            'flex items-center gap-3.5 px-5 py-3 border-b border-theme-border/60 transition-colors',
-                            selected
-                              ? 'bg-brand-50 shadow-[inset_3px_0_0_var(--color-brand-400)]'
-                              : 'hover:bg-theme-subtle'
-                          )}
-                        >
-                          <ItemThumb src={item.image} />
-                          <span className="flex-1 min-w-0">
-                            <span className="block truncate text-sm font-semibold text-black">
-                              {item.item_name}
-                            </span>
-                            <span
-                              className={cn(
-                                'block font-mono text-xs',
-                                item.upc ? 'text-theme-muted' : 'text-accent-600'
-                              )}
-                            >
-                              {item.upc || 'No UPC'}
-                            </span>
-                          </span>
-                          <span className="flex flex-col items-end gap-1">
-                            <span className="font-mono text-sm text-black">
-                              {formatPrice(item.sale_price)}
-                            </span>
-                            <ItemStatusText status={item.status} />
-                          </span>
-                        </Link>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </div>
-
-            {view.total > view.pageSize && (
-              <div className="px-5 py-2.5 border-t border-theme-border flex items-center justify-between text-xs text-theme-muted">
-                <span>
-                  Page {view.page} of {Math.ceil(view.total / view.pageSize)}
-                </span>
-                <div className="flex gap-1">
-                  <button
-                    onClick={() => view.setPage(Math.max(1, view.page - 1))}
-                    disabled={view.page === 1}
-                    aria-label="Previous page"
-                    className="p-1.5 rounded-lg border border-theme-border text-brand-600 hover:bg-brand-50 disabled:opacity-30"
-                  >
-                    <ChevronLeft size={15} />
-                  </button>
-                  <button
-                    onClick={() => view.setPage(view.page + 1)}
-                    disabled={view.page * view.pageSize >= view.total}
-                    aria-label="Next page"
-                    className="p-1.5 rounded-lg border border-theme-border text-brand-600 hover:bg-brand-50 disabled:opacity-30"
-                  >
-                    <ChevronRight size={15} />
-                  </button>
-                </div>
-              </div>
-            )}
-          </section>
+          <ItemsPane
+            view={view}
+            storeHref={storeHref}
+            itemId={itemId}
+            categoryTitle={categoryTitle}
+            categoryQuery={categoryQuery}
+          />
 
           {/* Item detail */}
           <aside
@@ -354,26 +414,13 @@ export default function AdminItemDetail() {
                   onCancel={() => setEditingItemId(null)}
                   onReload={detail.reload}
                 />
-              ) : itemId ? (
-                <>
-                  {savedFor === itemId && (
-                    <p
-                      role="status"
-                      className="mb-4 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-sm font-medium text-brand-700"
-                    >
-                      Changes saved and recorded in the store's activity log.
-                    </p>
-                  )}
-                  <ItemDetailBody
-                    detail={detail}
-                    storeName={view.store?.name}
-                    loading={detail.loading}
-                  />
-                </>
               ) : (
-                <p className="text-sm text-theme-muted">
-                  Select an item from the list to see its details.
-                </p>
+                <SelectedItemDetail
+                  itemId={itemId}
+                  savedFor={savedFor}
+                  detail={detail}
+                  view={view}
+                />
               )}
             </div>
           </aside>
@@ -478,6 +525,27 @@ function ItemThumb({ src, large = false }: Readonly<{ src?: string; large?: bool
   );
 }
 
+function itemFacts(
+  item: NonNullable<ReturnType<typeof useAdminItemDetail>['item']>
+): Array<[string, ReactNode]> {
+  return [
+    ['Category', item.category_name || '—'],
+    ['Status', <ItemStatusText key="status" status={item.status} />],
+    ['Unit', item.unit || '—'],
+    ['Quantity', item.quantity ?? '—'],
+    ['Sale price', formatPrice(item.sale_price)],
+    ['Tax', item.tax_percent != null ? `${item.tax_percent}%` : '—'],
+    ['Captured', item.created_at ? parseServerDate(item.created_at).toLocaleString() : '—'],
+    ['Updated', item.updated_at ? parseServerDate(item.updated_at).toLocaleString() : '—'],
+  ];
+}
+
+function crossStoreHeading(upc: string | null | undefined, otherStoreCount: number): string {
+  if (!upc?.trim()) return 'Not matched across stores';
+  if (otherStoreCount === 0) return 'No other store carries this UPC';
+  return `Same UPC in ${otherStoreCount} other ${otherStoreCount === 1 ? 'store' : 'stores'}`;
+}
+
 function ItemDetailBody({
   detail,
   storeName,
@@ -493,16 +561,7 @@ function ItemDetailBody({
     return <p className="text-sm text-theme-muted">{loading ? 'Loading item...' : ''}</p>;
   }
 
-  const facts: Array<[string, ReactNode]> = [
-    ['Category', item.category_name || '—'],
-    ['Status', <ItemStatusText key="status" status={item.status} />],
-    ['Unit', item.unit || '—'],
-    ['Quantity', item.quantity ?? '—'],
-    ['Sale price', formatPrice(item.sale_price)],
-    ['Tax', item.tax_percent != null ? `${item.tax_percent}%` : '—'],
-    ['Captured', item.created_at ? parseServerDate(item.created_at).toLocaleString() : '—'],
-    ['Updated', item.updated_at ? parseServerDate(item.updated_at).toLocaleString() : '—'],
-  ];
+  const facts = itemFacts(item);
 
   return (
     <div className={cn('space-y-5', loading && 'opacity-60')}>
@@ -531,11 +590,7 @@ function ItemDetailBody({
 
       <div className="rounded-xl border border-theme-border overflow-hidden">
         <p className="px-3.5 py-2.5 bg-theme-subtle border-b border-theme-border text-sm font-semibold text-black">
-          {!item.upc?.trim()
-            ? 'Not matched across stores'
-            : otherStores.length === 0
-              ? 'No other store carries this UPC'
-              : `Same UPC in ${otherStores.length} other ${otherStores.length === 1 ? 'store' : 'stores'}`}
+          {crossStoreHeading(item.upc, otherStores.length)}
         </p>
         {!item.upc?.trim() ? (
           <p className="px-3.5 py-2.5 text-sm text-theme-muted">

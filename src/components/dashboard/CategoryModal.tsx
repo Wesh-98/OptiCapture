@@ -1,5 +1,5 @@
 import { X } from 'lucide-react';
-import { cn } from '../../lib/utils';
+import { cn, focusOnMount } from '../../lib/utils';
 import type { Category } from './types';
 import { IMAGE_ICONS, LUCIDE_ICON_PICKS, iconMap, colorMap } from './types';
 
@@ -25,6 +25,7 @@ export function CategoryModal({
   onClose,
 }: Readonly<Props>) {
   if (!isOpen) return null;
+  const saveLabel = editingCategory ? 'Save Changes' : 'Add Category';
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg">
@@ -52,12 +53,12 @@ export function CategoryModal({
               onChange={e => onChange({ ...catForm, name: e.target.value })}
               className="w-full px-4 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-navy-700 focus:border-transparent"
               placeholder="e.g. Beverages"
-              autoFocus
+              ref={focusOnMount}
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">Icon</label>
+            <p className="block text-sm font-medium text-slate-700 mb-2">Icon</p>
             <p className="text-xs text-slate-400 mb-2 font-medium uppercase tracking-wide">
               Image Icons
             </p>
@@ -128,7 +129,7 @@ export function CategoryModal({
             disabled={catSaving}
             className="px-5 py-2 rounded-xl text-sm font-semibold text-white disabled:opacity-60 transition-colors bg-brand-600 hover:bg-brand-700"
           >
-            {catSaving ? 'Saving...' : editingCategory ? 'Save Changes' : 'Add Category'}
+            {catSaving ? 'Saving...' : saveLabel}
           </button>
         </div>
       </div>

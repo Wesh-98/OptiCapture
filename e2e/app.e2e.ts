@@ -130,7 +130,8 @@ test('shows camera permission failures once and retries only when requested', as
     )
     .toBe(1);
 
-  await page.waitForTimeout(500);
+  // Proves a negative (no second attempt), so there is no condition to wait on.
+  await page.waitForTimeout(500); // NOSONAR
   expect(
     await page.evaluate(
       () => (window as typeof window & { __cameraAttempts?: number }).__cameraAttempts ?? 0

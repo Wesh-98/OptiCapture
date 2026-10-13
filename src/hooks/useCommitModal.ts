@@ -45,18 +45,35 @@ export function getBulkCategoryTargetIds(
   return eligibleItems.filter(item => targetIds.has(item.id)).map(item => item.id);
 }
 
+const COMMIT_STATUS_MESSAGES: Record<string, string> = {
+  completed: 'Session committed to inventory. View only.',
+  draft: 'Draft mode. Resume scanning when you are ready.',
+};
+
+interface CommitModalDeps {
+  sessionId: string | null;
+  selectedIds: Set<number>;
+  items: SessionItem[];
+  isBusyRef: MutableRefObject<boolean>;
+  lastPollCursorRef: MutableRefObject<{ updatedAt: string; id: number } | null>;
+  refreshSession: (fullRefresh?: boolean) => Promise<void>;
+  setUiStatus: (s: UiStatus) => void;
+  setStatusMessage: (m: string) => void;
+  addToast: (type: 'success' | 'error' | 'warning', message: string) => void;
+}
+
 // Opens commit modal, fetches categories, handles per-item category assignments and commit.
-export function useCommitModal(
-  sessionId: string | null,
-  selectedIds: Set<number>,
-  items: SessionItem[],
-  isBusyRef: MutableRefObject<boolean>,
-  lastPollCursorRef: MutableRefObject<{ updatedAt: string; id: number } | null>,
-  refreshSession: (fullRefresh?: boolean) => Promise<void>,
-  setUiStatus: (s: UiStatus) => void,
-  setStatusMessage: (m: string) => void,
-  addToast: (type: 'success' | 'error' | 'warning', message: string) => void
-) {
+export function useCommitModal({
+  sessionId,
+  selectedIds,
+  items,
+  isBusyRef,
+  lastPollCursorRef,
+  refreshSession,
+  setUiStatus,
+  setStatusMessage,
+  addToast,
+}: CommitModalDeps) {
   const [showCommitModal, setShowCommitModal] = useState(false);
   const [categories, setCategories] = useState<Category[]>([]);
   const [categoriesLoading, setCategoriesLoading] = useState(false);
@@ -143,11 +160,8 @@ export function useCommitModal(
       await refreshSession(true);
       setUiStatus('ready');
       setStatusMessage(
-        result.status === 'completed'
-          ? 'Session committed to inventory. View only.'
-          : result.status === 'draft'
-            ? 'Draft mode. Resume scanning when you are ready.'
-            : 'Session ready. Scan the QR code with your phone.'
+        COMMIT_STATUS_MESSAGES[result.status as string] ??
+          'Session ready. Scan the QR code with your phone.'
       );
     } catch {
       setUiStatus('error');

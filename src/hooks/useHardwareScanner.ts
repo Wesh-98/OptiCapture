@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { UiStatus } from '../components/scan/types';
+import type { SessionStatus, UiStatus } from '../components/scan/types';
 
 export type HardwareScanInputMode = 'mobile' | 'hardware';
 type FetchInit = Parameters<typeof globalThis.fetch>[1];
@@ -84,7 +84,7 @@ export function readStoredHardwareScanInputMode(value: string | null): HardwareS
 export function canSubmitHardwareScan(
   sessionId: string | null,
   otp: string | null,
-  sessionStatus: 'active' | 'draft' | 'completed' | null
+  sessionStatus: SessionStatus | null
 ): boolean {
   return Boolean(sessionId && otp) && sessionStatus === 'active';
 }
@@ -93,7 +93,7 @@ export function shouldListenForHardwareScanner(
   scanInputMode: HardwareScanInputMode,
   sessionId: string | null,
   otp: string | null,
-  sessionStatus: 'active' | 'draft' | 'completed' | null,
+  sessionStatus: SessionStatus | null,
   uiStatus: UiStatus
 ): boolean {
   return (
@@ -138,7 +138,7 @@ export function getHardwareScanToast(
 export function useHardwareScanner(
   sessionId: string | null,
   otp: string | null,
-  sessionStatus: 'active' | 'draft' | 'completed' | null,
+  sessionStatus: SessionStatus | null,
   uiStatus: UiStatus,
   addToast: (type: 'success' | 'error' | 'warning', message: string) => void
 ) {

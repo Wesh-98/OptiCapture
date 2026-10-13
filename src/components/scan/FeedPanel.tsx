@@ -9,8 +9,8 @@ import {
   Smartphone,
   ScanBarcode,
 } from 'lucide-react';
-import { cn, formatServerTime } from '../../lib/utils';
-import type { SessionItem, UiStatus } from './types';
+import { cn, focusOnMount, formatServerTime } from '../../lib/utils';
+import type { SessionItem, SessionStatus, UiStatus } from './types';
 
 function StatusBadge({ item }: Readonly<{ item: SessionItem }>) {
   if (item.exists_in_inventory === 1) {
@@ -44,16 +44,27 @@ function StatusBadge({ item }: Readonly<{ item: SessionItem }>) {
   );
 }
 
+const SOURCE_LABELS: Record<string, string> = {
+  open_food_facts: 'OFF',
+  upcitemdb: 'UPC DB',
+  inventory: 'Inventory',
+};
+
+const STATUS_PILL_CLASSES: Partial<Record<UiStatus, string>> = {
+  error: 'bg-red-50 text-red-600',
+  committing: 'bg-amber-50 text-amber-700',
+  ready: 'bg-emerald-50 text-emerald-700',
+};
+
+function feedCardBorder(selected: boolean, existsInInventory: boolean): string {
+  if (!selected) return 'border-slate-300';
+  if (existsInInventory) return 'border-slate-400 shadow-sm';
+  return 'border-emerald-400 shadow-sm shadow-emerald-50 ring-1 ring-emerald-100';
+}
+
 function SourcePill({ source }: Readonly<{ source: string | null }>) {
   if (!source || source === 'scan_only') return null;
-  const label =
-    source === 'open_food_facts'
-      ? 'OFF'
-      : source === 'upcitemdb'
-        ? 'UPC DB'
-        : source === 'inventory'
-          ? 'Inventory'
-          : source;
+  const label = SOURCE_LABELS[source] ?? source;
   return (
     <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-medium bg-slate-100 text-slate-500 border border-slate-200">
       {label}
@@ -67,7 +78,7 @@ interface Props {
   selectedIds: Set<number>;
   uiStatus: UiStatus;
   statusMessage: string;
-  sessionStatus: 'active' | 'draft' | 'completed' | null;
+  sessionStatus: SessionStatus | null;
   sessionLabel: string | null;
   pollError: string | null;
   draftAlert: { message: string; visible: boolean };
@@ -185,7 +196,7 @@ export function FeedPanel({
                     Name this draft (optional)
                   </p>
                   <input
-                    autoFocus
+                    ref={focusOnMount}
                     type="text"
                     value={draftNameInput}
                     maxLength={100}
@@ -234,13 +245,7 @@ export function FeedPanel({
         <span
           className={cn(
             'px-2.5 py-1 rounded-full font-medium text-xs',
-            uiStatus === 'error'
-              ? 'bg-red-50 text-red-600'
-              : uiStatus === 'committing'
-                ? 'bg-amber-50 text-amber-700'
-                : uiStatus === 'ready'
-                  ? 'bg-emerald-50 text-emerald-700'
-                  : 'bg-slate-100 text-slate-600'
+            STATUS_PILL_CLASSES[uiStatus] ?? 'bg-slate-100 text-slate-600'
           )}
         >
           {statusMessage}
@@ -426,11 +431,7 @@ export function FeedPanel({
                   layout
                   className={cn(
                     'bg-white rounded-xl border transition-all',
-                    selected && item.exists_in_inventory
-                      ? 'border-slate-400 shadow-sm'
-                      : selected
-                        ? 'border-emerald-400 shadow-sm shadow-emerald-50 ring-1 ring-emerald-100'
-                        : 'border-slate-300'
+                    feedCardBorder(selected, Boolean(item.exists_in_inventory))
                   )}
                 >
                   <div className="flex items-start gap-2 p-2">

@@ -24,7 +24,7 @@ export function ItemFormFields({
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
       <div className="col-span-full">
-        <label className="block text-sm font-medium text-slate-700 mb-2">Item Image</label>
+        <p className="block text-sm font-medium text-slate-700 mb-2">Item Image</p>
         <div className="flex items-center gap-4">
           <div className="w-24 h-24 rounded-xl bg-slate-100 border-2 border-dashed border-slate-300 flex items-center justify-center overflow-hidden">
             {data.image ? (

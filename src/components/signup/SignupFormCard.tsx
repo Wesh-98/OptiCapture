@@ -32,7 +32,7 @@ export function SignupFormCard({
   onPhoneChange,
   onSubmit,
   onZipcodeChange,
-}: SignupFormCardProps) {
+}: Readonly<SignupFormCardProps>) {
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
       <div className="mb-6">
@@ -47,7 +47,7 @@ export function SignupFormCard({
             className="w-4 h-4"
             alt=""
           />
-          Signed in with Google, fill in store details to finish setup
+          <span>Signed in with Google, fill in store details to finish setup</span>
         </div>
       )}
 
@@ -70,7 +70,7 @@ export function SignupFormCard({
               className="w-5 h-5"
               alt="Google"
             />
-            Sign up with Google
+            <span>Sign up with Google</span>
           </button>
 
           <div className="relative flex items-center gap-3 mb-5">

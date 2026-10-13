@@ -12,7 +12,7 @@ import {
   Package,
 } from 'lucide-react';
 import { cn, parseServerDate } from '../../lib/utils';
-import { StoreRow } from './types';
+import { StoreRow, type StoreStatusFilter } from './types';
 
 interface Props {
   stores: StoreRow[];
@@ -20,11 +20,11 @@ interface Props {
   isLoading: boolean;
   togglingId: number | null;
   storeSearch: string;
-  statusFilter: 'all' | 'active' | 'suspended';
+  statusFilter: StoreStatusFilter;
   joinedSort: 'newest' | 'oldest';
   prefersReducedMotion: boolean | null;
   onSearch: (v: string) => void;
-  onStatusFilter: (v: 'all' | 'active' | 'suspended') => void;
+  onStatusFilter: (v: StoreStatusFilter) => void;
   onJoinedSort: (v: 'newest' | 'oldest') => void;
   onRefresh: () => void;
   onInventory: (store: StoreRow) => void;
@@ -36,6 +36,13 @@ interface Props {
   onToggleStore: (id: number) => void;
   onToggleAll: () => void;
   onClearSelection: () => void;
+}
+
+function storeTableEmptyMessage(isLoading: boolean, total: number, shown: number): string | null {
+  if (isLoading) return 'Loading stores...';
+  if (total === 0) return 'No stores registered yet.';
+  if (shown === 0) return 'No stores match your filters.';
+  return null;
 }
 
 export function StoreTable({
@@ -60,7 +67,8 @@ export function StoreTable({
   onToggleStore,
   onToggleAll,
   onClearSelection,
-}: Props) {
+}: Readonly<Props>) {
+  const emptyMessage = storeTableEmptyMessage(isLoading, stores.length, filteredStores.length);
   // Select All covers the stores the filters currently show.
   const selectedVisible = filteredStores.filter(store => selectedIds.has(store.id)).length;
   const allVisibleSelected = filteredStores.length > 0 && selectedVisible === filteredStores.length;
@@ -110,7 +118,7 @@ export function StoreTable({
           </div>
           <select
             value={statusFilter}
-            onChange={e => onStatusFilter(e.target.value as 'all' | 'active' | 'suspended')}
+            onChange={e => onStatusFilter(e.target.value as StoreStatusFilter)}
             className="px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-brand-400"
           >
             <option value="all">All Status</option>
@@ -136,12 +144,8 @@ export function StoreTable({
       </div>
 
       {/* Body */}
-      {isLoading ? (
-        <div className="p-12 text-center text-slate-400">Loading stores...</div>
-      ) : stores.length === 0 ? (
-        <div className="p-12 text-center text-slate-400">No stores registered yet.</div>
-      ) : filteredStores.length === 0 ? (
-        <div className="p-12 text-center text-slate-400">No stores match your filters.</div>
+      {emptyMessage ? (
+        <div className="p-12 text-center text-slate-400">{emptyMessage}</div>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-left">
@@ -284,13 +288,9 @@ export function StoreTable({
                           )}
                         >
                           {store.status === 'active' ? (
-                            <>
-                              <ShieldOff size={14} />
-                            </>
+                            <ShieldOff size={14} />
                           ) : (
-                            <>
-                              <ShieldCheck size={14} />
-                            </>
+                            <ShieldCheck size={14} />
                           )}
                         </button>
                         <button

@@ -51,17 +51,17 @@ export default function Scan() {
 
   const edit = useEditItem(session.sessionId, session.setItems, session.setSelectedIds, addToast);
 
-  const commit = useCommitModal(
-    session.sessionId,
-    session.selectedIds,
-    session.items,
-    session.isBusyRef,
-    session.lastPollCursorRef,
-    session.fetchSessionItems,
-    session.setUiStatus,
-    session.setStatusMessage,
-    addToast
-  );
+  const commit = useCommitModal({
+    sessionId: session.sessionId,
+    selectedIds: session.selectedIds,
+    items: session.items,
+    isBusyRef: session.isBusyRef,
+    lastPollCursorRef: session.lastPollCursorRef,
+    refreshSession: session.fetchSessionItems,
+    setUiStatus: session.setUiStatus,
+    setStatusMessage: session.setStatusMessage,
+    addToast,
+  });
 
   const mobileUrl = useMemo(() => {
     if (!session.sessionId || !session.otp) return '';
@@ -75,7 +75,6 @@ export default function Scan() {
     <div className="space-y-6">
       {draft.showDraftPopover && (
         <div
-          role="presentation"
           aria-hidden="true"
           className="fixed inset-0 z-20"
           onClick={() => draft.setShowDraftPopover(false)}

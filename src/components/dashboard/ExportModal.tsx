@@ -41,16 +41,15 @@ export function ExportModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div
-        role="presentation"
         aria-hidden="true"
         className="absolute inset-0 bg-black/40 backdrop-blur-sm"
         onClick={onClose}
       />
-      <div
-        role="dialog"
+      <dialog
+        open
         aria-modal="true"
         aria-labelledby="export-modal-title"
-        className="relative bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm mx-4"
+        className="relative bg-white text-inherit rounded-2xl shadow-2xl p-6 w-full max-w-sm mx-4"
       >
         <h3 id="export-modal-title" className="text-lg font-bold text-navy-900 mb-1">
           Export Inventory
@@ -99,7 +98,7 @@ export function ExportModal({
             )}
           </button>
         </div>
-      </div>
+      </dialog>
     </div>
   );
 }

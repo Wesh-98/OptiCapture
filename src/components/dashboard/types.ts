@@ -300,3 +300,5 @@ export const emptyForm: ItemForm = {
   description: '',
   tag_names: '',
 };
+
+export type CategoryStatusFilter = '' | 'Active' | 'Inactive';

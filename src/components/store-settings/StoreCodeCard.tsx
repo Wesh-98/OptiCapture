@@ -14,7 +14,7 @@ export function StoreCodeCard({
   storeCode,
   onCopy,
   onToggleVisibility,
-}: StoreCodeCardProps) {
+}: Readonly<StoreCodeCardProps>) {
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
       <div className="flex items-center gap-3 mb-4">

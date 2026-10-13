@@ -13,7 +13,7 @@ function isSameOriginApiRequest(url: URL): boolean {
 function buildPatchedRequest(
   input: FetchInput | URL,
   init?: FetchInit
-): { input: FetchInput | URL; init?: FetchInit } {
+): { input: FetchInput | URL; init: FetchInit } {
   if (!isBrowser()) {
     return { input, init };
   }
@@ -23,8 +23,7 @@ function buildPatchedRequest(
     return { input, init };
   }
 
-  const rawUrl =
-    input instanceof Request ? input.url : input instanceof URL ? input.toString() : String(input);
+  const rawUrl = input instanceof Request ? input.url : String(input);
 
   let url: URL;
   try {

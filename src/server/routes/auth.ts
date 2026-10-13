@@ -12,16 +12,20 @@ import {
 } from '../middleware.js';
 import { revokeToken, pendingOAuth, pendingOAuthSet, DUMMY_HASH, BCRYPT_COST } from '../cache.js';
 import {
-  saveBase64Image,
   generateStoreCode,
   normalizeUsername,
   parseSqliteUtc,
   toSqliteUtc,
   UnsupportedImageTypeError,
 } from '../helpers.js';
+import {
+  saveStoreDetails,
+  storeContactFormatError,
+  storeFieldLengthError,
+  storeNameError,
+} from '../storeDetails.js';
 import type { AuthRequest } from '../types.js';
 import { logError } from '../logger.js';
-import { discardUploads } from '../uploads.js';
 
 export const authRouter = express.Router();
 
@@ -34,6 +38,25 @@ function hasOnlyStringFields<T extends string>(
   fields: readonly T[]
 ): body is Record<string, unknown> & Partial<Record<T, string>> {
   return fields.every(field => body[field] === undefined || typeof body[field] === 'string');
+}
+
+function registrationInputError(input: {
+  storeName: string | undefined;
+  username: string;
+  password: string | undefined;
+  hasOAuthKey: boolean;
+  contact: Parameters<typeof storeFieldLengthError>[0];
+}): string | null {
+  const { storeName, username, password, contact } = input;
+  if (!storeName || !username) return 'Store name and username are required';
+  if (storeName.length > 100) return 'Store name must be 100 characters or fewer';
+  if (username.length > 50) return 'Username must be 50 characters or fewer';
+  const lengthError = storeFieldLengthError(contact);
+  if (lengthError) return lengthError;
+  if (!password && !input.hasOAuthKey) return 'Password is required';
+  if (password && (password.length < 8 || !/[A-Z]/.test(password) || !/\d/.test(password)))
+    return 'Password must be at least 8 characters with 1 uppercase letter and 1 number';
+  return storeContactFormatError(contact);
 }
 
 function writeAuthLog(
@@ -126,6 +149,92 @@ function issueJwt(
   return token;
 }
 
+type LoginLookup =
+  | { failure: { status: number; error: string } }
+  | {
+      user: any;
+      passwordMatch: boolean;
+      role: string | null;
+      storeId: number | null;
+      storeName: string | null;
+    };
+
+function loginFailure(status: number, error: string): LoginLookup {
+  return { failure: { status, error } };
+}
+
+// Both lookups compare against DUMMY_HASH when no account matches, so a missing username
+// takes as long to reject as a wrong password.
+
+async function findStoreLogin(
+  storeCode: string,
+  username: string,
+  password: string
+): Promise<LoginLookup> {
+  const store = db
+    .prepare('SELECT id, name, status FROM stores WHERE store_code = ?')
+    .get(storeCode) as any;
+  if (!store) return loginFailure(401, 'Invalid store code');
+  if (store.status === 'suspended') return loginFailure(403, 'Store account suspended');
+
+  const matchingUsers = db
+    .prepare(
+      `
+        SELECT u.*, us.role AS access_role
+        FROM user_stores us
+        JOIN users u ON u.id = us.user_id
+        WHERE lower(u.username) = ? AND us.store_id = ?
+        ORDER BY CASE WHEN u.store_id = us.store_id THEN 0 ELSE 1 END, u.id ASC
+      `
+    )
+    .all(username, store.id) as any[];
+
+  let user = matchingUsers[0] ?? null;
+  let passwordMatch: boolean;
+  if (matchingUsers.length > 1) {
+    const passwordChecks = await Promise.all(
+      matchingUsers.map(candidate => bcrypt.compare(password, candidate.password ?? DUMMY_HASH))
+    );
+    const matchedUsers = matchingUsers.filter((_, index) => passwordChecks[index]);
+    if (matchedUsers.length > 1) {
+      return loginFailure(
+        409,
+        'Multiple accounts match this username for the selected store. Contact support.'
+      );
+    }
+    // When multiple accessible accounts share the same username for a store,
+    // a bad password attempt cannot be attributed safely to a single user.
+    if (matchedUsers.length === 0) return loginFailure(401, 'Invalid credentials');
+    user = matchedUsers[0];
+    passwordMatch = true;
+  } else {
+    passwordMatch = await bcrypt.compare(password, user?.password ?? DUMMY_HASH);
+  }
+
+  return {
+    user,
+    passwordMatch,
+    role: user?.access_role ?? user?.role ?? null,
+    storeId: store.id,
+    storeName: store.name,
+  };
+}
+
+// No store code — superadmin only
+async function findSuperadminLogin(username: string, password: string): Promise<LoginLookup> {
+  const user = db
+    .prepare("SELECT * FROM users WHERE lower(username) = ? AND role = 'superadmin'")
+    .get(username) as any;
+  const passwordMatch = await bcrypt.compare(password, user?.password ?? DUMMY_HASH);
+  return {
+    user,
+    passwordMatch,
+    role: user?.role ?? null,
+    storeId: user?.store_id ?? null,
+    storeName: user?.store_name ?? null,
+  };
+}
+
 authRouter.post(
   '/login',
   authLimiter,
@@ -146,77 +255,16 @@ authRouter.post(
       return res.status(400).json({ error: 'Store Code Required' });
     }
 
-    let user: any;
-    let passwordMatch: boolean;
-    let loginRole: string | null = null;
-    let loginStoreId: number | null = null;
-    let loginStoreName: string | null = null;
-
-    if (store_code) {
-      const store = db
-        .prepare('SELECT id, name, status FROM stores WHERE store_code = ?')
-        .get(store_code) as any;
-      if (!store) return res.status(401).json({ error: 'Invalid store code' });
-      if (store.status === 'suspended') {
-        return res.status(403).json({ error: 'Store account suspended' });
-      }
-
-      const matchingUsers = db
-        .prepare(
-          `
-        SELECT u.*, us.role AS access_role
-        FROM user_stores us
-        JOIN users u ON u.id = us.user_id
-        WHERE lower(u.username) = ? AND us.store_id = ?
-        ORDER BY CASE WHEN u.store_id = us.store_id THEN 0 ELSE 1 END, u.id ASC
-      `
-        )
-        .all(normalizedUsername, store.id) as any[];
-
-      if (matchingUsers.length > 1) {
-        const matchedUsers: any[] = [];
-        for (const candidate of matchingUsers) {
-          const matchesPassword = await bcrypt.compare(password, candidate.password ?? DUMMY_HASH);
-          if (!matchesPassword) continue;
-          matchedUsers.push(candidate);
-        }
-
-        if (matchedUsers.length > 1) {
-          return res.status(409).json({
-            error: 'Multiple accounts match this username for the selected store. Contact support.',
-          });
-        }
-
-        if (matchedUsers.length === 1) {
-          user = matchedUsers[0];
-          passwordMatch = true;
-        } else {
-          // When multiple accessible accounts share the same username for a store,
-          // a bad password attempt cannot be attributed safely to a single user.
-          return res.status(401).json({ error: 'Invalid credentials' });
-        }
-      } else {
-        user = matchingUsers[0] ?? null;
-        passwordMatch = await bcrypt.compare(password, user?.password ?? DUMMY_HASH);
-      }
-
-      if (user) {
-        loginRole = user.access_role ?? user.role;
-        loginStoreId = store.id;
-        loginStoreName = store.name;
-      }
-    } else {
-      // No store code — superadmin only
-      user = db
-        .prepare("SELECT * FROM users WHERE lower(username) = ? AND role = 'superadmin'")
-        .get(normalizedUsername);
-      passwordMatch = await bcrypt.compare(password, user?.password ?? DUMMY_HASH);
-      if (user) {
-        loginRole = user.role;
-        loginStoreId = user.store_id;
-        loginStoreName = user.store_name;
-      }
+    const lookup = store_code
+      ? await findStoreLogin(store_code, normalizedUsername, password)
+      : await findSuperadminLogin(normalizedUsername, password);
+    if ('failure' in lookup) {
+      return res.status(lookup.failure.status).json({ error: lookup.failure.error });
     }
+    const { user, passwordMatch } = lookup;
+    const loginRole = lookup.role;
+    const loginStoreId = lookup.storeId;
+    const loginStoreName = lookup.storeName;
 
     if (!user) {
       return res.status(401).json({ error: 'Invalid credentials' });
@@ -224,7 +272,7 @@ authRouter.post(
 
     // Check if account is locked. locked_until is stored UTC; a malformed value parses to
     // NaN, which is treated as not locked.
-    const lockedUntilMs = user.locked_until ? parseSqliteUtc(user.locked_until) : NaN;
+    const lockedUntilMs = user.locked_until ? parseSqliteUtc(user.locked_until) : Number.NaN;
     if (!Number.isNaN(lockedUntilMs) && lockedUntilMs > Date.now()) {
       const minutesLeft = Math.ceil((lockedUntilMs - Date.now()) / 60000);
       return res
@@ -411,29 +459,14 @@ authRouter.post(
       oauth_key,
     } = req.body;
     const normalizedUsername = normalizeUsername(username);
-    if (!store_name || !normalizedUsername)
-      return res.status(400).json({ error: 'Store name and username are required' });
-    if (store_name.length > 100)
-      return res.status(400).json({ error: 'Store name must be 100 characters or fewer' });
-    if (normalizedUsername.length > 50)
-      return res.status(400).json({ error: 'Username must be 50 characters or fewer' });
-    if (street && street.length > 200)
-      return res.status(400).json({ error: 'Street address must be 200 characters or fewer' });
-    if (city && city.length > 100)
-      return res.status(400).json({ error: 'City/Town must be 100 characters or fewer' });
-    if (email && email.length > 200)
-      return res.status(400).json({ error: 'Email must be 200 characters or fewer' });
-    if (!password && !oauth_key) return res.status(400).json({ error: 'Password is required' });
-    if (password && (password.length < 8 || !/[A-Z]/.test(password) || !/\d/.test(password)))
-      return res.status(400).json({
-        error: 'Password must be at least 8 characters with 1 uppercase letter and 1 number',
-      });
-    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
-      return res.status(400).json({ error: 'Invalid email address' });
-    if (phone && !/^\d{10}$/.test(phone.replaceAll(/\D/g, '')))
-      return res.status(400).json({ error: 'Phone must be 10 digits' });
-    if (zipcode && !/^\d{5}(-\d{4})?$/.test(zipcode))
-      return res.status(400).json({ error: 'Zipcode format: 12345 or 12345-6789' });
+    const inputError = registrationInputError({
+      storeName: store_name,
+      username: normalizedUsername,
+      password,
+      hasOAuthKey: Boolean(oauth_key),
+      contact: { street, city, zipcode, phone, email },
+    });
+    if (inputError) return res.status(400).json({ error: inputError });
 
     // Username uniqueness is now store-scoped (UNIQUE(username, store_id)); new stores always get a fresh store_id so no pre-check needed
 
@@ -526,13 +559,11 @@ authRouter.post(
           redirect: '/',
         });
       }
-      res
-        .status(201)
-        .json({
-          message: 'Store registered successfully',
-          store_id: storeId,
-          store_code: storeCode,
-        });
+      res.status(201).json({
+        message: 'Store registered successfully',
+        store_id: storeId,
+        store_code: storeCode,
+      });
     } catch (err: any) {
       logError('auth:register', err);
       res.status(500).json({ error: 'An internal error occurred' });
@@ -687,55 +718,18 @@ authRouter.put('/store/settings', authenticateToken, requireOwner, (req: AuthReq
     return res.status(400).json({ error: 'Store fields must be strings' });
   }
   const { name, street, city, zipcode, state, phone, email, logo } = req.body;
-  if (!name?.trim()) return res.status(400).json({ error: 'Store name is required' });
-  if (name.length > 100)
-    return res.status(400).json({ error: 'Store name must be 100 characters or fewer' });
-  if (street && street.length > 200)
-    return res.status(400).json({ error: 'Street address must be 200 characters or fewer' });
-  if (city && city.length > 100)
-    return res.status(400).json({ error: 'City/Town must be 100 characters or fewer' });
-  if (email && email.length > 200)
-    return res.status(400).json({ error: 'Email must be 200 characters or fewer' });
-  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
-    return res.status(400).json({ error: 'Invalid email address' });
-  if (phone && !/^\d{10}$/.test(phone.replaceAll(/\D/g, '')))
-    return res.status(400).json({ error: 'Phone must be 10 digits' });
-  if (zipcode && !/^\d{5}(-\d{4})?$/.test(zipcode))
-    return res.status(400).json({ error: 'Zipcode format: 12345 or 12345-6789' });
+  const details = { name: name ?? '', street, city, zipcode, state, phone, email };
+  const detailsError =
+    storeNameError(name) ?? storeFieldLengthError(details) ?? storeContactFormatError(details);
+  if (detailsError) return res.status(400).json({ error: detailsError });
   try {
-    const previousLogo = (
-      db.prepare('SELECT logo FROM stores WHERE id = ?').get(req.user.store_id) as
-        | { logo: string | null }
-        | undefined
-    )?.logo;
-    // An omitted logo keeps the current one; an empty string clears it.
-    const savedLogo = logo === undefined ? undefined : logo ? saveBase64Image(logo) : null;
-    db.prepare(
-      `UPDATE stores SET name = ?, street = ?, city = ?, zipcode = ?, state = ?, phone = ?, email = ?${
-        savedLogo === undefined ? '' : ', logo = ?'
-      } WHERE id = ?`
-    ).run(
-      name.trim(),
-      street || null,
-      city || null,
-      zipcode || null,
-      state || null,
-      phone || null,
-      email || null,
-      ...(savedLogo === undefined ? [] : [savedLogo]),
-      req.user.store_id
-    );
-    db.prepare('UPDATE users SET store_name = ? WHERE store_id = ?').run(
-      name.trim(),
-      req.user.store_id
-    );
+    saveStoreDetails(req.user.store_id, details, logo);
     writeAuthLog(
       'UPDATE',
-      `Updated store settings for "${name.trim()}"`,
+      `Updated store settings for "${details.name.trim()}"`,
       req.user.id,
       req.user.store_id
     );
-    if (savedLogo !== undefined) discardUploads([previousLogo]);
 
     const updatedStore = db
       .prepare(

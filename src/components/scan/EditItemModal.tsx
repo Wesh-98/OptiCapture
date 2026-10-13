@@ -166,9 +166,7 @@ export function EditItemModal({
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">
-                  Product Image
-                </label>
+                <p className="block text-sm font-medium text-slate-700 mb-1">Product Image</p>
                 {editItem.image ? (
                   <div className="flex items-center gap-3">
                     <img

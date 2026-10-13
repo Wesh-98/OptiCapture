@@ -18,7 +18,7 @@ import path from 'node:path';
 
 import { db } from './db.js';
 import { apiLimiter, asyncRoute } from './middleware.js';
-import { UPLOADS_DIR, getLocalIP, getTunnelUrl } from './helpers.js';
+import { UPLOADS_DIR, getLocalIP, getTunnelUrl, stripTrailingSlashes } from './helpers.js';
 import { authRouter } from './routes/auth.js';
 import { adminRouter } from './routes/admin.js';
 import { categoriesRouter } from './routes/categories.js';
@@ -50,7 +50,10 @@ async function readBodyWithLimit(response: Response, maxBytes: number): Promise<
     }
     chunks.push(value);
   }
-  return Buffer.concat(chunks.map(chunk => Buffer.from(chunk)), total);
+  return Buffer.concat(
+    chunks.map(chunk => Buffer.from(chunk)),
+    total
+  );
 }
 
 export function parseTrustProxy(value: string | undefined): string | number | boolean {
@@ -156,50 +159,57 @@ export function createApp() {
   // Fetches Drive thumbnails server-side so the browser never follows a
   // cross-origin redirect. Only alphanumeric Drive file IDs are accepted to
   // prevent SSRF — any other character causes an immediate 400.
-  app.get('/api/drive-image/:fileId', asyncRoute(async (req, res) => {
-    const { fileId } = req.params;
-    if (!/^[a-zA-Z0-9_-]+$/.test(fileId)) return res.status(400).end();
+  app.get(
+    '/api/drive-image/:fileId',
+    asyncRoute(async (req, res) => {
+      const { fileId } = req.params;
+      if (!/^[a-zA-Z0-9_-]+$/.test(fileId)) return res.status(400).end();
 
-    const candidateUrls = [
-      `https://drive.google.com/thumbnail?id=${fileId}&sz=w800`,
-      `https://drive.google.com/uc?export=view&id=${fileId}`,
-    ];
+      const candidateUrls = [
+        `https://drive.google.com/thumbnail?id=${fileId}&sz=w800`,
+        `https://drive.google.com/uc?export=view&id=${fileId}`,
+      ];
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8_000);
-    try {
-      for (const url of candidateUrls) {
-        const upstream = await fetch(url, {
-          headers: { Accept: 'image/*', 'User-Agent': 'OptiCapture/1.0' },
-          signal: controller.signal,
-        });
-        if (!upstream.ok) continue;
-        const contentType = upstream.headers.get('content-type') || '';
-        if (!['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/avif'].includes(contentType))
-          continue;
-        const buffer = await readBodyWithLimit(upstream, MAX_PROXIED_IMAGE_BYTES);
-        // 5 MB cap — prevents unexpectedly large Drive files (videos, huge TIFFs)
-        // from being fully buffered into memory before the response is sent.
-        if (!buffer) return res.status(413).end();
-        res.setHeader('Content-Type', contentType);
-        res.setHeader(
-          'Cache-Control',
-          upstream.headers.get('cache-control') || 'public, max-age=3600'
-        );
-        return res.send(buffer);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8_000);
+      try {
+        for (const url of candidateUrls) {
+          const upstream = await fetch(url, {
+            headers: { Accept: 'image/*', 'User-Agent': 'OptiCapture/1.0' },
+            signal: controller.signal,
+          });
+          if (!upstream.ok) continue;
+          const contentType = upstream.headers.get('content-type') || '';
+          if (
+            !['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/avif'].includes(
+              contentType
+            )
+          )
+            continue;
+          const buffer = await readBodyWithLimit(upstream, MAX_PROXIED_IMAGE_BYTES);
+          // 5 MB cap — prevents unexpectedly large Drive files (videos, huge TIFFs)
+          // from being fully buffered into memory before the response is sent.
+          if (!buffer) return res.status(413).end();
+          res.setHeader('Content-Type', contentType);
+          res.setHeader(
+            'Cache-Control',
+            upstream.headers.get('cache-control') || 'public, max-age=3600'
+          );
+          return res.send(buffer);
+        }
+        return res.status(404).end();
+      } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') {
+          logWarn('drive-image', 'Upstream image request timed out', { fileId });
+        } else {
+          logError('drive-image', error, 'Upstream image request failed', { fileId });
+        }
+        return res.status(502).end();
+      } finally {
+        clearTimeout(timeout);
       }
-      return res.status(404).end();
-    } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') {
-        logWarn('drive-image', 'Upstream image request timed out', { fileId });
-      } else {
-        logError('drive-image', error, 'Upstream image request failed', { fileId });
-      }
-      return res.status(502).end();
-    } finally {
-      clearTimeout(timeout);
-    }
-  }));
+    })
+  );
 
   // ── API routes ───────────────────────────────────────────────────────────────
   // apiLimiter applies to every /api/* request (2000 req / 15 min per IP).
@@ -219,7 +229,7 @@ export function createApp() {
   app.get('/api/server-info', (req, res) => {
     const protocol = (req.app.get('protocol') as string | undefined) || 'http';
     const port = Number.parseInt(process.env.PORT ?? '', 10) || 3000;
-    const publicBaseUrl = process.env.PUBLIC_BASE_URL?.trim().replace(/\/+$/, '') || null;
+    const publicBaseUrl = stripTrailingSlashes(process.env.PUBLIC_BASE_URL?.trim() ?? '') || null;
 
     if (publicBaseUrl) {
       // A deployed server's own address is a private one phones cannot reach; never expose it.

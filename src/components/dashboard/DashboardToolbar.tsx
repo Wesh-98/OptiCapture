@@ -1,13 +1,13 @@
 import { Search, ArrowLeft, Box, Layers } from 'lucide-react';
-import type { Category } from './types';
+import type { Category, CategoryStatusFilter } from './types';
 
 interface Props {
   viewMode: 'categories' | 'items';
   selectedCategory: Category | null;
   search: string;
-  statusFilter: '' | 'Active' | 'Inactive';
+  statusFilter: CategoryStatusFilter;
   onSearchChange: (v: string) => void;
-  onStatusFilterChange: (v: '' | 'Active' | 'Inactive') => void;
+  onStatusFilterChange: (v: CategoryStatusFilter) => void;
   onBack: () => void;
 }
 
@@ -49,9 +49,7 @@ export function DashboardToolbar({
       <div className="flex items-center gap-2 flex-wrap">
         <select
           value={statusFilter}
-          onChange={e =>
-            onStatusFilterChange(e.target.value as '' | 'Active' | 'Inactive')
-          }
+          onChange={e => onStatusFilterChange(e.target.value as CategoryStatusFilter)}
           aria-label={`Filter ${viewMode === 'categories' ? 'categories' : 'items'} by status`}
           className="min-w-40 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-600 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-400"
         >

@@ -321,15 +321,15 @@ export async function fetchWithScanRetry(
   url: string,
   init: FetchInit,
   delaysMs: readonly number[] = SCAN_RETRY_DELAYS_MS,
-  doFetch: (url: string, init: FetchInit) => Promise<Response> = (u, i) => fetch(u, i)
+  doFetch: (url: string, init: FetchInit) => Promise<Response> = (u, i) => fetch(u, i),
+  attempt = 0
 ): Promise<Response> {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return await doFetch(url, init);
-    } catch (error) {
-      if (attempt >= delaysMs.length) throw error;
-      await new Promise(resolve => globalThis.setTimeout(resolve, delaysMs[attempt]));
-    }
+  try {
+    return await doFetch(url, init);
+  } catch (error) {
+    if (attempt >= delaysMs.length) throw error;
+    await new Promise(resolve => globalThis.setTimeout(resolve, delaysMs[attempt]));
+    return fetchWithScanRetry(url, init, delaysMs, doFetch, attempt + 1);
   }
 }
 

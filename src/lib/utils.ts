@@ -42,3 +42,12 @@ export function formatServerTime(value: unknown): string {
     minute: '2-digit',
   });
 }
+
+/**
+ * Ref callback that focuses a field when it mounts. For fields that open inside a dialog,
+ * popover or mode the user just asked for, where moving focus there is the expected
+ * behaviour.
+ */
+export function focusOnMount(element: HTMLElement | null) {
+  element?.focus();
+}

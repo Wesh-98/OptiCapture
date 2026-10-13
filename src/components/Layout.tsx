@@ -14,9 +14,171 @@ import {
   Store,
   Settings,
   ChevronDown,
+  type LucideIcon,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
+
+interface NavItem {
+  href: string;
+  label: string;
+  icon: LucideIcon;
+  ownerOnly?: boolean;
+  activeSearch?: string;
+}
+
+const ALL_NAV_ITEMS: NavItem[] = [
+  { href: '/', label: 'Dashboard', icon: LayoutDashboard },
+  { href: '/scan', label: 'Scan', icon: ScanLine },
+  { href: '/import', label: 'Import', icon: Upload, ownerOnly: true },
+  {
+    href: '/?export=1',
+    label: 'Export',
+    icon: Download,
+    ownerOnly: true,
+    activeSearch: 'export=1',
+  },
+  { href: '/logs', label: 'Activity Logs', icon: History, ownerOnly: true },
+  { href: '/settings', label: 'Store Settings', icon: Settings },
+];
+
+/** A forced password reset leaves only Store Settings; takers never see owner-only pages. */
+function navItemsFor(role: string | null | undefined, hasForcedReset: boolean): NavItem[] {
+  if (hasForcedReset) return ALL_NAV_ITEMS.filter(item => item.href === '/settings');
+  return ALL_NAV_ITEMS.filter(item => !item.ownerOnly || role !== 'taker');
+}
+
+// Dashboard and Export share the "/" path; the export query decides which one is lit.
+function navItemIsActive(
+  item: NavItem,
+  pathname: string,
+  isExportRouteActive: boolean,
+  hasExportNavItem: boolean
+): boolean {
+  if (pathname !== item.href.split('?')[0]) return false;
+  if (item.activeSearch) return isExportRouteActive;
+  // Only Dashboard shares its path with Export, so only it gives way to the export query.
+  if (item.href !== '/') return true;
+  return !isExportRouteActive || !hasExportNavItem;
+}
+
+function DesktopSidebar({
+  navItems,
+  isNavItemActive,
+  isSidebarCollapsed,
+  setIsSidebarCollapsed,
+  hasMultipleStores,
+  handleLeaveCurrentStore,
+  handleLogout,
+}: Readonly<{
+  navItems: NavItem[];
+  isNavItemActive: (item: NavItem) => boolean;
+  isSidebarCollapsed: boolean;
+  setIsSidebarCollapsed: (collapsed: boolean) => void;
+  hasMultipleStores: boolean;
+  handleLeaveCurrentStore: () => Promise<void>;
+  handleLogout: () => Promise<void>;
+}>) {
+  return (
+    <aside
+      className={cn(
+        'hidden md:flex flex-col bg-white text-theme-muted border-r border-theme-border transition-all duration-300 relative',
+        isSidebarCollapsed ? 'w-20' : 'w-64'
+      )}
+    >
+      <div className="p-4 border-b border-theme-border flex items-center justify-center h-16">
+        <img
+          src="/logo.svg"
+          alt="Inventory Portal logo"
+          className="w-10 h-10 shrink-0 object-contain"
+        />
+        {!isSidebarCollapsed && (
+          <div className="ml-3 overflow-hidden whitespace-nowrap">
+            <h1 className="text-lg font-bold text-theme-text tracking-tight">Inventory Portal</h1>
+          </div>
+        )}
+      </div>
+
+      <button
+        onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+        className="absolute -right-3.5 top-20 bg-white text-brand-600 p-1.5 rounded-full shadow-md border-2 border-theme-border hover:bg-theme-subtle transition-all duration-200 z-10"
+        title={isSidebarCollapsed ? 'Expand menu' : 'Collapse menu'}
+      >
+        <ChevronRight
+          size={16}
+          className={cn('transition-transform duration-300', !isSidebarCollapsed && 'rotate-180')}
+        />
+      </button>
+
+      <nav className="flex-1 p-2 space-y-2 mt-4">
+        {navItems.map(item => {
+          const Icon = item.icon;
+          const isActive = isNavItemActive(item);
+          return (
+            <Link
+              key={item.href}
+              to={item.href}
+              className={cn(
+                'flex items-center gap-3 px-3 py-3 rounded-lg transition-all duration-200 group relative',
+                isActive
+                  ? 'bg-theme-subtle text-brand-600 shadow-sm'
+                  : 'hover:bg-theme-subtle hover:text-theme-text',
+                isSidebarCollapsed ? 'justify-center' : ''
+              )}
+              title={isSidebarCollapsed ? item.label : undefined}
+            >
+              <Icon
+                size={24}
+                className={cn(
+                  isActive ? 'text-brand-600' : 'text-slate-400 group-hover:text-theme-text'
+                )}
+              />
+              {!isSidebarCollapsed && (
+                <span className="font-medium whitespace-nowrap">{item.label}</span>
+              )}
+
+              {isActive && (
+                <div className="absolute right-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-brand-400 rounded-l-full" />
+              )}
+            </Link>
+          );
+        })}
+      </nav>
+
+      <div className="p-4 border-t border-theme-border">
+        <div className="space-y-2">
+          {hasMultipleStores && (
+            <button
+              onClick={() => void handleLeaveCurrentStore()}
+              className={cn(
+                'flex items-center gap-3 text-sm text-theme-muted hover:bg-theme-subtle hover:text-theme-text rounded-lg transition-colors p-2',
+                isSidebarCollapsed ? 'justify-center' : 'w-full'
+              )}
+              title="Leave Current Store"
+            >
+              <Store size={20} />
+              {!isSidebarCollapsed && <span>Leave Current Store</span>}
+            </button>
+          )}
+
+          <button
+            onClick={() => void handleLogout()}
+            className={cn(
+              'flex items-center gap-3 text-sm text-accent-500 hover:bg-accent-50 rounded-lg transition-colors p-2',
+              isSidebarCollapsed ? 'justify-center' : 'w-full'
+            )}
+            title={hasMultipleStores ? 'Sign Out Completely' : 'Sign Out'}
+          >
+            <LogOut size={20} />
+            {!isSidebarCollapsed && (
+              <span>{hasMultipleStores ? 'Sign Out Completely' : 'Sign Out'}</span>
+            )}
+          </button>
+        </div>
+      </div>
+    </aside>
+  );
+}
 
 export default function Layout({ children }: Readonly<{ children: React.ReactNode }>) {
   const { user, logout, leaveCurrentStore, myStores, switchStore, activeStoreId } = useAuth();
@@ -43,42 +205,11 @@ export default function Layout({ children }: Readonly<{ children: React.ReactNod
   const resolvedActiveStoreId = activeStoreId ?? user.store_id;
   const currentStoreLabel = user.store_name ?? 'Store';
 
-  const allNavItems = [
-    { href: '/', label: 'Dashboard', icon: LayoutDashboard },
-    { href: '/scan', label: 'Scan', icon: ScanLine },
-    { href: '/import', label: 'Import', icon: Upload, ownerOnly: true },
-    {
-      href: '/?export=1',
-      label: 'Export',
-      icon: Download,
-      ownerOnly: true,
-      activeSearch: 'export=1',
-    },
-    { href: '/logs', label: 'Activity Logs', icon: History, ownerOnly: true },
-    { href: '/settings', label: 'Store Settings', icon: Settings },
-  ];
-  const navItems = allNavItems.filter(item => {
-    if (hasForcedReset) {
-      return item.href === '/settings';
-    }
-
-    return !item.ownerOnly || user.role !== 'taker';
-  });
-  const searchParams = new URLSearchParams(location.search);
-  const isExportRouteActive = searchParams.get('export') === '1';
+  const navItems = navItemsFor(user.role, Boolean(hasForcedReset));
+  const isExportRouteActive = new URLSearchParams(location.search).get('export') === '1';
   const hasExportNavItem = navItems.some(item => item.activeSearch === 'export=1');
-  const isNavItemActive = (item: (typeof allNavItems)[number]) => {
-    const targetPath = item.href.split('?')[0];
-    if (location.pathname !== targetPath) {
-      return false;
-    }
-
-    if (item.activeSearch) {
-      return isExportRouteActive;
-    }
-
-    return !isExportRouteActive || !hasExportNavItem;
-  };
+  const isNavItemActive = (item: NavItem) =>
+    navItemIsActive(item, location.pathname, isExportRouteActive, hasExportNavItem);
 
   const handleSwitchStore = async (storeId: number) => {
     setStoreSwitcherOpen(false);
@@ -105,105 +236,25 @@ export default function Layout({ children }: Readonly<{ children: React.ReactNod
   return (
     <div className="min-h-screen bg-theme-canvas flex flex-col md:flex-row">
       {/* Desktop Sidebar */}
-      <aside
-        className={cn(
-          'hidden md:flex flex-col bg-white text-theme-muted border-r border-theme-border transition-all duration-300 relative',
-          isSidebarCollapsed ? 'w-20' : 'w-64'
-        )}
-      >
-        <div className="p-4 border-b border-theme-border flex items-center justify-center h-16">
-          <img src="/logo.svg" alt="Inventory Portal logo" className="w-10 h-10 shrink-0 object-contain" />
-          {!isSidebarCollapsed && (
-            <div className="ml-3 overflow-hidden whitespace-nowrap">
-              <h1 className="text-lg font-bold text-theme-text tracking-tight">Inventory Portal</h1>
-            </div>
-          )}
-        </div>
-
-        <button
-          onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-          className="absolute -right-3.5 top-20 bg-white text-brand-600 p-1.5 rounded-full shadow-md border-2 border-theme-border hover:bg-theme-subtle transition-all duration-200 z-10"
-          title={isSidebarCollapsed ? 'Expand menu' : 'Collapse menu'}
-        >
-          <ChevronRight
-            size={16}
-            className={cn('transition-transform duration-300', !isSidebarCollapsed && 'rotate-180')}
-          />
-        </button>
-
-        <nav className="flex-1 p-2 space-y-2 mt-4">
-          {navItems.map(item => {
-            const Icon = item.icon;
-            const isActive = isNavItemActive(item);
-            return (
-              <Link
-                key={item.href}
-                to={item.href}
-                className={cn(
-                  'flex items-center gap-3 px-3 py-3 rounded-lg transition-all duration-200 group relative',
-                  isActive
-                    ? 'bg-theme-subtle text-brand-600 shadow-sm'
-                    : 'hover:bg-theme-subtle hover:text-theme-text',
-                  isSidebarCollapsed ? 'justify-center' : ''
-                )}
-                title={isSidebarCollapsed ? item.label : undefined}
-              >
-                <Icon
-                  size={24}
-                  className={cn(
-                    isActive ? 'text-brand-600' : 'text-slate-400 group-hover:text-theme-text'
-                  )}
-                />
-                {!isSidebarCollapsed && (
-                  <span className="font-medium whitespace-nowrap">{item.label}</span>
-                )}
-
-                {isActive && (
-                  <div className="absolute right-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-brand-400 rounded-l-full" />
-                )}
-              </Link>
-            );
-          })}
-        </nav>
-
-        <div className="p-4 border-t border-theme-border">
-          <div className="space-y-2">
-            {hasMultipleStores && (
-              <button
-                onClick={() => void handleLeaveCurrentStore()}
-                className={cn(
-                  'flex items-center gap-3 text-sm text-theme-muted hover:bg-theme-subtle hover:text-theme-text rounded-lg transition-colors p-2',
-                  isSidebarCollapsed ? 'justify-center' : 'w-full'
-                )}
-                title="Leave Current Store"
-              >
-                <Store size={20} />
-                {!isSidebarCollapsed && <span>Leave Current Store</span>}
-              </button>
-            )}
-
-            <button
-              onClick={() => void handleLogout()}
-              className={cn(
-                'flex items-center gap-3 text-sm text-accent-500 hover:bg-accent-50 rounded-lg transition-colors p-2',
-                isSidebarCollapsed ? 'justify-center' : 'w-full'
-              )}
-              title={hasMultipleStores ? 'Sign Out Completely' : 'Sign Out'}
-            >
-              <LogOut size={20} />
-              {!isSidebarCollapsed && (
-                <span>{hasMultipleStores ? 'Sign Out Completely' : 'Sign Out'}</span>
-              )}
-            </button>
-          </div>
-        </div>
-      </aside>
+      <DesktopSidebar
+        navItems={navItems}
+        isNavItemActive={isNavItemActive}
+        isSidebarCollapsed={isSidebarCollapsed}
+        setIsSidebarCollapsed={setIsSidebarCollapsed}
+        hasMultipleStores={hasMultipleStores}
+        handleLeaveCurrentStore={handleLeaveCurrentStore}
+        handleLogout={handleLogout}
+      />
 
       <div className="flex-1 flex flex-col h-screen overflow-hidden">
         {/* Top Header */}
         <header className="bg-white border-b border-theme-border h-16 flex items-center justify-between px-4 md:px-8 z-20">
           <div className="flex items-center gap-4 md:hidden">
-            <img src="/logo.svg" alt="Inventory Portal logo" className="w-8 h-8 shrink-0 object-contain" />
+            <img
+              src="/logo.svg"
+              alt="Inventory Portal logo"
+              className="w-8 h-8 shrink-0 object-contain"
+            />
             <h1 className="text-lg font-bold text-theme-text">Inventory Portal</h1>
           </div>
 

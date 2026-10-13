@@ -1,3 +1,4 @@
+import { isEmailShaped } from '../../lib/emailFormat';
 export interface SignupFormData {
   storeName: string;
   street: string;
@@ -31,8 +32,7 @@ export const validateZipcode = (value: string): boolean => !value || /^\d{5}(-\d
 export const validatePhone = (value: string): boolean =>
   !value || /^\d{10}$/.test(value.replaceAll(/\D/g, ''));
 
-export const validateEmail = (value: string): boolean =>
-  !value || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+export const validateEmail = (value: string): boolean => !value || isEmailShaped(value);
 
 export const validatePassword = (value: string): boolean =>
   value.length >= 8 && /[A-Z]/.test(value) && /\d/.test(value);

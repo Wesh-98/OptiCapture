@@ -22,6 +22,162 @@ interface Props {
   onApplyBulk: () => void;
 }
 
+function CommitItemList({
+  commitItems,
+  existingItems,
+  unknownItems,
+  newItems,
+  modalAllSelected,
+  categories,
+  itemCategories,
+  modalSelectedIds,
+  onSetItemCategory,
+  onSetModalSelectedIds,
+}: Readonly<
+  Pick<
+    Props,
+    | 'categories'
+    | 'itemCategories'
+    | 'modalSelectedIds'
+    | 'onSetItemCategory'
+    | 'onSetModalSelectedIds'
+  > & {
+    commitItems: SessionItem[];
+    existingItems: SessionItem[];
+    unknownItems: SessionItem[];
+    newItems: SessionItem[];
+    modalAllSelected: boolean;
+  }
+>) {
+  return (
+    <>
+      {existingItems.length > 0 && (
+        <div className="mx-4 mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+          {existingItems.length} item{existingItems.length !== 1 ? 's' : ''} already in inventory
+          will be marked as seen on the shelf. Their details and stock are not changed.
+        </div>
+      )}
+      {unknownItems.length > 0 && (
+        <div className="mx-4 mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          <div className="flex gap-2">
+            <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-700" />
+            <div>
+              <p className="font-semibold">Some selected items will not be committed</p>
+              <p className="mt-0.5">
+                {unknownItems.length} unknown item{unknownItems.length !== 1 ? 's' : ''} will stay
+                in the session until named or removed.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Select-all row */}
+      <div className="px-4 py-2 border-b border-slate-100 flex items-center gap-3 text-xs text-slate-500 bg-slate-50">
+        <input
+          type="checkbox"
+          checked={modalAllSelected}
+          onChange={() =>
+            onSetModalSelectedIds(modalAllSelected ? new Set() : new Set(newItems.map(i => i.id)))
+          }
+          className="rounded"
+        />
+        <span>{modalAllSelected ? 'Deselect all' : 'Select all for bulk apply'}</span>
+      </div>
+
+      {commitItems.map(item => {
+        const catId = itemCategories.get(item.id);
+        const checked = modalSelectedIds.has(item.id);
+        const displayUnit = item.unit?.trim() ?? '';
+        const isExisting = item.exists_in_inventory === 1;
+        const isUnknown = item.lookup_status !== 'new_candidate' && !isExisting;
+        const isSkipped = isExisting || isUnknown;
+        return (
+          <div
+            key={item.id}
+            className={cn(
+              'flex items-center gap-3 px-4 py-2.5 border-b border-slate-100 hover:bg-slate-50',
+              checked && 'bg-theme-subtle'
+            )}
+          >
+            <input
+              type="checkbox"
+              checked={checked}
+              disabled={isSkipped}
+              onChange={() => {
+                const next = new Set(modalSelectedIds);
+                checked ? next.delete(item.id) : next.add(item.id);
+                onSetModalSelectedIds(next);
+              }}
+              className="rounded shrink-0 disabled:cursor-not-allowed disabled:opacity-40"
+            />
+            {item.image ? (
+              <img
+                src={item.image}
+                alt=""
+                className="w-9 h-9 rounded-lg object-cover shrink-0 bg-slate-100"
+                onError={e => {
+                  (e.target as HTMLImageElement).style.display = 'none';
+                }}
+              />
+            ) : (
+              <div className="w-9 h-9 rounded-lg bg-slate-100 shrink-0 flex items-center justify-center">
+                <ImageIcon size={14} className="text-slate-300" />
+              </div>
+            )}
+            <div className="flex-1 min-w-0">
+              <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
+                <p className="text-sm font-medium text-slate-800">
+                  {item.product_name || 'No product name'}
+                </p>
+                {displayUnit && (
+                  <span className="text-sm font-medium text-slate-500">{displayUnit}</span>
+                )}
+              </div>
+              <p className="mt-0.5 break-all text-xs font-medium text-slate-500">UPC {item.upc}</p>
+              <p className="text-xs text-slate-400">
+                x{item.quantity}
+                {item.unit ? ` ${item.unit}` : ''}
+              </p>
+              {isSkipped && (
+                <p className="mt-1 text-xs font-medium text-amber-600">
+                  {isExisting
+                    ? 'Already in inventory - skipped on commit'
+                    : 'Unknown item - edit before committing'}
+                </p>
+              )}
+            </div>
+            {isSkipped ? (
+              <span className="shrink-0 rounded-lg border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs font-medium text-amber-700">
+                Skipped
+              </span>
+            ) : (
+              <select
+                value={catId ?? ''}
+                onChange={e => {
+                  const val = Number(e.target.value) || undefined;
+                  onSetItemCategory(item.id, val);
+                }}
+                className={cn(
+                  'text-xs px-2 py-1.5 rounded-lg border focus:outline-none focus:ring-1 focus:ring-navy-700 bg-white shrink-0 max-w-[140px]',
+                  catId ? 'border-slate-300 text-slate-700' : 'border-amber-300 text-amber-600'
+                )}
+              >
+                <option value="">- Pick -</option>
+                {categories.map(cat => (
+                  <option key={cat.id} value={cat.id}>
+                    {cat.name}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
 export function CommitModal({
   show,
   items,
@@ -122,140 +278,18 @@ export function CommitModal({
                   <Loader2 size={16} className="animate-spin" /> Loading categories...
                 </div>
               ) : (
-                <>
-                  {existingItems.length > 0 && (
-                    <div className="mx-4 mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
-                      {existingItems.length} item{existingItems.length !== 1 ? 's' : ''} already in
-                      inventory will be marked as seen on the shelf. Their details and stock are not
-                      changed.
-                    </div>
-                  )}
-                  {unknownItems.length > 0 && (
-                    <div className="mx-4 mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-                      <div className="flex gap-2">
-                        <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-700" />
-                        <div>
-                          <p className="font-semibold">Some selected items will not be committed</p>
-                          <p className="mt-0.5">
-                            {unknownItems.length} unknown item{unknownItems.length !== 1 ? 's' : ''}{' '}
-                            will stay in the session until named or removed.
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Select-all row */}
-                  <div className="px-4 py-2 border-b border-slate-100 flex items-center gap-3 text-xs text-slate-500 bg-slate-50">
-                    <input
-                      type="checkbox"
-                      checked={modalAllSelected}
-                      onChange={() =>
-                        onSetModalSelectedIds(
-                          modalAllSelected ? new Set() : new Set(newItems.map(i => i.id))
-                        )
-                      }
-                      className="rounded"
-                    />
-                    <span>{modalAllSelected ? 'Deselect all' : 'Select all for bulk apply'}</span>
-                  </div>
-
-                  {commitItems.map(item => {
-                    const catId = itemCategories.get(item.id);
-                    const checked = modalSelectedIds.has(item.id);
-                    const displayUnit = item.unit?.trim() ?? '';
-                    const isExisting = item.exists_in_inventory === 1;
-                    const isUnknown = item.lookup_status !== 'new_candidate' && !isExisting;
-                    const isSkipped = isExisting || isUnknown;
-                    return (
-                      <div
-                        key={item.id}
-                        className={cn(
-                          'flex items-center gap-3 px-4 py-2.5 border-b border-slate-100 hover:bg-slate-50',
-                          checked && 'bg-theme-subtle'
-                        )}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          disabled={isSkipped}
-                          onChange={() => {
-                            const next = new Set(modalSelectedIds);
-                            checked ? next.delete(item.id) : next.add(item.id);
-                            onSetModalSelectedIds(next);
-                          }}
-                          className="rounded shrink-0 disabled:cursor-not-allowed disabled:opacity-40"
-                        />
-                        {item.image ? (
-                          <img
-                            src={item.image}
-                            alt=""
-                            className="w-9 h-9 rounded-lg object-cover shrink-0 bg-slate-100"
-                            onError={e => {
-                              (e.target as HTMLImageElement).style.display = 'none';
-                            }}
-                          />
-                        ) : (
-                          <div className="w-9 h-9 rounded-lg bg-slate-100 shrink-0 flex items-center justify-center">
-                            <ImageIcon size={14} className="text-slate-300" />
-                          </div>
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
-                            <p className="text-sm font-medium text-slate-800">
-                              {item.product_name || 'No product name'}
-                            </p>
-                            {displayUnit && (
-                              <span className="text-sm font-medium text-slate-500">
-                                {displayUnit}
-                              </span>
-                            )}
-                          </div>
-                          <p className="mt-0.5 break-all text-xs font-medium text-slate-500">
-                            UPC {item.upc}
-                          </p>
-                          <p className="text-xs text-slate-400">
-                            x{item.quantity}
-                            {item.unit ? ` ${item.unit}` : ''}
-                          </p>
-                          {isSkipped && (
-                            <p className="mt-1 text-xs font-medium text-amber-600">
-                              {isExisting
-                                ? 'Already in inventory - skipped on commit'
-                                : 'Unknown item - edit before committing'}
-                            </p>
-                          )}
-                        </div>
-                        {isSkipped ? (
-                          <span className="shrink-0 rounded-lg border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs font-medium text-amber-700">
-                            Skipped
-                          </span>
-                        ) : (
-                          <select
-                            value={catId ?? ''}
-                            onChange={e => {
-                              const val = Number(e.target.value) || undefined;
-                              onSetItemCategory(item.id, val);
-                            }}
-                            className={cn(
-                              'text-xs px-2 py-1.5 rounded-lg border focus:outline-none focus:ring-1 focus:ring-navy-700 bg-white shrink-0 max-w-[140px]',
-                              catId
-                                ? 'border-slate-300 text-slate-700'
-                                : 'border-amber-300 text-amber-600'
-                            )}
-                          >
-                            <option value="">- Pick -</option>
-                            {categories.map(cat => (
-                              <option key={cat.id} value={cat.id}>
-                                {cat.name}
-                              </option>
-                            ))}
-                          </select>
-                        )}
-                      </div>
-                    );
-                  })}
-                </>
+                <CommitItemList
+                  commitItems={commitItems}
+                  existingItems={existingItems}
+                  unknownItems={unknownItems}
+                  newItems={newItems}
+                  modalAllSelected={modalAllSelected}
+                  categories={categories}
+                  itemCategories={itemCategories}
+                  modalSelectedIds={modalSelectedIds}
+                  onSetItemCategory={onSetItemCategory}
+                  onSetModalSelectedIds={onSetModalSelectedIds}
+                />
               )}
             </div>
 

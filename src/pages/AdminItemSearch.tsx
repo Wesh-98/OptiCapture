@@ -1,5 +1,5 @@
 import { Search } from 'lucide-react';
-import { cn } from '../lib/utils';
+import { cn, focusOnMount } from '../lib/utils';
 import { ItemListPage } from '../components/superadmin/ItemListPage';
 import { RecentItemsTable } from '../components/superadmin/RecentItemsTable';
 import { HeaderStat, FILTER_INPUT } from '../components/superadmin/AdminUi';
@@ -33,7 +33,7 @@ export default function AdminItemSearch() {
           <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-theme-muted" />
           <input
             type="search"
-            autoFocus
+            ref={focusOnMount}
             value={view.input}
             onChange={e => view.setInput(e.target.value)}
             placeholder="Name, UPC, brand, category or tag…"

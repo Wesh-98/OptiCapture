@@ -48,7 +48,7 @@ export function StoreUsersModal({
   onResetPassword,
   onConfirmDelete,
   onClose,
-}: Props) {
+}: Readonly<Props>) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
@@ -69,10 +69,10 @@ export function StoreUsersModal({
         )}
 
         <div className="p-5 space-y-3 max-h-64 overflow-y-auto">
-          {loading ? (
-            <p className="text-sm text-slate-400 text-center py-4">Loading...</p>
-          ) : users.length === 0 ? (
-            <p className="text-sm text-slate-400 text-center py-4">No users assigned yet.</p>
+          {users.length === 0 || loading ? (
+            <p className="text-sm text-slate-400 text-center py-4">
+              {loading ? 'Loading...' : 'No users assigned yet.'}
+            </p>
           ) : (
             users.map(u => {
               const displayName = u.username?.trim() || 'Unknown user';
