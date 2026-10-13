@@ -316,10 +316,12 @@ sessionsRouter.get('/session/:id/meta', authenticateToken, (req: AuthRequest, re
 
 sessionsRouter.get('/session/:id/items', scanLimiter, (req, res) => {
   const { id: sessionId } = req.params;
-  const otp = firstQueryValue(req.query.otp);
+  // The phone sends the OTP and its device ID as headers, so neither is written to access
+  // logs with the URL. The query forms still work for a phone page loaded before that change.
+  const otp = req.get('X-Scan-Otp') || firstQueryValue(req.query.otp);
   // Apply the same 128-char cap used by the POST /scan route — the GET path
   // was missed in the prior fix round.
-  const device_id = firstQueryValue(req.query.device_id)?.slice(0, 128);
+  const device_id = (req.get('X-Device-Id') || firstQueryValue(req.query.device_id))?.slice(0, 128);
 
   if (!otp) return res.status(400).json({ error: 'OTP required' });
 

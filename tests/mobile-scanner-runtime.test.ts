@@ -14,6 +14,38 @@ describe('mobile scanner runtime', () => {
     vi.doUnmock('../src/lib/zxingStoreScanner.js');
   });
 
+  it('reads the OTP from the link, remembers it for the tab, and keeps sessions apart', async () => {
+    const stored = new Map<string, string>();
+    vi.stubGlobal('sessionStorage', {
+      getItem: (key: string) => stored.get(key) ?? null,
+      setItem: (key: string, value: string) => void stored.set(key, value),
+    });
+    const { readScanOtp } = await loadScannerModule();
+
+    expect(readScanOtp('session-a', '#otp=HASHOTP1', '')).toBe('HASHOTP1');
+    // After the page drops it from the address bar, a refresh still finds it.
+    expect(readScanOtp('session-a', '', '')).toBe('HASHOTP1');
+    expect(readScanOtp('session-b', '', '')).toBeNull();
+    // A link made before the OTP moved behind "#" still opens.
+    expect(readScanOtp('session-b', '', '?otp=QUERYOTP')).toBe('QUERYOTP');
+    expect(readScanOtp('session-a', '#otp=NEWEROTP', '?otp=IGNORED')).toBe('NEWEROTP');
+  });
+
+  it('still reads the OTP from the link when storage is blocked', async () => {
+    vi.stubGlobal('sessionStorage', {
+      getItem: () => {
+        throw new Error('blocked');
+      },
+      setItem: () => {
+        throw new Error('blocked');
+      },
+    });
+    const { readScanOtp } = await loadScannerModule();
+
+    expect(readScanOtp('session-a', '#otp=HASHOTP1', '')).toBe('HASHOTP1');
+    expect(readScanOtp('session-a', '', '')).toBeNull();
+  });
+
   it('returns null when native barcode detection is unavailable', async () => {
     const { startNativeScanner } = await loadScannerModule();
 
@@ -317,11 +349,7 @@ describe('mobile scanner runtime', () => {
 
     const { BrowserStoreBarcodeReader } = await import('../src/lib/zxingStoreScanner.js');
     const reader = new BrowserStoreBarcodeReader();
-    const controls = await reader.decodeFromConstraints(
-      { video: true },
-      'mobile-reader',
-      callback
-    );
+    const controls = await reader.decodeFromConstraints({ video: true }, 'mobile-reader', callback);
 
     await vi.waitFor(() => expect(callback).toHaveBeenCalled());
     expect(callback.mock.calls[0][0]).toBeNull();

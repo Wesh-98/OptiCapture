@@ -66,7 +66,8 @@ export default function Scan() {
   const mobileUrl = useMemo(() => {
     if (!session.sessionId || !session.otp) return '';
     const base = serverInfo?.mobileUrl ?? globalThis.location.origin;
-    return `${base}/mobile-scan/${session.sessionId}?otp=${session.otp}`;
+    // After "#", so the OTP reaches the phone but is never sent to the server with the URL.
+    return `${base}/mobile-scan/${session.sessionId}#otp=${session.otp}`;
   }, [session.sessionId, session.otp, serverInfo]);
 
   const visibleItems = useMemo(() => session.items.slice(0, RENDER_LIMIT), [session.items]);

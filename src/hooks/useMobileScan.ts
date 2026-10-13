@@ -508,9 +508,10 @@ export function useMobileScan({ sessionId, otp }: UseMobileScanOptions) {
 
     const syncSession = async () => {
       try {
-        const res = await fetch(
-          `/api/session/${sessionId}/items?otp=${otp}&device_id=${encodeURIComponent(getDeviceId())}`
-        );
+        // Headers, not the query string: URLs are written to access logs.
+        const res = await fetch(`/api/session/${sessionId}/items`, {
+          headers: { 'X-Scan-Otp': otp, 'X-Device-Id': getDeviceId() },
+        });
         const raw = await res.text();
         const payload = parseScanResponsePayload(raw);
         const classification = classifySessionSyncResponse(
