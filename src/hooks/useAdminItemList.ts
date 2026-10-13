@@ -20,17 +20,26 @@ interface Options {
   enabled?: boolean;
 }
 
-// A cross-store item list (Recently added, Search): one page of items across every store or
-// the one in `?store=`. The store lives in the URL so the sidebar, breadcrumbs and a shared
-// link all land on the same view.
-export function useAdminItemList({ endpoint, filter, failureText, enabled = true }: Options) {
+// A cross-store list (Recently added, Search, Activity log): one page of rows across every
+// store or the one in `?store=`. The store lives in the URL so the sidebar, breadcrumbs and a
+// shared link all land on the same view. `Extra` is anything the endpoint returns beside the
+// rows and their total.
+export function useAdminItemList<Row = RecentItem, Extra extends object = object>({
+  endpoint,
+  filter,
+  failureText,
+  enabled = true,
+}: Options) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const storeId = parseStore(searchParams.get(STORE_PARAM));
   const { name: filterName, value: filterValue } = filter;
 
-  const [items, setItems] = useState<RecentItem[]>([]);
+  const [items, setItems] = useState<Row[]>([]);
   const [total, setTotal] = useState(0);
+  const [extra, setExtra] = useState<Extra | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const reload = useCallback(() => setReloadKey(key => key + 1), []);
   const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState('');
 
@@ -86,9 +95,14 @@ export function useAdminItemList({ endpoint, filter, failureText, enabled = true
           throw new Error((data as { error?: string } | null)?.error || failureText);
         }
         if (cancelled) return;
-        const { items: rows, total: count } = data as { items: RecentItem[]; total: number };
+        const {
+          items: rows,
+          total: count,
+          ...rest
+        } = data as { items: Row[]; total: number } & Extra;
         setItems(rows);
         setTotal(count);
+        setExtra(rest as unknown as Extra);
       } catch (err) {
         if (cancelled) return;
         setItems([]);
@@ -101,7 +115,7 @@ export function useAdminItemList({ endpoint, filter, failureText, enabled = true
     return () => {
       cancelled = true;
     };
-  }, [enabled, endpoint, filterName, filterValue, failureText, storeId, page, navigate]);
+  }, [enabled, endpoint, filterName, filterValue, failureText, storeId, page, navigate, reloadKey]);
 
   const handleLogout = async () => {
     await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
@@ -114,6 +128,8 @@ export function useAdminItemList({ endpoint, filter, failureText, enabled = true
     setParam,
     items,
     total,
+    extra,
+    reload,
     loading,
     error,
     page,

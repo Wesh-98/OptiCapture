@@ -274,4 +274,111 @@ describe('superadmin recent changes feed', () => {
     const res = await request.get('/api/admin/activity').set('Cookie', ownerCookie);
     expect(res.status).toBe(403);
   });
+
+  it('pages the full log and filters it by store and by kind', async () => {
+    const all = await request.get('/api/admin/activity?page=1').set('Cookie', superadminCookie);
+    expect(all.status).toBe(200);
+    expect(all.body.total).toBe(7);
+    expect(all.body.limit).toBe(50);
+    expect(all.body.items).toHaveLength(7);
+
+    const oneStore = await request
+      .get(`/api/admin/activity?page=1&store=${viewedStoreId}`)
+      .set('Cookie', superadminCookie);
+    expect(oneStore.body.items.map((row: any) => row.kind)).toEqual([
+      'reactivated',
+      'suspended',
+      'registered',
+    ]);
+
+    const suspended = await request
+      .get('/api/admin/activity?page=1&kind=suspended')
+      .set('Cookie', superadminCookie);
+    expect(suspended.body.items.map((row: any) => row.summary)).toEqual(['Store suspended']);
+    const reactivated = await request
+      .get('/api/admin/activity?page=1&kind=reactivated')
+      .set('Cookie', superadminCookie);
+    expect(reactivated.body.items.map((row: any) => row.summary)).toEqual(['Store reactivated']);
+
+    const beyond = await request.get('/api/admin/activity?page=2').set('Cookie', superadminCookie);
+    expect(beyond.body.items).toEqual([]);
+    expect(beyond.body.total).toBe(7);
+  });
+
+  it('rejects an unknown kind, a bad page and an unknown store', async () => {
+    const get = (query: string) =>
+      request.get(`/api/admin/activity?${query}`).set('Cookie', superadminCookie);
+    expect((await get('page=1&kind=nonsense')).status).toBe(400);
+    expect((await get('page=0')).status).toBe(400);
+    expect((await get('page=1&store=999999')).status).toBe(404);
+  });
+
+  it('marks changes as seen per superadmin without deleting anything', async () => {
+    const before = await request.get('/api/admin/activity?page=1').set('Cookie', superadminCookie);
+    expect(before.body.unseen).toBe(7);
+    expect(before.body.items.every((row: any) => row.seen === false)).toBe(true);
+    const newest = before.body.newest;
+    expect(newest).toBe(Math.max(...before.body.items.map((row: any) => row.id)));
+
+    // A change that lands after the list was loaded stays new.
+    log('BATCH', 'Committed session late | inserted=1 verified=0', otherStoreId);
+
+    const marked = await request
+      .post('/api/admin/activity/seen')
+      .set('Cookie', superadminCookie)
+      .send({ through: newest });
+    expect(marked.status).toBe(200);
+    expect(marked.body.unseen).toBe(1);
+
+    const after = await request.get('/api/admin/activity?page=1').set('Cookie', superadminCookie);
+    expect(after.body.total).toBe(8);
+    expect(after.body.unseen).toBe(1);
+    expect(after.body.items.map((row: any) => row.seen)).toEqual([
+      false,
+      ...Array.from({ length: 7 }, () => true),
+    ]);
+
+    // The marker never moves backwards, and never past the newest entry.
+    const back = await request
+      .post('/api/admin/activity/seen')
+      .set('Cookie', superadminCookie)
+      .send({ through: 1 });
+    expect(back.body.unseen).toBe(1);
+    const far = await request
+      .post('/api/admin/activity/seen')
+      .set('Cookie', superadminCookie)
+      .send({ through: Number.MAX_SAFE_INTEGER });
+    expect(far.body.unseen).toBe(0);
+    const { marker, newestLog } = db
+      .prepare(
+        `SELECT (SELECT activity_seen_log_id FROM users WHERE username = 'superadmin') AS marker,
+                (SELECT MAX(id) FROM logs) AS newestLog`
+      )
+      .get() as { marker: number; newestLog: number };
+    expect(marker).toBe(newestLog);
+  });
+
+  it("never counts the superadmin's own actions as new", async () => {
+    const { id: superadminId } = db
+      .prepare("SELECT id FROM users WHERE username = 'superadmin'")
+      .get() as { id: number };
+    db.prepare('INSERT INTO logs (action, details, user_id, store_id) VALUES (?, ?, ?, ?)').run(
+      'ADMIN',
+      `Set store ${viewedStoreId} status to suspended`,
+      superadminId,
+      viewedStoreId
+    );
+    const res = await request.get('/api/admin/activity').set('Cookie', superadminCookie);
+    expect(res.body.unseen).toBe(0);
+    expect(res.body.items[0]).toMatchObject({ kind: 'suspended', seen: true });
+  });
+
+  it('refuses a malformed mark-as-seen request, and store owners', async () => {
+    const post = (cookie: string, body: object) =>
+      request.post('/api/admin/activity/seen').set('Cookie', cookie).send(body);
+    expect((await post(superadminCookie, {})).status).toBe(400);
+    expect((await post(superadminCookie, { through: '5' })).status).toBe(400);
+    expect((await post(superadminCookie, { through: 0 })).status).toBe(400);
+    expect((await post(ownerCookie, { through: 5 })).status).toBe(403);
+  });
 });

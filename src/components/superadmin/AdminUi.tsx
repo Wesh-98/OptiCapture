@@ -216,3 +216,61 @@ export function Breadcrumb({ trail, className }: Readonly<{ trail: Crumb[]; clas
     </nav>
   );
 }
+
+/** The footer of a paged list: which rows are showing, and the previous and next buttons. */
+export function ListPager({
+  total,
+  pageSize,
+  currentPage,
+  onPageChange,
+  noun,
+}: Readonly<{
+  total: number;
+  pageSize: number;
+  currentPage: number;
+  onPageChange: (page: number) => void;
+  /** What the rows are, plural: "items", "changes". */
+  noun: string;
+}>) {
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const pageButton =
+    'p-1.5 rounded-lg bg-white border border-theme-border text-brand-600 hover:bg-brand-50 transition-colors disabled:opacity-30 disabled:cursor-not-allowed';
+  return (
+    <div className="px-6 py-3 border-t border-theme-border bg-theme-subtle flex items-center justify-between gap-4 flex-wrap">
+      <p className="text-xs text-theme-muted">
+        {total === 0 ? (
+          `No ${noun}`
+        ) : (
+          <>
+            Showing{' '}
+            <span className="font-semibold text-theme-text">
+              {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, total)}
+            </span>{' '}
+            of <span className="font-semibold text-theme-text">{total}</span> {noun}
+          </>
+        )}
+      </p>
+      <div className="flex items-center gap-1">
+        <button
+          onClick={() => onPageChange(Math.max(1, currentPage - 1))}
+          disabled={currentPage === 1}
+          aria-label="Previous page"
+          className={pageButton}
+        >
+          <ChevronLeft size={16} />
+        </button>
+        <span className="px-3 py-1 text-xs font-semibold text-theme-text min-w-[5rem] text-center">
+          {currentPage} / {totalPages}
+        </span>
+        <button
+          onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
+          disabled={currentPage === totalPages}
+          aria-label="Next page"
+          className={pageButton}
+        >
+          <ChevronRight size={16} />
+        </button>
+      </div>
+    </div>
+  );
+}
