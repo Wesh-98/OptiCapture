@@ -1,6 +1,6 @@
 # Current database: relationships and rules
 
-**Status:** implemented SQLite schema, as created by `src/server/db.ts` through migration 19. This document describes the database *as it runs today*. The [full SQL](database-schema.sql), [one-page ERD](opticapture-erd-quick.svg), and [detailed ERD](opticapture-erd.svg) are the corresponding downloadable references.
+**Status:** implemented SQLite schema, as created by `src/server/db.ts` through migration 26. This document describes the database *as it runs today*. The [full SQL](database-schema.sql), [one-page ERD](opticapture-erd-quick.svg), and [detailed ERD](opticapture-erd.svg) are the corresponding downloadable references.
 
 ## Ownership and table roles
 
@@ -60,7 +60,7 @@ UPC is a scan identifier, not a guaranteed external item identity. The external 
 
 ## Current workflow and data rules
 
-1. **Access and tenancy.** Requests use an account cookie and an active store selection. The middleware validates `X-Store-Id` against the user's active `user_stores` memberships, and routes filter every query by `store_id`. The schema itself provides no row-level tenant isolation. A local `superadmin` bypasses memberships and has no store context. The startup membership backfill skips users whose default store is `0` (the HQ context).
+1. **Access and tenancy.** Requests use an account cookie and an active store selection. The middleware validates `X-Store-Id` against the user's active `user_stores` memberships, and routes filter every query by `store_id`. The schema itself provides no row-level tenant isolation. A local `superadmin` bypasses memberships and has no store context; admin routes name the store in the URL. A superadmin can read any store's inventory and edit its items (not create or delete them). Each edit is written to that store's log with before and after values, is refused if the item changed since it was opened, and is refused for a suspended store. The startup membership backfill skips users whose default store is `0` (the HQ context).
 2. **Who can change what.**
    - Owners and superadmins manage categories, imports, exports, and session commits (`requireOwner`).
    - Owners **and takers** can create, edit (including `quantity`), and delete catalog items (`requireOwnerOrTaker`).
@@ -74,13 +74,13 @@ UPC is a scan identifier, not a guaranteed external item identity. The external 
    A sheet that maps External Item ID must also map External System, or the request is rejected. A row with an external item ID but a blank system is rejected with an error. Matched rows get `last_imported_at` and `sync_status = 'imported'`. The import runs in one transaction, but invalid rows are reported and skipped while valid rows are applied. Rejected rows are recorded only in the response and an `IMPORT` log summary; there is no import batch or rejected-row history table.
 4. **Catalog export.** `/inventory/export` exports the **catalog**. XLSX, CSV, and JSON files mark every store item `sync_status = 'exported'` with `last_exported_at`, after the file has been built. PDF is a report and changes nothing. Files carry ISO 8601 UTC timestamps with `Z`. Each export writes an `EXPORT` log entry. It is not a count-result export.
 5. **Scan sessions.**
-   - **Lifetime:** a session expires 8 hours after creation, resume, or its latest scan. Expiry retires the phones' OTP; it does not discard the work: an expired session that holds scans becomes a draft and stays on the dashboard until it is committed or deleted, and resuming it starts a new scan window. A committed (`completed`) session can't be resumed or deleted.
-   - **Phone access:** phones authenticate with the session ID and OTP only; the OTP locks after 5 failed attempts.
-   - **Staging:** each scan inserts or increments one mutable `session_items` row per product. EAN-13 and UPC-A leading-zero variants merge into the same row.
+   - **Lifetime:** a session expires 8 hours after creation, resume, or its latest scan, and never later than 24 hours after a signed-in user last started or resumed it (`scan_window_started_at`). Expiry retires the phones' OTP; it does not discard the work: an expired session that holds scans becomes a draft and stays on the dashboard until it is committed or deleted, and resuming it starts a new scan window. A committed (`completed`) session can't be resumed or deleted.
+   - **Phone access:** phones authenticate with the session ID and OTP only; the OTP locks after 5 failed attempts. The OTP is carried after `#` in the QR link and in a request header or body, never in a URL sent to the server.
+   - **Staging:** each scan inserts or increments one mutable `session_items` row per product. EAN-13 and UPC-A leading-zero variants merge into the same row. A resent request whose `scan_id` is already in the row's `recent_scan_ids` is not counted again. A barcode that fails its GTIN check digit is staged as `invalid_barcode` and cannot be committed.
    - **Device attribution:** `device_id` holds the scanning device. It becomes `NULL` once a second device scans the same product, meaning "shared". Each phone's item list shows its own rows plus shared ones. There is no per-scan event history or per-user attribution.
 6. **Session commit (capture, not counting).** Scanning's primary purpose is adding new items to the catalog. Counting stock is deferred until this baseline works. Existing items are only confirmed and cleared from the session. Their `last_verified_*` values are recorded as a future counting baseline but are not shown in the app, because incidental scans don't make "not seen" meaningful. Commit decides whether each item exists at commit time, by UPC including the leading-zero variant:
    - **Existing catalog item:** recorded as seen. `inventory.last_verified_at`, `last_verified_by`, and `last_verified_session_id` are set. Its details and quantity are never changed, and the staged row is removed. The scan workspace treats these items as read-only, and the item edit endpoint returns `409` for them.
-   - **New item** (`new_candidate` with an assigned category): inserted with its scanned quantity, stamped as verified, and the staged row is removed.
+   - **New item** (`new_candidate` with an assigned category): inserted with its scanned quantity and brand, `source = 'scan'`, stamped as verified, and the staged row is removed.
    - **Anything else** (unknown, unnamed, or no category): stays staged until confirmed or removed. An unknown item becomes a confirmed new item only when edited to have a name; editing other fields leaves it `unknown`. The server enforces this, and no placeholder name is ever written to the catalog.
 
    The session is marked `completed` once no staged rows remain. `last_verified_by` and `last_verified_session_id` are plain associations without FKs.
@@ -90,7 +90,7 @@ UPC is a scan identifier, not a guaranteed external item identity. The external 
    - the starting quantity of new items added by a session commit
 
    Scanning an existing item never changes it. The former `POST /api/inventory/batch` quantity-increment route was removed.
-8. **Logs and deletion.** `logs` entries older than 90 days are deleted at startup and daily. Deleting a store also deletes its logs, sessions, staged items, inventory, categories, memberships, and the users who belong only to that store. Logs are therefore unsuitable as long-term evidence.
+8. **Logs and deletion.** `logs` entries older than 90 days are deleted at startup and daily. The same sweep removes scan sessions that were never scanned into a day after they expire, and emptied completed sessions after 90 days. The superadmin activity feed is a filtered view of `logs`; "mark as seen" only moves `users.activity_seen_log_id` and deletes nothing. Deleting a store also deletes its logs, sessions, staged items, inventory, categories, memberships, and the users who belong only to that store. Logs are therefore unsuitable as long-term evidence.
 9. **Values and types.** Status values are plain text without database `CHECK` constraints, and casing differs by table:
    - `inventory`/`categories`: `Active`/`Inactive`, validated by routes
    - `stores`: lowercase

@@ -1,6 +1,6 @@
 # OptiCapture Technical Reference
 
-Last updated: 2026-09-22
+Last updated: 2026-10-13
 
 For engineering collaborators. Covers the current application structure, data model, API surface, scan lifecycle, security posture, and known trade-offs.
 
@@ -21,7 +21,8 @@ Key capabilities:
 - Inventory export to XLSX, CSV, JSON, and PDF.
 - External mapping fields for future integration and reconciliation.
 - Store-scoped audit logs.
-- Superadmin panel for store, status, user access, and password reset management.
+- Superadmin oversight of every store's inventory: per-store item views and edits, search across stores, recently added items, and an activity log.
+- Superadmin store management: status, details, user access, and password resets.
 
 ## 2. Runtime Structure
 
@@ -31,19 +32,20 @@ server.ts
   - validates JWT_SECRET
   - imports src/server/db.ts for migrations/seeds
   - creates the Express app with createApp()
-  - mounts /api/server-info
-  - creates HTTP or HTTPS server
-  - attaches Vite middleware in development
+  - creates the HTTP or HTTPS server
+  - attaches Vite middleware in development (Vite is not loaded in production)
   - serves dist/ in production
-  - starts listening on port 3000
+  - listens on PORT (default 3000)
 
 src/server/app.ts
   - exports createApp()
-  - configures trust proxy, Helmet, JSON parsing, cookies
+  - configures trust proxy (TRUST_PROXY), Helmet, JSON parsing, cookies
+  - exposes /api/health before the rate limiter
   - rate-limits API requests before body parsing and validates JSON object bodies
   - serves /uploads and /icons
-  - exposes /api/drive-image/:fileId
+  - exposes /api/drive-image/:fileId and /api/server-info
   - mounts API routers
+  - answers unknown /api paths with a JSON 404
   - registers the JSON error handler
 ```
 
@@ -53,13 +55,13 @@ Tests import `createApp()` directly, so API coverage can run without a live port
 
 | Layer | Library | Version | Notes |
 |---|---|---|---|
-| Runtime | Node.js | 18+ | ESM project, executed with `tsx` in dev |
+| Runtime | Node.js | 20 in CI | ESM project, executed with `tsx` (`npm run dev`, `npm start`) |
 | Backend | Express | 4.21 | App factory plus route modules |
 | Database | better-sqlite3 | 12.4 | Synchronous SQLite driver, WAL mode |
 | Auth | jsonwebtoken | 9.0 | HS256, httpOnly cookie |
 | Passwords | bcryptjs | 3.0 | Hashing for credential accounts |
 | Security | helmet | 8.1 | CSP, HSTS, frame guards |
-| Rate limiting | express-rate-limit | 8.3 | Auth, API, and scan tiers |
+| Rate limiting | express-rate-limit | 8.3 | Auth, API, and per-session/device scan tiers |
 | OAuth | google-auth-library | 10.6 | Google OAuth ID token verification |
 | File upload | multer | 2.1 | In-memory import buffer |
 | Excel | exceljs | 4.4 | XLSX parse/export |
@@ -71,7 +73,8 @@ Tests import `createApp()` directly, so API coverage can run without a live port
 | Styling | Tailwind CSS | 4.1 | Via `@tailwindcss/vite` |
 | Animation | Motion | 12.23 | `motion/react` |
 | Icons | lucide-react | 0.546 | UI icon set |
-| Tests | Vitest + Supertest + Playwright | current lockfile | Unit, integration, and e2e coverage |
+| Scanning | @zxing/library | 0.21 | Lazy-loaded camera fallback when `BarcodeDetector` is unavailable |
+| Tests | Vitest + Supertest + Playwright | 4.1 / 7.2 / 1.62 | Unit, integration, and e2e coverage |
 
 ## 4. Local Setup
 
@@ -81,16 +84,23 @@ cp .env.example .env
 npm run dev
 ```
 
-Important local environment values:
+Environment values (see `.env.example`):
 
 ```text
 JWT_SECRET=<required>
+NODE_ENV=<development|production|test>
+PORT=<optional, default 3000>
+PUBLIC_BASE_URL=<public HTTPS origin phones open from the QR code; required in production>
+TRUST_PROXY=<optional; which proxies may set X-Forwarded-For>
+DATABASE_PATH=<optional; default opticapture.db at the repo root>
+UPLOADS_DIR=<optional; default ./uploads>
+BACKUP_DIR=<optional; used by npm run db:backup>
+BACKUP_KEEP=<optional; how many backups db:backup keeps, default 14>
 GOOGLE_CLIENT_ID=<optional>
 GOOGLE_CLIENT_SECRET=<optional>
 GOOGLE_REDIRECT_URI=<optional>
 UPCITEMDB_API_KEY=<optional>
 GO_UPC_API_KEY=<optional paid provider>
-NODE_ENV=<development|production|test>
 ALLOW_DEMO_SEED=<true for local demo seed only>
 TUNNEL_HOST=<optional local tunnel host>
 DISABLE_HMR=<optional>
@@ -106,6 +116,8 @@ npm run test:coverage
 npm run test:e2e
 npm run build
 npm run test:full
+npm start          # production: tsx server.ts
+npm run db:backup  # online SQLite backup
 ```
 
 `npm run dev:scan` runs the dev server and tunnel helper together for phone scanning outside localhost.
@@ -131,13 +143,21 @@ Current routes:
 | `/login` | `Login.tsx` | Credential and OAuth entry |
 | `/signup` | `Signup.tsx` | Store/owner registration and OAuth pending signup |
 | `/choose-store` | `StorePicker.tsx` | Per-tab active-store selection |
-| `/admin` | `SuperAdmin.tsx` | Superadmin only |
-| `/mobile-scan/:sessionId` | `MobileScan.tsx` | OTP-based phone scanner |
+| `/mobile-scan/:sessionId` | `MobileScan.tsx` | OTP-based phone scanner; no login |
 | `/` | `Dashboard.tsx` | Main inventory dashboard |
 | `/scan` | `Scan.tsx` | Desktop scan session workspace |
-| `/import` | `Import.tsx` | Batch import wizard |
-| `/logs` | `Logs.tsx` | Owner audit log view |
+| `/import` | `Import.tsx` | Batch import wizard (owner) |
+| `/logs` | `Logs.tsx` | Audit log view (owner) |
 | `/settings` | `StoreSettings.tsx` | Store profile and password change |
+| `/admin` | `AdminDashboard.tsx` | Superadmin: all stores, needs attention, recent changes |
+| `/admin/recent` | `AdminRecentItems.tsx` | Superadmin: items added in the last 1, 7 or 30 days |
+| `/admin/search` | `AdminItemSearch.tsx` | Superadmin: item search across stores |
+| `/admin/activity` | `AdminActivity.tsx` | Superadmin: store events and captures, with mark-as-seen |
+| `/admin/stores` | `SuperAdmin.tsx` | Superadmin: store settings, users, password resets |
+| `/admin/stores/:id` | `AdminStoreInventory.tsx` | Superadmin: one store's inventory |
+| `/admin/stores/:id/items` and `/items/:itemId` | `AdminItemDetail.tsx` | Superadmin: item view and edit |
+
+Superadmins are redirected to `/admin` from the store pages; other roles are redirected away from `/admin`. Navigation lives in a collapsible left sidebar in both the store portal (`components/Layout.tsx`) and the Super Admin shell (`components/superadmin/AdminLayout.tsx`).
 
 Feature folders:
 
@@ -152,10 +172,11 @@ Feature folders:
 
 Stateful hooks:
 
-- dashboard: `useDashboardStats`, `useActiveSessions`, `useGlobalSearch`, `useCategoryManagement`, `useItemManagement`
+- dashboard: `useDashboardStats`, `useActiveSessions`, `useCategoryManagement`, `useItemManagement`
 - scan: `useScanSession`, `useHardwareScanner`, `useDraftManagement`, `useCommitModal`, `useEditItem`, `useServerInfo`, `useToast`
 - mobile scan: `useMobileScan`
-- admin/settings/import/logs/signup: `useAdminStores`, `useStoreUsers`, `useStoreSettings`, `useImportWorkflow`, `useLogsPage`, `useSignupFlow`
+- settings/import/logs/signup: `useStoreSettings`, `useImportWorkflow`, `useLogsPage`, `useSignupFlow`
+- superadmin: `useAdminStores`, `useStoreUsers`, `useAdminStoreList`, `useAdminStoreInventory`, `useAdminItemDetail`, `useAdminItemList` (shared by `useAdminRecentItems`, `useAdminItemSearch` and the activity log), `useAdminActivity`
 
 ## 6. Database Schema
 
@@ -184,10 +205,10 @@ Core tables:
 Important current columns:
 
 - `stores`: `name`, `street`, `city`, `zipcode`, `state`, `address`, `phone`, `email`, `logo`, `status`, `store_code`.
-- `users`: `username`, `password`, `role`, `store_id`, `store_name`, `email`, `oauth_provider`, `oauth_id`, `failed_login_attempts`, `locked_until`, `token_version`, `must_reset_password`.
-- `inventory`: item fields plus `external_system`, `external_store_id`, `external_category_id`, `external_item_id`, `external_sku`, `last_imported_at`, `last_exported_at`, `sync_status`.
-- `scan_sessions`: `session_id`, `otp`, `user_id`, `store_id`, `status`, `label`, `expires_at`, `otp_attempts`.
-- `session_items`: `upc`, `quantity`, `lookup_status`, `product_name`, `brand`, `image`, `source`, `exists_in_inventory`, `sale_price`, `unit`, `tag_names`, `device_id`, `updated_at`.
+- `users`: `username`, `password`, `role`, `store_id`, `store_name`, `email`, `oauth_provider`, `oauth_id`, `failed_login_attempts`, `locked_until`, `token_version`, `must_reset_password`, `activity_seen_log_id`.
+- `inventory`: item fields (including `brand`) plus `source` (`manual`, `import` or `scan`), `last_verified_at`, `last_verified_by`, `last_verified_session_id`, `external_system`, `external_store_id`, `external_category_id`, `external_item_id`, `external_sku`, `last_imported_at`, `last_exported_at`, `sync_status`.
+- `scan_sessions`: `session_id`, `otp`, `user_id`, `store_id`, `status`, `label`, `expires_at`, `otp_attempts`, `scan_window_started_at`.
+- `session_items`: `upc`, `quantity`, `lookup_status`, `product_name`, `brand`, `image`, `source`, `exists_in_inventory`, `sale_price`, `unit`, `tag_names`, `device_id`, `recent_scan_ids`, `updated_at`.
 
 Useful indexes include:
 
@@ -197,11 +218,14 @@ Useful indexes include:
 - `idx_inventory_upc_store`
 - `idx_inventory_number_store`
 - `idx_inventory_external_item_store`
+- `idx_inventory_store_created`
+- `idx_inventory_created`
+- `idx_inventory_trimmed_upc`
 - `idx_scan_sessions_store_status`
 - `idx_scan_sessions_user_store`
 - `idx_logs_store_ts`
 
-Migrations are defined in `src/server/db.ts` with `runMigration(version, fn)` and are designed to be idempotent.
+Migrations are defined in `src/server/db.ts` with `runMigration(version, fn)` and are designed to be idempotent. The current code has migrations 1 through 26. The full DDL is in [database-schema.sql](database-schema.sql), generated from the migrations.
 
 ## 7. Authentication And Authorization
 
@@ -227,7 +251,7 @@ Request enforcement:
 - revoked tokens are rejected
 - token version mismatch invalidates the session
 - users with `must_reset_password` are restricted until they update their password
-- superadmin requests bypass store resolution for admin operations
+- superadmin requests bypass store resolution; admin routes take the store from the URL
 - single-store users auto-resolve to their active store
 - multi-store users must send a valid `X-Store-Id`
 - suspended stores are rejected
@@ -274,7 +298,8 @@ Google OAuth flow:
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/api/inventory` | cookie | List/search inventory; always returns `{ items, total, page, limit }` (default 50, maximum 500) |
-| GET | `/api/inventory/export?format=xlsx|csv|json|pdf` | owner | Export inventory and mark rows exported |
+| GET | `/api/inventory/ids` | cookie | IDs of every item in one category, for select-all across pages |
+| GET | `/api/inventory/export?format=xlsx|csv|json|pdf` | owner | Export inventory; data files mark rows exported, PDF does not |
 | POST | `/api/inventory` | owner/taker | Create item |
 | PUT | `/api/inventory/:id` | owner/taker | Update item |
 | DELETE | `/api/inventory/:id` | owner/taker | Delete item |
@@ -304,7 +329,7 @@ Google OAuth flow:
 | GET | `/api/session/:id/meta` | cookie | Read session metadata |
 | GET | `/api/session/:id/items` | OTP (`X-Scan-Otp` header) | Mobile session item list |
 | GET | `/api/session/:id` | cookie | Desktop poll; supports `since_updated_at` and `since_id` |
-| POST | `/api/session/:id/scan` | OTP | Add/increment scanned item |
+| POST | `/api/session/:id/scan` | OTP (request body) | Add/increment scanned item; a repeated `scan_id` is ignored |
 | PATCH | `/api/session/:id/items/:itemId` | cookie | Edit staged item |
 | DELETE | `/api/session/:id/items` | cookie | Clear staged items |
 | DELETE | `/api/session/:id/items/:itemId` | cookie | Delete staged item |
@@ -318,22 +343,34 @@ Google OAuth flow:
 
 ### Admin
 
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| GET | `/api/admin/stores` | superadmin | List stores with user/item counts |
-| PUT | `/api/admin/stores/:id/status` | superadmin | Activate or suspend store |
-| GET | `/api/admin/stores/:id/users` | superadmin | List users with store access |
-| POST | `/api/admin/stores/:id/users` | superadmin | Grant existing user access or create store user |
-| DELETE | `/api/admin/stores/:id/users/:userId` | superadmin | Revoke non-primary store access |
-| DELETE | `/api/admin/stores/:id` | superadmin | Delete a store and its data |
-| PUT | `/api/admin/stores/:id` | superadmin | Edit store details |
-| POST | `/api/admin/users/:userId/reset-password` | superadmin | Generate one-time password and force reset |
+Every admin route requires the superadmin role. The store is named in the URL, never taken from the session, and the internal HQ store (`id = 0`) is refused.
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/admin/stores` | List stores with user, item, category, weekly-added and missing-UPC counts |
+| GET | `/api/admin/stores/:id` | One store's summary |
+| PUT | `/api/admin/stores/:id` | Edit store details |
+| PUT | `/api/admin/stores/:id/status` | Activate or suspend store |
+| DELETE | `/api/admin/stores/:id` | Delete a store and its data |
+| GET | `/api/admin/stores/:id/inventory` | Paged item list for one store (same filters as `GET /api/inventory`) |
+| GET | `/api/admin/stores/:id/categories` | Category list with item counts for one store |
+| GET | `/api/admin/stores/:id/items/:itemId` | One item, plus the other stores that carry the same UPC |
+| PUT | `/api/admin/stores/:id/items/:itemId` | Edit an item; logged to that store with before and after values; refused for suspended stores and when the item changed since it was opened |
+| GET | `/api/admin/recent-items` | Items added in the last 1, 7 or 30 days (`days`), optionally one store (`store`), paged |
+| GET | `/api/admin/search` | Find items by name, UPC, brand, category or tag (`q`), optionally one store, paged |
+| GET | `/api/admin/activity` | Store events and captures. With `page`: 50 a page, filtered by `store` and `kind`. Without: the latest `limit` (default 5). Returns `unseen` and `newest` |
+| POST | `/api/admin/activity/seen` | Mark every change up to `through` as seen for this superadmin |
+| GET | `/api/admin/stores/:id/users` | List users with store access |
+| POST | `/api/admin/stores/:id/users` | Grant existing user access or create store user |
+| DELETE | `/api/admin/stores/:id/users/:userId` | Revoke non-primary store access |
+| POST | `/api/admin/users/:userId/reset-password` | Generate one-time password and force reset |
 
 ### Utility
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/api/server-info` | public | LAN/tunnel URL details for QR generation |
+| GET | `/api/health` | public | Liveness check; `503` when the database cannot be read. Not rate-limited |
+| GET | `/api/server-info` | public | URL for the scan QR code: `PUBLIC_BASE_URL` when set, otherwise the tunnel or LAN address |
 | GET | `/api/drive-image/:fileId` | public | Server-side Google Drive image proxy |
 
 ## 9. Scan Session Lifecycle
@@ -352,7 +389,7 @@ Phone opens QR link
 
 Phone scans barcode
   -> POST /api/session/:id/scan
-     body: { upc, otp, item_name? }
+     body: { upc, otp, item_name?, scan_id }
      header: X-Device-Id
   <- staged item
 
@@ -368,10 +405,13 @@ Owner reviews selected items
 Session behavior:
 
 - Empty active sessions are reused for the same user and store.
-- Phone scanning on a session expires 8 hours after creation, resume, or the latest scan.
+- Phone scanning on a session expires 8 hours after creation, resume, or the latest scan, and never later than 24 hours after a signed-in user last started or resumed it.
+- The OTP reaches the phone after `#` in the QR link and is sent to the API in a header or the request body, so it does not appear in any URL the server logs.
 - An expired session that holds scans becomes a draft. Drafts stay listed until committed or deleted; resuming one starts a new scan window and clears the wrong-OTP counter.
 - Completed sessions cannot be reactivated or deleted.
-- Duplicate UPC scans increment quantity.
+- Duplicate UPC scans increment quantity. A resent request carrying a `scan_id` already recorded is not counted twice.
+- Barcodes that fail the GTIN check digit are staged as `invalid_barcode` and cannot be committed.
+- Sessions that were never scanned into are removed a day after they expire; emptied completed sessions after 90 days.
 - Device IDs are preserved when a staged item belongs to one device; mixed-device duplicates are treated as shared.
 
 ## 10. UPC Resolution Pipeline
@@ -434,10 +474,12 @@ Confirm:
 
 `GET /api/inventory/export` accepts `format=xlsx|csv|json|pdf`.
 
-Before generating output, the server stamps the store's inventory rows with:
+XLSX, CSV and JSON exports are data files that can be re-imported, so once the file is built the server stamps the store's inventory rows with:
 
 - `last_exported_at`
 - `sync_status='exported'`
+
+A PDF export is a report and changes nothing.
 
 Export columns include local inventory fields plus external mapping fields so exports can round-trip with an upstream platform.
 
@@ -447,9 +489,11 @@ Rate limits:
 
 | Tier | Limit | Scope |
 |---|---|---|
-| Auth | 20 requests / 15 minutes | Login, registration, OAuth start/pending |
-| API | 2000 requests / 15 minutes | All `/api/*` routes |
-| Scan | 60 requests / 60 seconds | OTP scan endpoints |
+| Auth | 20 requests / 15 minutes per IP | Login, registration, OAuth start/pending |
+| API | 2000 requests / 15 minutes per IP | All `/api/*` routes except the OTP scan endpoints and `/api/health` |
+| Scan | per minute: 150 per device, 600 per session, 1200 per IP | OTP scan and phone sync endpoints |
+
+Scan limits are keyed by session and device because every phone in a store shares one public IP.
 
 Mitigations:
 
@@ -461,7 +505,9 @@ Mitigations:
 - All tenant data routes filter by `req.user.store_id`.
 - OAuth state nonce protects the callback flow.
 - Account lockout slows credential guessing.
-- OTP attempts and scan rate limits reduce brute-force risk.
+- OTP attempts (5 per session) and scan rate limits reduce brute-force risk.
+- The scan OTP is kept out of URLs, so it is not written to access logs or left in the phone's history.
+- Client IPs come from `X-Forwarded-For` only when the request arrives through a trusted proxy (`TRUST_PROXY`).
 - Prepared SQLite statements are used throughout the routes.
 - File/image upload paths validate supported formats.
 - Drive proxy validates file IDs and only returns image content.
@@ -469,6 +515,8 @@ Mitigations:
 - Malformed JSON and non-object JSON API bodies receive stable 400 responses.
 - Suspended stores and expired sessions are rejected throughout OTP scan paths.
 - Uploaded files are served with dotfiles denied and download disposition.
+- Uploaded image files are deleted once no item, store logo or staged scan points at them.
+- Superadmin item edits are written to the target store's audit log with before and after values.
 
 ## 14. Performance Characteristics
 
@@ -500,8 +548,22 @@ Current scale assumption: one application instance with SQLite WAL and local upl
 | 10 | `src/hooks/useMobileScan.ts` | Phone scanner workflow |
 | 11 | `src/lib/apiFetch.ts` | Active-store header injection |
 | 12 | `src/lib/mobileScanScanner.ts` | Native/Zxing scan runtime |
+| 13 | `src/server/routes/admin.ts` | Superadmin store management and inventory oversight |
+| 14 | `src/components/superadmin/` | Super Admin shell, shared list page and tables |
 
-## 16. Technical Debt And Roadmap
+## 16. Testing
+
+| Layer | Where | What it covers |
+|---|---|---|
+| API integration | `tests/*.test.ts` | Routes and middleware through `createApp()` with Supertest, each file on its own in-memory SQLite database |
+| Hooks and pages | `tests/*.test.tsx` | React hooks and Super Admin pages in jsdom with a stubbed `fetch`; each file opts in with `// @vitest-environment jsdom` |
+| Browser | `e2e/app.e2e.ts` | Playwright against the Vite dev server with mocked API routes: login, phone scan, camera permission, category view, export |
+
+As of 2026-10-13 the suite has 446 Vitest tests in 35 files and 6 Playwright tests. Coverage is measured over the server and the scan hooks: 87% of statements, with server routes between 84% and 97%. `npm run test:full` runs type-check, ESLint, coverage, browser tests and the build; CI runs the same steps on every pull request.
+
+Not covered by automation: the phone camera on real devices, and load or concurrency behaviour.
+
+## 17. Technical Debt And Roadmap
 
 Current debt:
 
@@ -513,14 +575,14 @@ Current debt:
 | In-memory OAuth/token/UPC caches | Lost on restart and not shared across instances | Redis or persistent tables |
 | Polling scan updates | Simple but chatty | SSE or WebSockets |
 | Mixed API error shapes | Harder client integration | Standard response envelope |
-| Scan hook coverage | Network, reconnect, and draft transitions have limited component coverage | Add hook/component integration tests |
+| Camera path coverage | The phone and hardware scan hooks are tested mounted (sync, submit, retry, draft, keyboard-wedge input), but the camera start/stop path runs only on a real device | Validate on real devices; see the next row |
 | Device-dependent camera behavior | Desktop automation cannot represent the full mobile matrix | Validate supported iOS/Android browsers and lighting conditions |
 
 Near-term engineering priorities:
 
 1. Keep `TECHNICAL.md` and `ARCHITECTURE.md` updated when route or schema boundaries move.
 2. Add schema validation around auth, inventory, import, admin, and session payloads.
-3. Add explicit integration tests for multi-store active-store headers and scan reconnection paths.
+3. Add explicit integration tests for multi-store active-store headers.
 4. Add load/concurrency tests for large imports and shared scan sessions.
 5. Add reconciliation/export history for the integration workflow.
-6. Prepare a deployment guide with migration backup and integrity checks once the production host is chosen.
+6. Prepare a deployment guide once the production host is chosen. `npm run db:backup` already takes an online backup and keeps the latest 14.

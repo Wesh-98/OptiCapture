@@ -29,7 +29,7 @@ CREATE TABLE inventory (
     tag_names TEXT,
     store_id INTEGER NOT NULL DEFAULT 1,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP, external_system TEXT, external_store_id TEXT, external_category_id TEXT, external_item_id TEXT, external_sku TEXT, last_imported_at TEXT, last_exported_at TEXT, sync_status TEXT, last_verified_at TEXT, last_verified_by INTEGER, last_verified_session_id TEXT, brand TEXT,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP, external_system TEXT, external_store_id TEXT, external_category_id TEXT, external_item_id TEXT, external_sku TEXT, last_imported_at TEXT, last_exported_at TEXT, sync_status TEXT, last_verified_at TEXT, last_verified_by INTEGER, last_verified_session_id TEXT, brand TEXT, source TEXT,
     UNIQUE(upc, store_id),
     FOREIGN KEY(category_id) REFERENCES categories(id),
     FOREIGN KEY(store_id) REFERENCES stores(id)
@@ -101,7 +101,7 @@ CREATE TABLE "users" (
             oauth_id TEXT,
             failed_login_attempts INTEGER DEFAULT 0,
             locked_until DATETIME,
-            token_version INTEGER NOT NULL DEFAULT 1,
+            token_version INTEGER NOT NULL DEFAULT 1, activity_seen_log_id INTEGER NOT NULL DEFAULT 0,
             UNIQUE(username, store_id),
             FOREIGN KEY(store_id) REFERENCES stores(id)
           );
@@ -109,6 +109,8 @@ CREATE TABLE "users" (
 CREATE INDEX idx_categories_store ON categories(store_id);
 
 CREATE INDEX idx_inventory_category_store ON inventory(category_id, store_id);
+
+CREATE INDEX idx_inventory_created ON inventory(created_at DESC);
 
 CREATE UNIQUE INDEX idx_inventory_external_item_store
   ON inventory(external_system, external_item_id, store_id)
@@ -120,7 +122,11 @@ CREATE UNIQUE INDEX idx_inventory_number_store
     ON inventory(number, store_id)
     WHERE number IS NOT NULL AND number != '';
 
+CREATE INDEX idx_inventory_store_created ON inventory(store_id, created_at DESC);
+
 CREATE INDEX idx_inventory_store_updated ON inventory(store_id, updated_at DESC);
+
+CREATE INDEX idx_inventory_trimmed_upc ON inventory(TRIM(upc));
 
 CREATE INDEX idx_logs_store_ts ON logs(store_id, timestamp DESC);
 
