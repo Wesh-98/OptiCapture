@@ -25,7 +25,7 @@ import {
 import { findItemIdByUpc } from './inventory.js';
 import { SESSION_STATUS } from '../types.js';
 import { logError } from '../logger.js';
-import { discardUploads } from '../uploads.js';
+import { assertStoreUpload, discardUploads } from '../uploads.js';
 
 export const sessionsRouter = express.Router();
 
@@ -1011,9 +1011,9 @@ sessionsRouter.patch('/session/:id/items/:itemId', authenticateToken, (req: Auth
   if (upcConflict) return res.status(409).json({ error: upcConflict });
 
   try {
-    const sanitizedImage = clean.rawImage
-      ? saveBase64Image(normalizeImageUrl(clean.rawImage))
-      : null;
+    const normalizedImage = clean.rawImage ? normalizeImageUrl(clean.rawImage) : null;
+    const sanitizedImage = normalizedImage ? saveBase64Image(normalizedImage) : null;
+    if (normalizedImage) assertStoreUpload(session.store_id, normalizedImage, sanitizedImage);
 
     if (sanitizedImage && sanitizedImage.length > 2000) {
       return res.status(400).json({ error: 'Image URL must be 2000 characters or fewer' });

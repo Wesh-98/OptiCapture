@@ -1,5 +1,10 @@
 import { db } from './db.js';
-import { removeUploadedFiles, uploadFileName } from './helpers.js';
+import {
+  UnsupportedImageTypeError,
+  removeUploadedFiles,
+  savedUploadPath,
+  uploadFileName,
+} from './helpers.js';
 import { logError } from './logger.js';
 
 /**
@@ -47,4 +52,42 @@ export function discardUploads(candidates: Iterable<string | null | undefined>):
   removeUnreferencedUploads(candidates).catch(error =>
     logError('uploads', error, 'Failed to remove unused uploads')
   );
+}
+
+/**
+ * True when a row of this store already points at the upload: one of its items, a staged
+ * scan in one of its sessions, or its logo. An item may name an existing upload (re-saving an
+ * item keeps its photo; re-importing an export keeps its images) but only one of its own
+ * store's, or a store could show, and later lay claim to, another tenant's file. Compared by
+ * uploadFileName, the key the unlink uses.
+ */
+export function storeReferencesUpload(storeId: number | undefined, value: string): boolean {
+  const name = uploadFileName(value);
+  if (!name) return false;
+  const rows = db
+    .prepare(
+      `SELECT image AS path FROM inventory WHERE store_id = ? AND instr(image, ?) > 0
+       UNION ALL
+       SELECT si.image FROM session_items si JOIN scan_sessions s ON s.session_id = si.session_id
+        WHERE s.store_id = ? AND instr(si.image, ?) > 0
+       UNION ALL
+       SELECT logo FROM stores WHERE id = ? AND instr(logo, ?) > 0`
+    )
+    .all(storeId, name, storeId, name, storeId, name) as Array<{ path: string }>;
+  return rows.some(row => uploadFileName(row.path) === name);
+}
+
+/**
+ * Throws when `saved` (what saveBase64Image returned for `normalized`) names an existing
+ * upload this store does not reference. A photo the call has just written is the store's own.
+ */
+export function assertStoreUpload(
+  storeId: number | undefined,
+  normalized: string,
+  saved: string | null
+): void {
+  if (!saved?.startsWith('/uploads/') || savedUploadPath(normalized, saved) !== null) return;
+  if (!storeReferencesUpload(storeId, saved)) {
+    throw new UnsupportedImageTypeError('That photo is not one of this store’s uploads');
+  }
 }

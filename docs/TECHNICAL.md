@@ -534,7 +534,7 @@ Mitigations:
 - Suspended stores and expired sessions are rejected throughout OTP scan paths.
 - Uploaded files are served with dotfiles denied and download disposition.
 - Uploaded image files are deleted once no item, store logo or staged scan points at them.
-- An item or staged-scan image must be an `http(s)://` link, a Google Drive link (stored as `/api/drive-image/:id`), an uploaded photo (`/uploads/<file>`) or a JPG/PNG/GIF/WEBP data image (saved to uploads). Anything else — a same-origin path such as `/api/...`, a `//host` link, another scheme — is refused with `400`; an import leaves it off the item and reports the row. Migration 27 cleared stored values outside this rule.
+- An item or staged-scan image must be an `http(s)://` link, a Google Drive link (stored as `/api/drive-image/:id`), an uploaded photo (`/uploads/<file>`) or a JPG/PNG/GIF/WEBP data image (saved to uploads). Anything else — a same-origin path such as `/api/...`, a `//host` link, another scheme — is refused with `400`; an import leaves it off the item and reports the row. An existing `/uploads/` file is accepted only when one of the store's own items, staged scans or its logo already uses it. Migration 27 cleared stored values outside this rule, including data values that are not JPG/PNG/GIF/WEBP.
 - Superadmin item edits are written to the target store's audit log with before and after values.
 
 ## 14. Performance Characteristics

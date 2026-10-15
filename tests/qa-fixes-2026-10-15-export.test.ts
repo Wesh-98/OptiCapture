@@ -136,6 +136,10 @@ describe('M11: item image values', () => {
   ];
 
   it('refuses anything but a web link, Drive image or uploaded photo when adding', async () => {
+    // An existing upload is only accepted when the store already uses it.
+    db.prepare(
+      "INSERT INTO inventory (item_name, upc, image, store_id) VALUES ('Has photo', '329999999999', '/uploads/2f0c8a1e-photo.png', ?)"
+    ).run(storeId);
     for (const [index, image] of refused.entries()) {
       const res = await request
         .post('/api/inventory')
@@ -183,18 +187,68 @@ describe('M11: item image values', () => {
   });
 });
 
+describe('M11: images that are another store’s uploads', () => {
+  it('are refused on add, edit and scan edits, while a store keeps its own', async () => {
+    const other = await registerStore(request, { storeName: 'Other Mart', username: 'qaother' });
+    const theirs = '/uploads/0000aaaa-other-store.png';
+    db.prepare(
+      "INSERT INTO inventory (item_name, upc, image, store_id) VALUES ('Theirs', '350000000001', ?, ?)"
+    ).run(theirs, other.storeId);
+    const mine = '/uploads/0000bbbb-this-store.png';
+    const own = db
+      .prepare(
+        "INSERT INTO inventory (item_name, upc, image, store_id) VALUES ('Mine', '350000000002', ?, ?)"
+      )
+      .run(mine, storeId).lastInsertRowid;
+
+    const add = await request
+      .post('/api/inventory')
+      .set('Cookie', cookie)
+      .send({ item_name: 'Borrowed', upc: '350000000003', image: theirs });
+    expect(add.status).toBe(400);
+    expect(add.body.error).toMatch(/not one of this store/);
+
+    const edit = await request
+      .put(`/api/inventory/${own}`)
+      .set('Cookie', cookie)
+      .send({ image: theirs });
+    expect(edit.status).toBe(400);
+
+    // Re-saving an item with its own photo, as the edit form does, is fine.
+    const keep = await request
+      .put(`/api/inventory/${own}`)
+      .set('Cookie', cookie)
+      .send({ item_name: 'Mine renamed', image: mine });
+    expect(keep.status).toBe(200);
+
+    const session = (await request.post('/api/session/create').set('Cookie', cookie)).body;
+    const staged = db
+      .prepare(
+        "INSERT INTO session_items (session_id, upc, product_name, lookup_status, source) VALUES (?, '012000001291', 'Staged', 'new_candidate', 'manual')"
+      )
+      .run(session.sessionId).lastInsertRowid;
+    const scanEdit = await request
+      .patch(`/api/session/${session.sessionId}/items/${staged}`)
+      .set('Cookie', cookie)
+      .send({ image: theirs });
+    expect(scanEdit.status).toBe(400);
+  });
+});
+
 describe('L12: a bad image in an import row', () => {
   it('leaves the picture off but still imports the item', async () => {
     const csv = [
       'UPC,Item Name,Image',
       '340000000001,Api image,/api/inventory/export?format=json',
-      '340000000002,Svg data,data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=',
+      // Quoted: the comma after "base64" would otherwise split the value into two columns.
+      '340000000002,Svg data,"data:image/svg+xml;base64,PHN2Zz48L3N2Zz4="',
       '340000000003,Good image,https://images.example.com/ok.png',
     ].join('\n');
     const up = await request
       .post('/api/inventory/batch-upload')
       .set('Cookie', cookie)
       .attach('file', Buffer.from(csv), { filename: 'img.csv', contentType: 'text/csv' });
+    expect(up.body.sheets[0].rows[1].Image).toBe('data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=');
     const res = await request
       .post('/api/inventory/batch-confirm')
       .set('Cookie', cookie)

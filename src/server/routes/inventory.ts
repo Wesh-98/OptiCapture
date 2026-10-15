@@ -23,7 +23,7 @@ import { isReservedCategoryName } from './categories.js';
 import { IMPORT_FIELDS, isGenericSheetName, isKnownHeader } from '../../shared/importHeaders.js';
 import type { AuthRequest } from '../types.js';
 import { logError } from '../logger.js';
-import { discardUploads } from '../uploads.js';
+import { assertStoreUpload, discardUploads, storeReferencesUpload } from '../uploads.js';
 
 export const inventoryRouter = express.Router();
 
@@ -850,6 +850,7 @@ inventoryRouter.post(
       const savedImage = normalizedImage ? saveBase64Image(normalizedImage) : null;
       createdUpload =
         normalizedImage && savedImage ? savedUploadPath(normalizedImage, savedImage) : null;
+      if (normalizedImage) assertStoreUpload(user.store_id, normalizedImage, savedImage);
       const info = db.transaction(() => {
         const row = db
           .prepare(
@@ -1031,7 +1032,11 @@ function upcChangeError(
 // Builds the SET list from the fields the client sent. A new image is written to disk here,
 // before the update runs; `createdUpload` names that file so it can be removed if the update
 // then fails and no row points at it.
-function buildItemUpdate(body: Record<string, any>, numbers: ItemNumbers) {
+function buildItemUpdate(
+  body: Record<string, any>,
+  numbers: ItemNumbers,
+  storeId: number | undefined
+) {
   const assignments = ['updated_at = CURRENT_TIMESTAMP'];
   const values: unknown[] = [];
   const assign = (column: string, value: unknown) => {
@@ -1048,6 +1053,7 @@ function buildItemUpdate(body: Record<string, any>, numbers: ItemNumbers) {
     const savedImage = normalizedImage ? saveBase64Image(normalizedImage) : null;
     createdUpload =
       normalizedImage && savedImage ? savedUploadPath(normalizedImage, savedImage) : null;
+    if (normalizedImage) assertStoreUpload(storeId, normalizedImage, savedImage);
     assign('image', savedImage);
   }
   return { assignments, values, createdUpload };
@@ -1161,7 +1167,7 @@ export function updateInventoryItem(
   };
 
   try {
-    const update = buildItemUpdate(body, numbers);
+    const update = buildItemUpdate(body, numbers, storeId);
     createdUpload = update.createdUpload;
     const defaultDetails = `Updated item "${body.item_name?.trim() || existingItem.item_name}"`;
     const changes = applyItemUpdate({ itemId, storeId, userId }, update, defaultDetails, options);
@@ -1677,13 +1683,6 @@ inventoryRouter.post(
         AND external_system = ?
     `
     );
-    // An import may name an existing upload — that is how re-importing an export keeps its
-    // images — but only one this store already references. Without that check a sheet could
-    // point a row at any other tenant's upload, and the cleanup paths below would then treat
-    // it as this store's file to delete.
-    const storeOwnsUpload = db.prepare(
-      'SELECT 1 FROM inventory WHERE store_id = ? AND image = ? LIMIT 1'
-    );
     const checkNum = db.prepare('SELECT id FROM inventory WHERE number = ? AND store_id = ?');
     const checkExternalSku = db.prepare(
       'SELECT id FROM inventory WHERE external_sku = ? AND store_id = ?'
@@ -2044,10 +2043,12 @@ inventoryRouter.post(
       // Only what this import actually wrote counts as its own, so a rollback cannot
       // delete a file the sheet merely referenced.
       upload.path = normalizedImage && image ? savedUploadPath(normalizedImage, image) : null;
+      // An import may name an existing upload — that is how re-importing an export keeps its
+      // images — but only one this store already references (storeReferencesUpload).
       if (
         !upload.path &&
         image?.startsWith('/uploads/') &&
-        !storeOwnsUpload.get(user.store_id, image)
+        !storeReferencesUpload(user.store_id, image)
       ) {
         rowError(
           workItem,

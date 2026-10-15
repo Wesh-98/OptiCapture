@@ -771,7 +771,8 @@ runMigration(26, () => {
 // Migration 27: item and staged-scan images are now only web links, proxied Drive images or
 // uploaded photos. A value outside that — a same-origin path such as /api/inventory/export,
 // or a protocol-relative //host link — was rendered as <img src> wherever the item appeared,
-// so it is cleared. A raw data: image is left alone: it only ever renders as a picture. A Drive
+// so it is cleared, as is a stored data: value that is not a JPG, PNG, GIF or WEBP image (an
+// SVG, or text), which requests now refuse too. A Drive
 // proxy path that kept a stray "&usp=…" from migration 23 is cut back to its file id, which
 // is all the proxy accepts, so that picture starts working instead of being lost.
 runMigration(27, () => {
@@ -781,7 +782,8 @@ runMigration(27, () => {
       .all() as Array<{ id: number; image: string }>;
     const setImage = db.prepare(`UPDATE ${table} SET image = ? WHERE id = ?`);
     for (const row of rows) {
-      if (/^\s*data:/i.test(row.image) || isAllowedImageValue(row.image)) continue;
+      if (isAllowedImageValue(row.image)) continue;
+      if (/^\s*data:image\/(jpeg|png|gif|webp);base64,/i.test(row.image)) continue;
       const driveFile = /^\/api\/drive-image\/([\w-]+)/.exec(row.image.trim());
       setImage.run(driveFile ? `/api/drive-image/${driveFile[1]}` : null, row.id);
     }
