@@ -541,18 +541,24 @@ describe('session input validation', () => {
     ).toBe(0);
   });
 
-  it('sanitizes all string fields and sale_price in PATCH items', async () => {
+  it('sanitizes all string fields and refuses a non-numeric sale_price in PATCH items', async () => {
     const session = await createSession();
-    const itemId = insertSessionItem(session.sessionId, { upc: 'sanitize-1' });
+    const itemId = insertSessionItem(session.sessionId, { upc: 'sanitize-1', sale_price: 3 });
 
-    // sale_price as non-numeric string → stored as null
+    // A price that is not a number is refused, not quietly cleared.
+    const refused = await request
+      .patch(`/api/session/${session.sessionId}/items/${itemId}`)
+      .set('Cookie', adminCookie)
+      .send({ product_name: 'Priced', sale_price: 'notanumber' });
+    expect(refused.status).toBe(400);
+    expect(refused.body.error).toMatch(/Sale price/);
+
     await request
       .patch(`/api/session/${session.sessionId}/items/${itemId}`)
       .set('Cookie', adminCookie)
       .send({
         product_name: 'P'.repeat(600),
         brand: 'B'.repeat(300),
-        sale_price: 'notanumber',
         unit: 'U'.repeat(100),
       });
 
@@ -561,7 +567,7 @@ describe('session input validation', () => {
       .get(itemId) as any;
     expect(row.product_name).toHaveLength(500);
     expect(row.brand).toHaveLength(200);
-    expect(row.sale_price).toBeNull();
+    expect(Number(row.sale_price)).toBe(3);
     expect(row.unit).toHaveLength(50);
   });
 
@@ -587,36 +593,29 @@ describe('session input validation', () => {
     expect(imageRes.body.item.image).toMatch(/^\/uploads\//);
   });
 
-  it('clamps quantity to [1, 1_000_000] and rejects non-numeric values', async () => {
+  it('refuses a quantity that is not a whole number from 1 to 1,000,000', async () => {
     const session = await createSession();
     const itemId = insertSessionItem(session.sessionId, { upc: 'qty-test-1', quantity: 3 });
+    const patch = (quantity: unknown) =>
+      request
+        .patch(`/api/session/${session.sessionId}/items/${itemId}`)
+        .set('Cookie', adminCookie)
+        .send({ product_name: 'Test', quantity });
 
-    // Negative value → clamped to 1
-    await request
-      .patch(`/api/session/${session.sessionId}/items/${itemId}`)
-      .set('Cookie', adminCookie)
-      .send({ product_name: 'Test', quantity: -999 });
+    // Out-of-range or non-numeric values used to be clamped to 1 or 1,000,000 and saved.
+    for (const bad of [-999, 0, 'bad', 2.5, 9_999_999]) {
+      const res = await patch(bad);
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/Quantity/);
+    }
     expect(
       (db.prepare('SELECT quantity FROM session_items WHERE id = ?').get(itemId) as any).quantity
-    ).toBe(1);
+    ).toBe(3);
 
-    // String value → parsed, falls back to 1
-    await request
-      .patch(`/api/session/${session.sessionId}/items/${itemId}`)
-      .set('Cookie', adminCookie)
-      .send({ product_name: 'Test', quantity: 'bad' });
+    expect((await patch('12')).status).toBe(200);
     expect(
       (db.prepare('SELECT quantity FROM session_items WHERE id = ?').get(itemId) as any).quantity
-    ).toBe(1);
-
-    // Oversized value → clamped to 1_000_000
-    await request
-      .patch(`/api/session/${session.sessionId}/items/${itemId}`)
-      .set('Cookie', adminCookie)
-      .send({ product_name: 'Test', quantity: 9_999_999 });
-    expect(
-      (db.prepare('SELECT quantity FROM session_items WHERE id = ?').get(itemId) as any).quantity
-    ).toBe(1_000_000);
+    ).toBe(12);
   });
 });
 

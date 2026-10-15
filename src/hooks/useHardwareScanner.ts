@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { SessionStatus, UiStatus } from '../components/scan/types';
+import { fetchWithScanRetry, newScanId } from './useMobileScan';
 
 export type HardwareScanInputMode = 'mobile' | 'hardware';
 type FetchInit = Parameters<typeof globalThis.fetch>[1];
@@ -106,7 +107,8 @@ export function shouldListenForHardwareScanner(
 export function buildHardwareScanRequest(
   sessionId: string,
   otp: string,
-  upc: string
+  upc: string,
+  scanId?: string
 ): {
   url: string;
   init: FetchInit;
@@ -117,18 +119,25 @@ export function buildHardwareScanRequest(
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ upc, otp }),
+      // The scan ID lets a retried request count once, as on the phone.
+      body: JSON.stringify(scanId ? { upc, otp, scan_id: scanId } : { upc, otp }),
     },
   };
 }
 
+/** `reason` is the server's explanation of a refused scan (draft session, expired, …). */
 export function getHardwareScanToast(
   success: boolean,
-  upc: string
+  upc: string,
+  reason?: string
 ): { type: 'success' | 'error'; message: string } {
-  return success
-    ? { type: 'success', message: `Scanned: ${upc}` }
-    : { type: 'error', message: `Failed to record scan for ${upc}` };
+  if (success) return { type: 'success', message: `Scanned: ${upc}` };
+  return {
+    type: 'error',
+    message: reason
+      ? `Failed to record scan for ${upc}: ${reason}`
+      : `Failed to record scan for ${upc}`,
+  };
 }
 
 // Handles hardware scanner input via a keydown listener, submits scans to the backend,
@@ -159,10 +168,17 @@ export function useHardwareScanner(
       // should immediately increment quantity instead of being time-deduped.
       setLastHardwareScan(upc);
       try {
-        const request = buildHardwareScanRequest(sessionId!, otp!, upc);
-        const res = await fetch(request.url, request.init);
-        if (!res.ok) throw new Error('Scan failed');
-        const toast = getHardwareScanToast(true, upc);
+        const request = buildHardwareScanRequest(sessionId!, otp!, upc, newScanId());
+        const res = await fetchWithScanRetry(request.url, request.init);
+        if (res.ok) {
+          const toast = getHardwareScanToast(true, upc);
+          addToast(toast.type, toast.message);
+          return;
+        }
+        // The server says why (the session is a draft, it expired, …); say it too.
+        const payload = (await res.json().catch(() => null)) as { error?: unknown } | null;
+        const reason = typeof payload?.error === 'string' ? payload.error : undefined;
+        const toast = getHardwareScanToast(false, upc, reason);
         addToast(toast.type, toast.message);
       } catch {
         const toast = getHardwareScanToast(false, upc);

@@ -330,7 +330,7 @@ Google OAuth flow:
 | GET | `/api/session/:id/items` | OTP (`X-Scan-Otp` header) | Mobile session item list |
 | GET | `/api/session/:id` | cookie | Desktop poll; supports `since_updated_at` and `since_id` |
 | POST | `/api/session/:id/scan` | OTP (request body) | Add/increment scanned item; a repeated `scan_id` is ignored |
-| PATCH | `/api/session/:id/items/:itemId` | cookie | Edit staged item |
+| PATCH | `/api/session/:id/items/:itemId` | cookie | Edit staged item; 409 when the new UPC is already staged or in the catalog |
 | DELETE | `/api/session/:id/items` | cookie | Clear staged items |
 | DELETE | `/api/session/:id/items/:itemId` | cookie | Delete staged item |
 | POST | `/api/session/:id/commit` | owner | Add selected new items (`assignments`) and mark selected existing items as seen (`verifyIds`) |
@@ -411,6 +411,10 @@ Session behavior:
 - Completed sessions cannot be reactivated or deleted.
 - Duplicate UPC scans increment quantity. A resent request carrying a `scan_id` already recorded is not counted twice.
 - Barcodes that fail the GTIN check digit are staged as `invalid_barcode` and cannot be committed.
+- Scanned barcodes follow the same rules as typed and imported ones (`normalizeUpc`): spaces and dashes are dropped from a numeric code, and control characters or number-formatted values (`1.23457E+11`) are refused. The 11-, 12- and 13-digit forms of a barcode are one item.
+- Hardware scanner requests carry a `scan_id` and are retried on a network failure like the phone's; a refused scan's toast gives the server's reason.
+- A staged edit cannot move a row onto a barcode another staged row holds, or one the catalog holds (409 naming the other item); the commit would otherwise drop one of them. Quantity must be a whole number from 1 to 1,000,000 and sale price a number from 0 to 1,000,000 (400 otherwise, never silently adjusted); staged prices are returned as numbers.
+- A row staged as an existing item whose catalog item has since been deleted becomes a new item again when edited, so it can be named and committed.
 - Sessions that were never scanned into are removed a day after they expire; emptied completed sessions after 90 days.
 - Device IDs are preserved when a staged item belongs to one device; mixed-device duplicates are treated as shared.
 

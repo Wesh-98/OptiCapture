@@ -380,7 +380,7 @@ The desktop scan flow is owned by `Scan.tsx` and the scan hooks/components.
 4. The QR code points the phone to `/mobile-scan/:sessionId#otp=...`. The OTP sits after `#`, so it is never sent to the server with the URL; the page stores it for the tab and removes it from the address bar.
 5. `MobileScanScreen` and `useMobileScan` load session items through `GET /api/session/:id/items`, sending the OTP and device ID as the `X-Scan-Otp` and `X-Device-Id` headers.
 6. The phone submits scans to `POST /api/session/:id/scan` with the OTP in the body, `X-Device-Id`, and a `scan_id` so a retried request is not counted twice.
-7. Hardware scanners use keyboard-wedge input on desktop and submit through the same session workflow.
+7. Hardware scanners use keyboard-wedge input on desktop and submit through the same session workflow, with a `scan_id` and the same network retry as the phone.
 8. The server checks existing inventory first, then falls back to cached/external UPC lookup providers.
 9. The desktop page polls `GET /api/session/:id` using the stable `since_updated_at` plus `since_id` cursor for incremental refresh.
 10. The session can be saved as a draft, resumed, cleared, deleted, edited, or committed. Commit adds new items with their scanned quantity and an assigned category, and records existing catalog items as seen on the shelf (`last_verified_at`, `last_verified_by`, `last_verified_session_id`) without changing their details or stock. Existing items are read-only in the scan workspace. The session completes once no staged items remain.
