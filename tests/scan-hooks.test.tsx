@@ -303,7 +303,12 @@ describe('useHardwareScanner', () => {
     expect(result.current.lastHardwareScan).toBe('012345678905');
     const [post] = api.scans();
     expect(post.url).toBe(`/api/session/${SESSION_ID}/scan`);
-    expect(JSON.parse(String(post.init?.body))).toEqual({ upc: '012345678905', otp: OTP });
+    expect(JSON.parse(String(post.init?.body))).toEqual({
+      upc: '012345678905',
+      otp: OTP,
+      // One ID per trigger pull, so a retried request counts once.
+      scan_id: expect.stringMatching(/^[A-Za-z0-9_-]{8,64}$/),
+    });
   });
 
   it('leaves typing in a text box alone', async () => {
@@ -324,7 +329,7 @@ describe('useHardwareScanner', () => {
   });
 
   it('reports a scan the server refuses', async () => {
-    stubScanApi({ scan: () => jsonResponse({ error: 'nope' }, 500) });
+    stubScanApi({ scan: () => jsonResponse({ error: 'Session is saved as draft.' }, 403) });
     const { result, addToast } = mount();
     act(() => result.current.setScanInputMode('hardware'));
 
@@ -334,7 +339,10 @@ describe('useHardwareScanner', () => {
     });
 
     await waitFor(() =>
-      expect(addToast).toHaveBeenCalledWith('error', 'Failed to record scan for 012345678905')
+      expect(addToast).toHaveBeenCalledWith(
+        'error',
+        'Failed to record scan for 012345678905: Session is saved as draft.'
+      )
     );
   });
 

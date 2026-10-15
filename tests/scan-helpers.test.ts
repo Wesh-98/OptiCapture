@@ -1003,13 +1003,13 @@ describe('hardware scan helpers', () => {
   });
 
   it('builds hardware scan requests and user feedback messages', () => {
-    expect(buildHardwareScanRequest('session-42', 'otp-42', '123456789012')).toEqual({
+    expect(buildHardwareScanRequest('session-42', 'otp-42', '123456789012', 'scan-id-42')).toEqual({
       url: '/api/session/session-42/scan',
       init: {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ upc: '123456789012', otp: 'otp-42' }),
+        body: JSON.stringify({ upc: '123456789012', otp: 'otp-42', scan_id: 'scan-id-42' }),
       },
     });
 
@@ -1020,6 +1020,10 @@ describe('hardware scan helpers', () => {
     expect(getHardwareScanToast(false, '123456789012')).toEqual({
       type: 'error',
       message: 'Failed to record scan for 123456789012',
+    });
+    expect(getHardwareScanToast(false, '123456789012', 'Session has expired.')).toEqual({
+      type: 'error',
+      message: 'Failed to record scan for 123456789012: Session has expired.',
     });
   });
 });

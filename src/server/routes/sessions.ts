@@ -20,7 +20,9 @@ import {
   saveBase64Image,
   upcVariants,
   isValidGtin,
+  normalizeUpc,
 } from '../helpers.js';
+import { findItemIdByUpc } from './inventory.js';
 import { SESSION_STATUS } from '../types.js';
 import { logError } from '../logger.js';
 import { discardUploads } from '../uploads.js';
@@ -362,14 +364,16 @@ sessionsRouter.get('/session/:id/items', scanLimiter, (req, res) => {
     return res.status(sessionAccessError.status).json({ error: sessionAccessError.error });
   }
 
+  // sale_price is stored in a TEXT column; it leaves as a number.
+  const columns = 'SELECT *, CAST(sale_price AS REAL) AS sale_price FROM session_items';
   const items = device_id
     ? (db
         .prepare(
-          'SELECT * FROM session_items WHERE session_id = ? AND (device_id = ? OR device_id IS NULL) ORDER BY scanned_at ASC'
+          `${columns} WHERE session_id = ? AND (device_id = ? OR device_id IS NULL) ORDER BY scanned_at ASC`
         )
         .all(sessionId, device_id) as any[])
     : (db
-        .prepare('SELECT * FROM session_items WHERE session_id = ? ORDER BY scanned_at ASC')
+        .prepare(`${columns} WHERE session_id = ? ORDER BY scanned_at ASC`)
         .all(sessionId) as any[]);
 
   res.json({ status: session.status, items });
@@ -393,7 +397,8 @@ sessionsRouter.get('/session/:id', authenticateToken, (req: AuthRequest, res) =>
 
   const COLS = `si.id, si.session_id, si.upc, si.quantity, si.scanned_at,
                 si.lookup_status, si.product_name, si.brand, si.image,
-                si.source, si.exists_in_inventory, si.sale_price, si.unit, si.tag_names, si.updated_at`;
+                si.source, si.exists_in_inventory, CAST(si.sale_price AS REAL) AS sale_price,
+                si.unit, si.tag_names, si.updated_at`;
 
   const items =
     sinceUpdatedAt && sinceId != null
@@ -552,12 +557,13 @@ sessionsRouter.post('/session/:id/scan', scanLimiter, (req, res) => {
   // Truncate to prevent oversized device IDs being written to the database on every scan upsert
   const deviceId = rawDeviceId ? rawDeviceId.slice(0, 128) : null;
 
-  const cleanUpc = String(upc || '').trim();
+  // Scans follow the UPC rules of every other path: separators dropped from a numeric code,
+  // control characters and number-formatted values refused.
+  const upcResult = normalizeUpc(typeof upc === 'number' ? upc : upc || '');
+  if ('error' in upcResult) return res.status(400).json({ error: upcResult.error });
+  const cleanUpc = upcResult.value;
   if (!cleanUpc) {
     return res.status(400).json({ error: 'UPC is required' });
-  }
-  if (cleanUpc.length > 128) {
-    return res.status(400).json({ error: 'UPC too long' });
   }
   // Optional client-generated ID for this scan. A phone that lost the response resends
   // with the same ID, and the scan is counted once.
@@ -783,11 +789,50 @@ interface StagedItemRow {
   upc: string | null;
 }
 
+// The ceilings the item form holds an item to; a staged item becomes one on commit.
+const MAX_STAGED_QUANTITY = 1_000_000;
+const MAX_STAGED_PRICE = 1_000_000;
+
+// A staged quantity, or why it cannot be one. Bad values used to be quietly turned into 1,
+// so a typo saved as a quantity nobody entered.
+function stagedQuantity(quantity: unknown): { value: number } | { error: string } {
+  const parsed = typeof quantity === 'string' && quantity.trim() ? Number(quantity) : quantity;
+  if (
+    typeof parsed !== 'number' ||
+    !Number.isInteger(parsed) ||
+    parsed < 1 ||
+    parsed > MAX_STAGED_QUANTITY
+  ) {
+    return { error: 'Quantity must be a whole number from 1 to 1,000,000' };
+  }
+  return { value: parsed };
+}
+
+// A staged price (null clears it), or why it cannot be one. Bad values used to be quietly
+// cleared, and there was no ceiling, so a commit could add an item the item form refuses.
+function stagedPrice(salePrice: unknown): { value: number | null } | { error: string } {
+  // Blank (or only spaces) clears the price; Number('  ') would have saved it as 0.
+  if (salePrice === null || (typeof salePrice === 'string' && !salePrice.trim())) {
+    return { value: null };
+  }
+  const parsed = typeof salePrice === 'string' ? Number(salePrice.trim()) : salePrice;
+  if (
+    typeof parsed !== 'number' ||
+    !Number.isFinite(parsed) ||
+    parsed < 0 ||
+    parsed > MAX_STAGED_PRICE
+  ) {
+    return { error: 'Sale price must be a number from 0 to 1,000,000' };
+  }
+  return { value: parsed };
+}
+
 // Cleans the fields of a staged-item edit, or reports the one that cannot be accepted.
 function sanitizeItemPatch(body: any, stagedItem: StagedItemRow) {
   const { product_name, brand, quantity, upc, image, tag_names, sale_price, unit } = body;
-  // Clamp quantity: coerce to int, default 1, min 1, max 1_000_000
-  const sanitizedQty = Math.max(1, Math.min(Number.parseInt(String(quantity), 10) || 1, 1_000_000));
+  const qty = quantity === undefined ? { value: 1 } : stagedQuantity(quantity);
+  if ('error' in qty) return { error: qty.error };
+  const sanitizedQty = qty.value;
 
   // Cap string fields to prevent multi-megabyte blobs being stored on every PATCH.
   // Lengths mirror the inventory table column conventions.
@@ -803,18 +848,15 @@ function sanitizeItemPatch(body: any, stagedItem: StagedItemRow) {
   const sanitizedBrand = brand ? String(brand).slice(0, 200) : null;
   const sanitizedTagNames = tag_names ? String(tag_names).slice(0, 1000) : null;
   const sanitizedUnit = unit ? String(unit).slice(0, 50) : null;
-  const sanitizedUpcRaw = upc != null ? String(upc).trim() : '';
-  if (sanitizedUpcRaw.length > 128) {
-    return { error: 'UPC must be 128 characters or fewer' };
-  }
-  const sanitizedUpc = sanitizedUpcRaw || null;
+  const upcResult = normalizeUpc(upc);
+  if ('error' in upcResult) return { error: upcResult.error };
+  const sanitizedUpc = upcResult.value || null;
   // A misread barcode stays flagged until the UPC itself is corrected; naming it is not enough.
   const resultingUpc = sanitizedUpc ?? stagedItem.upc ?? '';
   const barcodeInvalid = isValidGtin(resultingUpc) === false;
-  // Coerce sale_price to a non-negative finite number — raw strings like "9.99abc"
-  // would otherwise be stored as text and silently evaluate to 0 at commit time.
-  const rawPrice = sale_price != null ? Number.parseFloat(String(sale_price)) : Number.NaN;
-  const sanitizedPrice = Number.isFinite(rawPrice) && rawPrice >= 0 ? rawPrice : null;
+  const price = sale_price === undefined ? { value: null } : stagedPrice(sale_price);
+  if ('error' in price) return { error: price.error };
+  const sanitizedPrice = price.value;
   const rawImage = typeof image === 'string' ? image.trim() : '';
   return {
     sanitizedQty,
@@ -839,7 +881,12 @@ function patchedLookupStatus(clean: CleanItemPatch): string {
   return clean.resultingName ? 'new_candidate' : 'unknown';
 }
 
-function buildItemPatch(body: any, clean: CleanItemPatch, sanitizedImage: string | null) {
+function buildItemPatch(
+  body: any,
+  clean: CleanItemPatch,
+  sanitizedImage: string | null,
+  reopened: boolean
+) {
   const { product_name, brand, quantity, upc, image, tag_names, sale_price, unit } = body;
   const {
     sanitizedQty,
@@ -883,7 +930,44 @@ function buildItemPatch(body: any, clean: CleanItemPatch, sanitizedImage: string
     assignments.push('upc = COALESCE(?, upc)');
     values.push(sanitizedUpc);
   }
+  // The catalog item this row was staged against is gone, so the row is a new item again.
+  if (reopened) assignments.push('exists_in_inventory = 0');
   return { assignments, values };
+}
+
+/**
+ * Why a staged row cannot take this UPC, or null. Re-labelling a row onto a barcode another
+ * staged row holds, or one the catalog holds, used to be saved; the commit then kept one of
+ * the two rows (or the catalog item) and dropped the other's name, price and quantity while
+ * reporting it as "verified".
+ */
+function stagedUpcConflict(
+  newUpc: string | null,
+  where: { sessionId: string; itemId: string; storeId: number }
+): string | null {
+  if (!newUpc) return null;
+  const variants = upcVariants(newUpc);
+  // Checked even when the row keeps its barcode (the edit dialog always sends it): if the
+  // catalog has gained that barcode since the scan, the commit would discard this edit.
+  const staged = db
+    .prepare(
+      `SELECT product_name FROM session_items
+        WHERE session_id = ? AND id != ? AND upc IN (${variants.map(() => '?').join(',')})
+        LIMIT 1`
+    )
+    .get(where.sessionId, where.itemId, ...variants) as { product_name: string | null } | undefined;
+  if (staged) {
+    const name = staged.product_name ? ` as "${staged.product_name}"` : '';
+    return `That barcode is already staged in this session${name}. Edit or remove that row instead.`;
+  }
+  const catalogId = findItemIdByUpc(newUpc, where.storeId);
+  if (catalogId !== null) {
+    const item = db
+      .prepare('SELECT item_name FROM inventory WHERE id = ? AND store_id = ?')
+      .get(catalogId, where.storeId) as { item_name: string } | undefined;
+    return `That barcode is already in your inventory as "${item?.item_name ?? 'an item'}". Remove this row; scanning the barcode confirms the existing item.`;
+  }
+  return null;
 }
 
 sessionsRouter.patch('/session/:id/items/:itemId', authenticateToken, (req: AuthRequest, res) => {
@@ -904,7 +988,12 @@ sessionsRouter.patch('/session/:id/items/:itemId', authenticateToken, (req: Auth
     .get(itemId, id) as StagedItemRow | undefined;
   if (!stagedItem) return res.status(404).json({ error: 'Session item not found' });
   const previousImages = image === undefined ? [] : stagedUploads(id, itemId);
-  if (stagedItem.exists_in_inventory === 1) {
+  // Staged as an existing item, but that item may since have been deleted from the catalog.
+  // Such a row could be neither edited nor committed, and held its session open for good.
+  const reopened =
+    stagedItem.exists_in_inventory === 1 &&
+    findItemIdByUpc(stagedItem.upc ?? '', session.store_id) === null;
+  if (stagedItem.exists_in_inventory === 1 && !reopened) {
     return res.status(409).json({
       error: 'This item is already in your inventory. Edit it from the dashboard instead.',
     });
@@ -912,6 +1001,14 @@ sessionsRouter.patch('/session/:id/items/:itemId', authenticateToken, (req: Auth
 
   const clean = sanitizeItemPatch(req.body, stagedItem);
   if ('error' in clean) return res.status(400).json({ error: clean.error });
+  // The row's barcode after this edit: a partial edit that sends no UPC keeps the stored one,
+  // and is checked against it all the same.
+  const upcConflict = stagedUpcConflict(clean.sanitizedUpc ?? stagedItem.upc, {
+    sessionId: id,
+    itemId,
+    storeId: session.store_id,
+  });
+  if (upcConflict) return res.status(409).json({ error: upcConflict });
 
   try {
     const sanitizedImage = clean.rawImage
@@ -922,7 +1019,7 @@ sessionsRouter.patch('/session/:id/items/:itemId', authenticateToken, (req: Auth
       return res.status(400).json({ error: 'Image URL must be 2000 characters or fewer' });
     }
 
-    const { assignments, values } = buildItemPatch(req.body, clean, sanitizedImage);
+    const { assignments, values } = buildItemPatch(req.body, clean, sanitizedImage, reopened);
 
     const result = db
       .prepare(
@@ -942,7 +1039,8 @@ sessionsRouter.patch('/session/:id/items/:itemId', authenticateToken, (req: Auth
       .prepare(
         `
       SELECT id, session_id, upc, quantity, scanned_at, updated_at, lookup_status,
-             product_name, brand, image, source, exists_in_inventory, sale_price, unit, tag_names
+             product_name, brand, image, source, exists_in_inventory,
+             CAST(sale_price AS REAL) AS sale_price, unit, tag_names
       FROM session_items
       WHERE id = ? AND session_id = ?
     `
@@ -1118,7 +1216,9 @@ sessionsRouter.post(
         const catId = assignmentMap.get(item.id)!;
         const qty = Math.max(0, Math.min(Math.trunc(Number(item.quantity)) || 0, 1_000_000));
         const price =
-          item.sale_price != null ? Math.max(0, Number.parseFloat(item.sale_price) || 0) : null;
+          item.sale_price != null
+            ? Math.min(MAX_STAGED_PRICE, Math.max(0, Number.parseFloat(item.sale_price) || 0))
+            : null;
         insertInventory.run(
           item.product_name.trim(),
           item.brand?.trim() || null,
