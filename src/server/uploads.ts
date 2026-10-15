@@ -55,11 +55,14 @@ export function discardUploads(candidates: Iterable<string | null | undefined>):
 }
 
 /**
- * The upload files a store's rows point at: its items, the staged scans in its sessions and
- * its logo. Only local '/uploads/…' paths count. A web link is not an upload even when its
- * path has '/uploads/' in it: counting https://elsewhere/uploads/<file> let a store save that
- * link and then claim another store's <file> as its own. Read in one pass, so an import checks thousands of rows against a set instead of
- * querying once per row (which made a 10,000-row re-import take minutes).
+ * The upload files a store's items and the staged scans in its sessions point at. Read in
+ * one pass, so an import checks thousands of rows against a set instead of querying once per
+ * row (which made a 10,000-row re-import take minutes).
+ *
+ * Only local '/uploads/…' paths count: counting https://elsewhere/uploads/<file> let a store
+ * save that link and then claim another store's <file>. The store logo does not count either:
+ * store settings accept any '/uploads/…' value as a logo, so it proves nothing about who owns
+ * the file.
  */
 export function storeUploadNames(storeId: number | undefined): Set<string> {
   const rows = db
@@ -67,16 +70,14 @@ export function storeUploadNames(storeId: number | undefined): Set<string> {
       `SELECT image AS path FROM inventory WHERE store_id = ? AND image LIKE '/uploads/%'
        UNION ALL
        SELECT si.image FROM session_items si JOIN scan_sessions s ON s.session_id = si.session_id
-        WHERE s.store_id = ? AND si.image LIKE '/uploads/%'
-       UNION ALL
-       SELECT logo FROM stores WHERE id = ? AND logo LIKE '/uploads/%'`
+        WHERE s.store_id = ? AND si.image LIKE '/uploads/%'`
     )
-    .all(storeId, storeId, storeId) as Array<{ path: string }>;
+    .all(storeId, storeId) as Array<{ path: string }>;
   return new Set(rows.map(row => uploadFileName(row.path)));
 }
 
 /**
- * True when a row of this store already points at the upload. An item may name an existing
+ * True when one of this store's items or staged scans already points at the upload. An item may name an existing
  * upload (re-saving an item keeps its photo; re-importing an export keeps its images) but only
  * one of its own store's, or a store could show, and later lay claim to, another tenant's
  * file. Compared by uploadFileName, the key the unlink uses.

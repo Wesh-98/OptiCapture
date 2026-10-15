@@ -255,6 +255,22 @@ describe('M11: a web link does not make an upload the store’s own', () => {
       .send({ item_name: 'Claim', upc: '360000000003', image: theirs });
     expect(claim.status).toBe(400);
   });
+
+  it('refuses another store’s upload that this store has set as its logo', async () => {
+    const other = await registerStore(request, { storeName: 'Logo Mart', username: 'qalogo' });
+    const theirs = '/uploads/0000dddd-their-photo.png';
+    db.prepare(
+      "INSERT INTO inventory (item_name, upc, image, store_id) VALUES ('Theirs', '370000000001', ?, ?)"
+    ).run(theirs, other.storeId);
+    // Store settings accept any /uploads/ path as the logo.
+    db.prepare('UPDATE stores SET logo = ? WHERE id = ?').run(theirs, storeId);
+    const res = await request
+      .post('/api/inventory')
+      .set('Cookie', cookie)
+      .send({ item_name: 'Via logo', upc: '370000000002', image: theirs });
+    expect(res.status).toBe(400);
+    db.prepare('UPDATE stores SET logo = NULL WHERE id = ?').run(storeId);
+  });
 });
 
 describe('L12: a bad image in an import row', () => {
