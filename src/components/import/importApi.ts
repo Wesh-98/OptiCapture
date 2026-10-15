@@ -1,6 +1,9 @@
 import type {
   AutoDetectField,
   ColumnMapping,
+  ConflictRow,
+  IdentifierDifference,
+  ImportConflict,
   DestinationField,
   ImportResult,
   ParsedImportFile,
@@ -211,6 +214,69 @@ function normalizeSkippedRows(value: unknown): SkippedRow[] {
   });
 }
 
+const text = (value: unknown) => (typeof value === 'string' ? value : '');
+const count = (value: unknown) =>
+  typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null;
+const isConflictKind = (value: unknown): value is ImportConflict['kind'] =>
+  value === 'different_values' || value === 'two_items';
+const DIFFERENCE_FIELDS: ReadonlyArray<IdentifierDifference['field']> = [
+  'upc',
+  'number',
+  'external_sku',
+  'external_item_id',
+];
+
+function normalizeDifferences(value: unknown): IdentifierDifference[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap(entry => {
+    if (!isRecord(entry)) return [];
+    const field = DIFFERENCE_FIELDS.find(name => name === entry.field);
+    if (!field) return [];
+    return [
+      {
+        field,
+        label: text(entry.label),
+        file_value: text(entry.file_value),
+        catalog_value: text(entry.catalog_value),
+      },
+    ];
+  });
+}
+
+function normalizeConflicts(value: unknown): ImportConflict[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap(entry => {
+    if (!isRecord(entry) || !isConflictKind(entry.kind)) return [];
+    const sheetIndex = count(entry.sheet_index);
+    const rowIndex = count(entry.row_index);
+    if (sheetIndex === null || rowIndex === null) return [];
+    return [
+      {
+        kind: entry.kind,
+        sheet: text(entry.sheet),
+        sheet_index: sheetIndex,
+        row_index: rowIndex,
+        row_num: count(entry.row_num) ?? rowIndex + 2,
+        item_name: text(entry.item_name),
+        catalog_item: text(entry.catalog_item),
+        message: text(entry.message),
+        differences: normalizeDifferences(entry.differences),
+      },
+    ];
+  });
+}
+
+function normalizeConflictRows(value: unknown): ConflictRow[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap(entry => {
+    if (!isRecord(entry) || !isConflictKind(entry.kind)) return [];
+    const sheetIndex = count(entry.sheet_index);
+    const rowIndex = count(entry.row_index);
+    if (sheetIndex === null || rowIndex === null) return [];
+    return [{ sheet_index: sheetIndex, row_index: rowIndex, kind: entry.kind }];
+  });
+}
+
 function parseImportResult(data: unknown): ImportResult {
   if (!isRecord(data)) {
     throw new Error('Invalid response from server during import.');
@@ -229,6 +295,9 @@ function parseImportResult(data: unknown): ImportResult {
         ? Math.trunc(data.errors_total)
         : normalizeStringList(data.errors).length,
     skipped_rows: normalizeSkippedRows(data.skipped_rows),
+    conflicts: normalizeConflicts(data.conflicts),
+    conflicts_total: count(data.conflicts_total) ?? normalizeConflicts(data.conflicts).length,
+    conflict_rows: normalizeConflictRows(data.conflict_rows),
   };
 }
 
@@ -250,20 +319,25 @@ export async function uploadFile(file: File): Promise<ParsedImportFile> {
   return parseUploadResponse(data);
 }
 
-export async function confirmImport(sheets: readonly SheetData[]): Promise<ImportResult> {
-  const sheetsData = sheets.map(sheet => ({
+/** A sheet as the confirm request sends it, optionally cut down to some of its rows. */
+function sheetPayload(sheet: SheetData, rowIndexes?: readonly number[]) {
+  const pick = <T>(values: readonly T[]) =>
+    rowIndexes ? rowIndexes.map(index => values[index]) : values;
+  return {
     sheetName: sheet.name,
     categoryName: sheet.categoryName,
-    rows: sheet.rows,
-    ...(sheet.rowNumbers ? { rowNumbers: sheet.rowNumbers } : {}),
+    rows: pick(sheet.rows),
+    ...(sheet.rowNumbers ? { rowNumbers: pick(sheet.rowNumbers) } : {}),
     mapping: sheet.mapping,
-  }));
+  };
+}
 
+async function postConfirm(body: unknown): Promise<ImportResult> {
   const res = await fetch('/api/inventory/batch-confirm', {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sheetsData }),
+    body: JSON.stringify(body),
   });
 
   if (!res.ok) {
@@ -272,4 +346,27 @@ export async function confirmImport(sheets: readonly SheetData[]): Promise<Impor
 
   const data = await res.json().catch(() => null);
   return parseImportResult(data);
+}
+
+export function confirmImport(sheets: readonly SheetData[]): Promise<ImportResult> {
+  return postConfirm({ sheetsData: sheets.map(sheet => sheetPayload(sheet)) });
+}
+
+/**
+ * Imports the chosen held-back rows again, this time giving each matched item the file's
+ * identifiers. `rows` are positions in `sheets`, as the first import reported them.
+ */
+export function applyFileIdentifiers(
+  sheets: readonly SheetData[],
+  rows: ReadonlyArray<Pick<ConflictRow, 'sheet_index' | 'row_index'>>
+): Promise<ImportResult> {
+  const bySheet = new Map<number, number[]>();
+  for (const { sheet_index, row_index } of rows) {
+    if (!sheets[sheet_index]?.rows[row_index]) continue;
+    bySheet.set(sheet_index, [...(bySheet.get(sheet_index) ?? []), row_index]);
+  }
+  const sheetsData = [...bySheet].map(([index, rowIndexes]) =>
+    sheetPayload(sheets[index], rowIndexes)
+  );
+  return postConfirm({ sheetsData, identifierConflicts: 'use_file' });
 }

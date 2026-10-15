@@ -133,7 +133,23 @@ describe('H2: finding the header row of a worksheet', () => {
 });
 
 describe('H3: identifiers that disagree with the catalog', () => {
-  it('refuses a row whose SKU belongs to an item with a different UPC', async () => {
+  const resend = (rows: Array<{ sheet_index: number; row_index: number }>, sheets: any[]) =>
+    request
+      .post('/api/inventory/batch-confirm')
+      .set('Cookie', cookie)
+      .send({
+        identifierConflicts: 'use_file',
+        sheetsData: sheets.map((sheet, index) => {
+          const picked = rows.filter(row => row.sheet_index === index).map(row => row.row_index);
+          return {
+            ...sheet,
+            rows: picked.map(i => sheet.rows[i]),
+            rowNumbers: picked.map(i => sheet.rowNumbers[i]),
+          };
+        }),
+      });
+
+  it('holds back a row whose SKU belongs to an item with a different UPC', async () => {
     db.prepare(
       "INSERT INTO inventory (item_name, upc, number, quantity, store_id) VALUES ('Original A', '130000000001', 'SKU-A', 5, ?)"
     ).run(storeId);
@@ -141,28 +157,97 @@ describe('H3: identifiers that disagree with the catalog', () => {
       Buffer.from('UPC,SKU,Item Name,Qty\n130000000002,SKU-A,Different Product,9\n'),
       'conflict.csv'
     );
-    expect(res.body.updated).toBe(0);
-    expect(res.body.errors[0]).toContain('SKU "SKU-A" belongs to "Original A"');
+    expect(res.body).toMatchObject({ updated: 0, errors_total: 0, conflicts_total: 1 });
+    expect(res.body.conflicts[0]).toMatchObject({
+      kind: 'different_values',
+      sheet: 'Sheet1',
+      sheet_index: 0,
+      row_index: 0,
+      row_num: 2,
+      catalog_item: 'Original A',
+      differences: [
+        { field: 'upc', label: 'UPC', file_value: '130000000002', catalog_value: '130000000001' },
+      ],
+    });
+    expect(res.body.conflict_rows).toEqual([
+      { sheet_index: 0, row_index: 0, kind: 'different_values' },
+    ]);
     expect(item('130000000001')).toMatchObject({ item_name: 'Original A', quantity: 5 });
     expect(item('130000000002')).toBeUndefined();
   });
 
-  it('refuses a row whose UPC and external ID belong to two different items', async () => {
+  it('gives the item the file’s values when the owner chooses that for the row', async () => {
+    db.prepare(
+      "INSERT INTO inventory (item_name, upc, number, quantity, store_id) VALUES ('Renumbered', '130000000031', 'OLD-1', 5, ?)"
+    ).run(storeId);
+    const up = await upload(
+      Buffer.from(
+        'UPC,SKU,Item Name,Qty\n130000000099,UNRELATED,Untouched,1\n130000000031,NEW-1,Renumbered,24\n'
+      ),
+      'renumber.csv'
+    );
+    const sheets = screenSheets(up.body);
+    const first = await confirm(sheets);
+    expect(first.body.conflicts[0]).toMatchObject({
+      row_index: 1,
+      differences: [{ field: 'number', file_value: 'NEW-1', catalog_value: 'OLD-1' }],
+    });
+
+    const second = await resend(first.body.conflict_rows, sheets);
+    expect(second.body).toMatchObject({ added: 0, updated: 1, conflicts_total: 0, errors: [] });
+    expect(item('130000000031')).toMatchObject({ number: 'NEW-1', quantity: 24 });
+  });
+
+  it('holds back a row whose identifiers belong to two different items, even on request', async () => {
     db.prepare(
       "INSERT INTO inventory (item_name, upc, quantity, store_id) VALUES ('Item X', '130000000011', 1, ?)"
     ).run(storeId);
     db.prepare(
       "INSERT INTO inventory (item_name, upc, external_system, external_item_id, quantity, store_id) VALUES ('Item Y', '130000000012', 'pos', 'EXT-Y', 1, ?)"
     ).run(storeId);
-    const res = await importFile(
+    const up = await upload(
       Buffer.from(
         'UPC,Item Name,External System,External Item ID\n130000000011,Renamed,pos,EXT-Y\n'
       ),
       'xy.csv'
     );
-    expect(res.body.errors[0]).toContain('belongs to "Item Y"');
-    expect(res.body.errors[0]).toContain('belongs to "Item X"');
+    const sheets = screenSheets(up.body);
+    const first = await confirm(sheets);
+    expect(first.body.conflicts[0]).toMatchObject({ kind: 'two_items', differences: [] });
+    expect(first.body.conflicts[0].message).toContain('belongs to "Item Y"');
+    expect(first.body.conflicts[0].message).toContain('belongs to "Item X"');
+
+    const second = await resend(first.body.conflict_rows, sheets);
+    expect(second.body).toMatchObject({ updated: 0, conflicts_total: 1 });
+    expect(item('130000000011')?.item_name).toBe('Item X');
     expect(item('130000000012')?.item_name).toBe('Item Y');
+  });
+
+  it('refuses an unknown conflict choice', async () => {
+    const res = await request
+      .post('/api/inventory/batch-confirm')
+      .set('Cookie', cookie)
+      .send({
+        identifierConflicts: 'overwrite',
+        sheetsData: [{ sheetName: 'S', rows: [{ UPC: '1' }], mapping: { UPC: 'upc' } }],
+      });
+    expect(res.status).toBe(400);
+  });
+
+  it('lists every conflicting row even past the detail cap', async () => {
+    const insert = db.prepare(
+      'INSERT INTO inventory (item_name, upc, number, quantity, store_id) VALUES (?, ?, ?, 1, ?)'
+    );
+    const lines = ['UPC,SKU'];
+    for (let i = 0; i < 510; i++) {
+      const upc = `7${String(i).padStart(11, '0')}`;
+      insert.run(`Cap ${i}`, upc, `CAP-OLD-${i}`, storeId);
+      lines.push(`${upc},CAP-NEW-${i}`);
+    }
+    const res = await importFile(Buffer.from(lines.join('\n')), 'cap.csv');
+    expect(res.body.conflicts_total).toBe(510);
+    expect(res.body.conflicts).toHaveLength(500);
+    expect(res.body.conflict_rows).toHaveLength(510);
   });
 
   it('fills in an identifier the matched item does not have yet', async () => {
@@ -173,8 +258,21 @@ describe('H3: identifiers that disagree with the catalog', () => {
       Buffer.from('UPC,SKU,Item Name\n130000000021,SKU-FILL,No UPC Yet\n'),
       'fill.csv'
     );
-    expect(res.body).toMatchObject({ updated: 1, errors: [] });
+    expect(res.body).toMatchObject({ updated: 1, errors: [], conflicts_total: 0 });
     expect(item('130000000021')?.number).toBe('SKU-FILL');
+  });
+
+  it('refuses a second row that reaches the same item by another identifier', async () => {
+    db.prepare(
+      "INSERT INTO inventory (item_name, upc, number, quantity, store_id) VALUES ('Two Ways', '130000000041', 'TWO-WAYS', 1, ?)"
+    ).run(storeId);
+    const res = await importFile(
+      Buffer.from('UPC,SKU,Item Name,Qty\n130000000041,,By UPC,5\n,TWO-WAYS,By SKU,9\n'),
+      'twoways.csv'
+    );
+    expect(res.body.updated).toBe(1);
+    expect(res.body.errors[0]).toContain('already in this file at Sheet "Sheet1" row 2');
+    expect(item('130000000041')).toMatchObject({ item_name: 'By UPC', quantity: 5 });
   });
 });
 

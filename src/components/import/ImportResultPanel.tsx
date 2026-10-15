@@ -2,13 +2,18 @@ import { useState } from 'react';
 import { motion } from 'motion/react';
 import { AlertTriangle, Check, ChevronRight, RefreshCw } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import type { ImportResult, SheetData } from './types';
+import { ImportConflictsPanel } from './ImportConflictsPanel';
+import type { ConflictResolution, ConflictRow, ImportResult, SheetData } from './types';
 
 interface Props {
   fileName: string | null;
   result: ImportResult;
+  resolution?: ConflictResolution;
   sheets: SheetData[];
   prefersReducedMotion: boolean | null;
+  onApplyConflictChoices?: (
+    rows: ReadonlyArray<Pick<ConflictRow, 'sheet_index' | 'row_index'>>
+  ) => void;
   onReset: () => void;
 }
 
@@ -28,8 +33,10 @@ function SummaryCard({
 export function ImportResultPanel({
   fileName,
   result,
+  resolution = { status: 'idle' },
   sheets,
   prefersReducedMotion,
+  onApplyConflictChoices = () => undefined,
   onReset,
 }: Readonly<Props>) {
   const [showSkipped, setShowSkipped] = useState(false);
@@ -87,6 +94,14 @@ export function ImportResultPanel({
           className="border-slate-200 bg-slate-50 text-slate-600"
         />
       </div>
+
+      {result.conflicts_total > 0 && (
+        <ImportConflictsPanel
+          result={result}
+          resolution={resolution}
+          onApply={onApplyConflictChoices}
+        />
+      )}
 
       {result.errors_total > 0 && (
         <div className="mb-6 rounded-xl border border-red-100 bg-red-50 p-4">

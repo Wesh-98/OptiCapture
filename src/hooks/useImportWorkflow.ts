@@ -1,13 +1,13 @@
 import { useState } from 'react';
 import type { ChangeEvent } from 'react';
-import { confirmImport, uploadFile } from '../components/import/importApi';
+import { applyFileIdentifiers, confirmImport, uploadFile } from '../components/import/importApi';
 import {
   applyMappingToMatchingHeaders,
   getImportMappingIssues,
   getMappedColumns,
   setMappingDestination,
 } from '../components/import/mapping';
-import type { DestinationField, ImportState } from '../components/import/types';
+import type { ConflictRow, DestinationField, ImportState } from '../components/import/types';
 
 //Import wizard - file parse, column mapping and import.
 const initialState: ImportState = {
@@ -17,6 +17,7 @@ const initialState: ImportState = {
   hiddenSheets: [],
   activeSheet: 0,
   result: null,
+  resolution: { status: 'idle' },
   parseError: null,
   isParsing: false,
 };
@@ -38,6 +39,7 @@ export function useImportWorkflow() {
         hiddenSheets: [],
         activeSheet: 0,
         result: null,
+        resolution: { status: 'idle' },
         parseError: null,
         isParsing: true,
       }));
@@ -119,6 +121,25 @@ export function useImportWorkflow() {
     }
   };
 
+  // The owner's choice for rows the import held back: the listed ones get the file's
+  // identifiers; every other held-back row stays skipped.
+  const applyConflictChoices = async (
+    rows: ReadonlyArray<Pick<ConflictRow, 'sheet_index' | 'row_index'>>
+  ) => {
+    if (rows.length === 0 || state.resolution.status === 'applying') return;
+    setState(prev => ({ ...prev, resolution: { status: 'applying' } }));
+    try {
+      const result = await applyFileIdentifiers(state.sheets, rows);
+      setState(prev => ({
+        ...prev,
+        resolution: { status: 'done', applied: rows.length, result },
+      }));
+    } catch (error) {
+      const message = getErrorMessage(error, 'Could not apply your choices');
+      setState(prev => ({ ...prev, resolution: { status: 'failed', error: message } }));
+    }
+  };
+
   const reset = () => setState(initialState);
 
   const activeSheet = state.sheets[state.activeSheet] ?? null;
@@ -142,6 +163,7 @@ export function useImportWorkflow() {
     setSheetCategoryName,
     applyToAllSheets,
     handleConfirm,
+    applyConflictChoices,
     reset,
   };
 }

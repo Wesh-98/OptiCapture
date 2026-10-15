@@ -50,8 +50,10 @@ export function ImportScreen() {
         <ImportResultPanel
           fileName={workflow.state.file?.name ?? null}
           result={workflow.state.result}
+          resolution={workflow.state.resolution}
           sheets={workflow.state.sheets}
           prefersReducedMotion={prefersReducedMotion}
+          onApplyConflictChoices={workflow.applyConflictChoices}
           onReset={workflow.reset}
         />
       )}

@@ -19,6 +19,38 @@ export interface SkippedRow {
   item_name: string;
 }
 
+/** One identifier on which a file row and the catalog item it matched disagree. */
+export interface IdentifierDifference {
+  field: 'upc' | 'number' | 'external_sku' | 'external_item_id';
+  label: string;
+  file_value: string;
+  catalog_value: string;
+}
+
+/**
+ * A row the import held back because its identifiers disagree with the catalog.
+ * `different_values` rows can take the file's values or be skipped; `two_items` rows match
+ * two different items and have to be fixed in the file.
+ */
+export interface ImportConflict {
+  kind: 'different_values' | 'two_items';
+  sheet: string;
+  sheet_index: number;
+  row_index: number;
+  row_num: number;
+  item_name: string;
+  catalog_item: string;
+  message: string;
+  differences: IdentifierDifference[];
+}
+
+/** Where a conflicting row is in the sheets that were sent. */
+export interface ConflictRow {
+  sheet_index: number;
+  row_index: number;
+  kind: ImportConflict['kind'];
+}
+
 export interface ImportResult {
   added: number;
   updated: number;
@@ -28,7 +60,19 @@ export interface ImportResult {
   errors_total: number;
   /** Capped sample of skipped rows — `skipped` is the real count. */
   skipped_rows: SkippedRow[];
+  /** Capped detail of the rows held back — `conflicts_total` is the real count. */
+  conflicts: ImportConflict[];
+  conflicts_total: number;
+  /** Every held-back row, uncapped. */
+  conflict_rows: ConflictRow[];
 }
+
+/** The owner's decision on the rows held back by an import. */
+export type ConflictResolution =
+  | { status: 'idle' }
+  | { status: 'applying' }
+  | { status: 'done'; applied: number; result: ImportResult }
+  | { status: 'failed'; error: string };
 
 export interface SheetData {
   name: string;
@@ -57,6 +101,7 @@ export interface ImportState {
   hiddenSheets: string[];
   activeSheet: number;
   result: ImportResult | null;
+  resolution: ConflictResolution;
   parseError: string | null;
   isParsing: boolean;
 }

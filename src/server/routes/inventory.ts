@@ -39,6 +39,36 @@ const MAX_IMPORT_ROWS = 50_000;
 const IMPORT_CHUNK_ROWS = 1_000;
 const MAX_REPORTED_ERRORS = 100;
 const MAX_REPORTED_SKIPPED_ROWS = 100;
+// Conflicts are listed for the owner to decide on one by one, so more of them are shown.
+// Past this many, `conflict_rows` still names every one so "use the file's values for all"
+// reaches them all.
+const MAX_REPORTED_CONFLICTS = 500;
+
+/** One identifier on which a row and the catalog item it matched disagree. */
+interface IdentifierDifference {
+  field: 'upc' | 'number' | 'external_sku' | 'external_item_id';
+  label: string;
+  file_value: string;
+  catalog_value: string;
+}
+
+/**
+ * A row the import did not write because its identifiers disagree with the catalog.
+ * `different_values`: every identifier found points at one item, but that item holds other
+ * values for some of them — the owner can take the file's values or skip the row.
+ * `two_items`: the identifiers point at two different items, so there is no item to update.
+ */
+interface ImportConflict {
+  kind: 'different_values' | 'two_items';
+  sheet: string;
+  sheet_index: number;
+  row_index: number;
+  row_num: number;
+  item_name: string;
+  catalog_item: string;
+  message: string;
+  differences: IdentifierDifference[];
+}
 
 interface ImportPreviewSheet {
   name: string;
@@ -1429,10 +1459,19 @@ inventoryRouter.post(
         rowNumbers?: number[];
         mapping: Record<string, string>;
       }[];
+      identifierConflicts?: unknown;
     };
     if (hasInvalidSheetsData(sheetsData)) {
       return res.status(400).json({ error: 'Invalid sheets data' });
     }
+    // What to do with a row whose identifiers disagree with the item it matched: list it for
+    // the owner (the default), or — once the owner has chosen to for these rows — give the
+    // item the file's values.
+    const { identifierConflicts = 'refuse' } = req.body;
+    if (identifierConflicts !== 'refuse' && identifierConflicts !== 'use_file') {
+      return res.status(400).json({ error: 'identifierConflicts must be refuse or use_file' });
+    }
+    const useFileIdentifiers = identifierConflicts === 'use_file';
 
     const mappingError = sheetsData.map(sheetMappingError).find(Boolean);
     if (mappingError) return res.status(400).json({ error: mappingError });
@@ -1453,6 +1492,11 @@ inventoryRouter.post(
       // The true count, which may exceed the capped `errors` list above.
       errors_total: 0,
       skipped_rows: [] as { row_num: number; sheet: string; item_name: string }[],
+      conflicts: [] as ImportConflict[],
+      conflicts_total: 0,
+      // Every conflicting row, uncapped and compact, so the owner's choice can reach rows
+      // past the detail list.
+      conflict_rows: [] as Array<{ sheet_index: number; row_index: number; kind: ImportConflict['kind'] }>,
     };
 
     // `results.skipped` and `results.errors_total` stay exact; only the per-row detail lists
@@ -1460,6 +1504,15 @@ inventoryRouter.post(
     const addError = (message: string) => {
       results.errors_total++;
       if (results.errors.length < MAX_REPORTED_ERRORS) results.errors.push(message);
+    };
+    const addConflict = (conflict: ImportConflict) => {
+      results.conflicts_total++;
+      results.conflict_rows.push({
+        sheet_index: conflict.sheet_index,
+        row_index: conflict.row_index,
+        kind: conflict.kind,
+      });
+      if (results.conflicts.length < MAX_REPORTED_CONFLICTS) results.conflicts.push(conflict);
     };
     const addSkippedRow = (skipped: { row_num: number; sheet: string; item_name: string }) => {
       results.skipped++;
@@ -1624,6 +1677,17 @@ inventoryRouter.post(
     const checkExternalSku = db.prepare(
       'SELECT id FROM inventory WHERE external_sku = ? AND store_id = ?'
     );
+    // Gives an item the file's identifiers, once the owner has chosen that for the row. Each
+    // value is free: had another item held it, the row would have matched two items.
+    const replaceIdentifiers = db.prepare(`
+    UPDATE inventory
+    SET upc              = COALESCE(NULLIF(?, ''), upc),
+        number           = COALESCE(NULLIF(?, ''), number),
+        external_sku     = COALESCE(NULLIF(?, ''), external_sku),
+        external_system  = CASE WHEN NULLIF(?, '') IS NULL THEN external_system ELSE ? END,
+        external_item_id = COALESCE(NULLIF(?, ''), external_item_id)
+    WHERE id = ? AND store_id = ?
+  `);
     const readIdentity = db.prepare(
       `SELECT item_name, upc, number, external_system, external_item_id, external_sku
          FROM inventory WHERE id = ? AND store_id = ?`
@@ -1669,6 +1733,8 @@ inventoryRouter.post(
 
     interface ImportWorkItem {
       sheet: (typeof sheetsData)[number];
+      sheetIndex: number;
+      rowIndex: number;
       row: Record<string, any>;
       /** The row's line in the file, for messages that point the owner at it. */
       rowNum: number;
@@ -1853,60 +1919,90 @@ inventoryRouter.post(
       external_sku: string | null;
     }
 
-    // Why the item matched by one identifier is not the row's item, or null when it is.
-    // An identifier the item lacks is fine (it is filled in); one it holds with a different
-    // value means the file and the catalog disagree about which product this is.
-    const identityMismatch = (p: PreparedRow, item: ItemIdentity): string | null => {
+    // The identifiers on which the row and the item it matched disagree. An identifier the
+    // item lacks is not a difference (it is filled in); one it holds with another value is.
+    const identifierDifferences = (p: PreparedRow, item: ItemIdentity): IdentifierDifference[] => {
+      const differences: IdentifierDifference[] = [];
+      const add = (field: IdentifierDifference['field'], label: string, file: string, catalog: string) =>
+        differences.push({ field, label, file_value: file, catalog_value: catalog });
       if (p.upc && item.upc && !upcVariants(p.upc).includes(item.upc)) {
-        return `its UPC is ${item.upc}, not ${p.upc}`;
+        add('upc', 'UPC', p.upc, item.upc);
       }
       if (p.number && item.number && item.number !== p.number) {
-        return `its SKU is "${item.number}", not "${p.number}"`;
+        add('number', 'SKU', p.number, item.number);
       }
       if (p.externalSku && item.external_sku && item.external_sku !== p.externalSku) {
-        return `its External SKU is "${item.external_sku}", not "${p.externalSku}"`;
+        add('external_sku', 'External SKU', p.externalSku, item.external_sku);
       }
       if (
         p.externalItemId &&
         item.external_item_id &&
         (item.external_item_id !== p.externalItemId || item.external_system !== p.externalSystem)
       ) {
-        return `its External Item ID is "${item.external_item_id}", not "${p.externalItemId}"`;
+        add(
+          'external_item_id',
+          'External Item ID',
+          `${p.externalSystem}: ${p.externalItemId}`,
+          `${item.external_system ?? ''}: ${item.external_item_id}`
+        );
       }
-      return null;
+      return differences;
     };
 
     const identityOf = (id: number) =>
       readIdentity.get(id, user.store_id) as ItemIdentity | undefined;
     const nameOf = (id: number) => identityOf(id)?.item_name ?? `#${id}`;
 
-    // The item this row updates, null for a new item, or a message when the row's identifiers
-    // do not all point at one item. Matching on the first identifier found used to rename and
-    // restock a different product whenever a file's SKU or external ID disagreed with the
-    // catalog, and drop the row's own UPC without a word.
-    const resolveExistingItem = (p: PreparedRow): { id: number | null } | { error: string } => {
+    type Resolution =
+      | { id: number | null; differences: IdentifierDifference[] }
+      | { conflict: Omit<ImportConflict, 'sheet' | 'sheet_index' | 'row_index' | 'row_num' | 'item_name'> };
+
+    // The item this row updates (null for a new item) and how its identifiers differ from
+    // the row's, or a conflict when the identifiers point at two different items. Matching on
+    // the first identifier found used to rename and restock a different product whenever a
+    // file's SKU or external ID disagreed with the catalog, and drop the row's own UPC.
+    const resolveExistingItem = (p: PreparedRow): Resolution => {
       const found = identifierMatches(p).filter(
         (match): match is { label: string; id: number } => match.id !== null
       );
-      if (found.length === 0) return { id: null };
+      if (found.length === 0) return { id: null, differences: [] };
       const [first] = found;
       const other = found.find(match => match.id !== first.id);
       if (other) {
         return {
-          error: `${first.label} belongs to "${nameOf(first.id)}" but ${other.label} belongs to "${nameOf(other.id)}"`,
+          conflict: {
+            kind: 'two_items',
+            catalog_item: nameOf(first.id),
+            message: `${first.label} belongs to "${nameOf(first.id)}" but ${other.label} belongs to "${nameOf(other.id)}"`,
+            differences: [],
+          },
         };
       }
       const identity = identityOf(first.id);
-      const mismatch = identity ? identityMismatch(p, identity) : null;
-      if (mismatch) {
-        return { error: `${first.label} belongs to "${nameOf(first.id)}", but ${mismatch}` };
-      }
-      return { id: first.id };
+      return { id: first.id, differences: identity ? identifierDifferences(p, identity) : [] };
+    };
+
+    // Why the row is listed for the owner instead of written, or null to write it. Differing
+    // identifiers are written only once the owner has chosen the file's values for the row.
+    const rowConflict = (p: PreparedRow, resolution: Resolution) => {
+      if ('conflict' in resolution) return resolution.conflict;
+      const { id, differences } = resolution;
+      if (id === null || differences.length === 0 || useFileIdentifiers) return null;
+      return {
+        kind: 'different_values' as const,
+        catalog_item: nameOf(id),
+        message: `${p.rowLabel} matches "${nameOf(id)}", but ${differences
+          .map(d => `its ${d.label} is ${d.catalog_value}, not ${d.file_value}`)
+          .join('; ')}`,
+        differences,
+      };
     };
 
     // Identifiers already written by this import, with where. A file that lists one product
     // twice used to save the first row and then quietly overwrite it with the second.
     const seenIdentifiers = new Map<string, string>();
+    // Items this import has written, with the row that wrote them.
+    const writtenItems = new Map<number, string>();
     const identifierKeys = (p: PreparedRow): string[] => [
       ...(p.upc ? upcVariants(p.upc).map(variant => `upc:${variant}`) : []),
       ...(p.number ? [`number:${p.number}`] : []),
@@ -2029,8 +2125,24 @@ inventoryRouter.post(
       }
 
       const existing = resolveExistingItem(p);
-      if ('error' in existing) {
-        rowError(workItem, p.rowLabel, existing.error);
+      const conflict = rowConflict(p, existing);
+      if (conflict) {
+        addConflict({
+          ...conflict,
+          sheet: workItem.sheet.sheetName,
+          sheet_index: workItem.sheetIndex,
+          row_index: workItem.rowIndex,
+          row_num: workItem.rowNum,
+          item_name: p.rowLabel,
+        });
+        return;
+      }
+      if ('conflict' in existing) return;
+      // An item takes one row per file, however the rows reach it: two rows with different
+      // identifiers can still resolve to the same item.
+      const earlierWrite = existing.id === null ? undefined : writtenItems.get(existing.id);
+      if (earlierWrite) {
+        rowError(workItem, p.rowLabel, `the same item is already in this file at ${earlierWrite}`);
         return;
       }
       // A new item needs a real name; a placeholder would reach the catalog as if it were
@@ -2053,14 +2165,30 @@ inventoryRouter.post(
         image,
         importedAt: toSqliteUtc(),
       };
+      let itemId: number;
       if (existing.id === null) {
-        insertRow(p, fields);
+        itemId = Number(insertRow(p, fields).lastInsertRowid);
         results.added++;
       } else {
+        // Only reached with differences when the owner chose the file's values for this row.
+        if (existing.differences.length > 0) {
+          replaceIdentifiers.run(
+            p.upc,
+            p.number,
+            p.externalSku,
+            p.externalItemId,
+            p.externalSystem,
+            p.externalItemId,
+            existing.id,
+            user.store_id
+          );
+        }
         updateRow(existing.id, p, fields);
+        itemId = existing.id;
         results.updated++;
       }
       for (const key of keys) seenIdentifiers.set(key, rowPlace(workItem));
+      writtenItems.set(itemId, rowPlace(workItem));
     };
 
     const processRow = (workItem: ImportWorkItem) => {
@@ -2091,9 +2219,15 @@ inventoryRouter.post(
     // Flatten every row into one list so the commit loop below can slice it into chunks
     // regardless of sheet boundaries.
     const work: ImportWorkItem[] = [];
-    for (const sheet of sheetsData) {
-      for (const [rowIdx, row] of sheet.rows.entries()) {
-        work.push({ sheet, row, rowNum: sheet.rowNumbers?.[rowIdx] ?? rowIdx + 2 });
+    for (const [sheetIndex, sheet] of sheetsData.entries()) {
+      for (const [rowIndex, row] of sheet.rows.entries()) {
+        work.push({
+          sheet,
+          sheetIndex,
+          rowIndex,
+          row,
+          rowNum: sheet.rowNumbers?.[rowIndex] ?? rowIndex + 2,
+        });
       }
     }
 
@@ -2170,7 +2304,7 @@ inventoryRouter.post(
       // Counts only: the full skipped-row list used to be serialised into this one column.
       db.prepare('INSERT INTO logs (action, details, user_id, store_id) VALUES (?, ?, ?, ?)').run(
         'IMPORT',
-        `Imported ${work.length} rows across ${sheetsData.length} sheet(s): +${results.added} new, ~${results.updated} updated, ${results.skipped} skipped, ${results.errors_total} failed`,
+        `Imported ${work.length} rows across ${sheetsData.length} sheet(s): +${results.added} new, ~${results.updated} updated, ${results.skipped} skipped, ${results.errors_total} failed, ${results.conflicts_total} conflicting${useFileIdentifiers ? ' (file identifiers applied)' : ''}`,
         user.id,
         user.store_id
       );

@@ -470,8 +470,10 @@ Confirm:
 - rejects unknown, duplicate, or identifier-free mappings
 - creates missing categories, only for rows that are written; a worksheet's own category is created the first time one of its rows needs it
 - cleans each UPC the way every other path does (`normalizeUpc`): spaces and dashes inside an all-digit code are removed, and a value Excel reformatted (`1.23457E+11`, `12345678905.0`) is refused; an 11-digit number cell gets its dropped leading zero back when that makes a valid barcode
-- matches an existing item by external item ID, UPC (in any of its 11/12/13-digit forms), item number, or external SKU, and refuses the row when those identifiers point at different items or disagree with the matched item's own; an identifier the item lacks is filled in, one it has is never replaced
-- refuses a second row for the same item in one file
+- matches an existing item by external item ID, UPC (in any of its 11/12/13-digit forms), item number, or external SKU; an identifier the item lacks is filled in
+- holds back, rather than writes, a row whose identifiers disagree with the item it matched (same item, different SKU, say) or point at two different items, and returns them as `conflicts` (detail capped at 500) plus `conflict_rows` (every one, by sheet and row index)
+- on the result screen the owner chooses, row by row or for all, whether a held-back row gives its item the file's identifiers; the chosen rows are sent again with `identifierConflicts: 'use_file'`. Rows that point at two different items can only be fixed in the file
+- refuses a second row for the same item in one file, whichever identifier it reaches the item by
 - reads status as Active/Inactive, Yes/No, True/False or 1/0 in any case; numbers must be plain decimals (currency signs, thousands separators and a trailing % are allowed)
 - removes the apostrophe the CSV export puts in front of values starting with `=`, `+`, `-` or `@`
 - preserves omitted values on updates and round-trips brand, descriptions, categories, images, pricing, tax, tags, status, and external IDs
