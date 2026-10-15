@@ -3,103 +3,87 @@ import type {
   ColumnMapping,
   DestinationField,
   ImportResult,
+  ParsedImportFile,
   RowData,
   SheetData,
   SkippedRow,
 } from './types';
 import { suggestCategoryName } from './mapping';
+import {
+  EXACT_ONLY_SYNONYMS,
+  EXPORT_HEADERS,
+  HEADER_SYNONYMS,
+  NON_FIELD_HEADER_WORDS,
+  headerContainsSynonym,
+  normalizeHeaderLabel,
+} from '../../shared/importHeaders';
 
-const SYNONYMS: Record<AutoDetectField, readonly string[]> = {
-  item_name: ['item description', 'product name', 'name', 'title', 'item name', 'description'],
-  quantity: ['quantity', 'qty', 'stock', 'on hand', 'count', 'units on hand'],
-  upc: ['upc', 'barcode', 'ean', 'gtin', 'upc code'],
-  number: ['number', 'sku', 'item number', 'part number', 'product id', 'item #'],
-  sale_price: ['sale price', 'price', 'retail price', 'msrp', 'unit price', 'sell price'],
-  unit: ['unit', 'uom', 'unit of measure'],
-  category: ['category', 'department', 'section', 'type', 'category name'],
-  status: ['status', 'active', 'availability'],
-  tax_percent: ['tax', 'tax %', 'tax rate', 'vat', 'tax percent'],
-  tag_names: ['tags', 'tag names', 'labels'],
-  description: ['notes', 'memo', 'detail', 'long description', 'product description'],
-  image: ['image', 'image url', 'photo', 'picture', 'img'],
-  external_system: ['external system', 'source system', 'platform', 'system'],
-  external_store_id: ['external store id', 'store id', 'location id', 'external location id'],
-  external_category_id: ['external category id', 'department id', 'category id'],
-  external_item_id: [
-    'external item id',
-    'external product id',
-    'platform item id',
-    'platform product id',
-    'inventory item id',
-  ],
-  external_sku: ['external sku', 'platform sku', 'source sku'],
-};
+type SynonymEntry = { field: AutoDetectField; synonym: string };
 
-// Export files use these stable machine-readable headers. Resolve them before
-// fuzzy synonym matching so fields such as `external_category_id`,
-// `description`, `tag_names`, and `sync_status` cannot be mistaken for a
-// shorter field name during a round trip.
-const CANONICAL_HEADERS: Partial<Record<string, DestinationField>> = {
-  item_name: 'item_name',
-  description: 'description',
-  quantity: 'quantity',
-  upc: 'upc',
-  number: 'number',
-  sku: 'number',
-  sale_price: 'sale_price',
-  unit: 'unit',
-  category: 'category',
-  status: 'status',
-  tax_percent: 'tax_percent',
-  tag_names: 'tag_names',
-  image: 'image',
-  external_system: 'external_system',
-  external_store_id: 'external_store_id',
-  external_category_id: 'external_category_id',
-  external_item_id: 'external_item_id',
-  external_sku: 'external_sku',
-  sync_status: '__ignore__',
-  last_imported_at: '__ignore__',
-  last_exported_at: '__ignore__',
-  created_at: '__ignore__',
-};
+// Longest first, so "retail price" is tried before "price".
+const SYNONYM_ENTRIES: readonly SynonymEntry[] = (
+  Object.entries(HEADER_SYNONYMS) as Array<[AutoDetectField, readonly string[]]>
+)
+  .flatMap(([field, synonyms]) => synonyms.map(synonym => ({ field, synonym })))
+  .sort((a, b) => b.synonym.length - a.synonym.length);
 
-/** The unclaimed field whose synonym equals the header, or failing that is contained in it. */
-function matchSynonym(
-  lower: string,
-  usedDest: ReadonlySet<AutoDetectField>,
-  synonymEntries: ReadonlyArray<{ dest: AutoDetectField; synonym: string }>
-): AutoDetectField | null {
-  const available = synonymEntries.filter(({ dest }) => !usedDest.has(dest));
-  const match =
-    available.find(({ synonym }) => lower === synonym) ??
-    available.find(({ synonym }) => lower.includes(synonym));
-  return match?.dest ?? null;
+/** The field a header names outright: the export's own column name, or an exact synonym. */
+function exactField(label: string, used: ReadonlySet<AutoDetectField>): AutoDetectField | null {
+  if (Object.hasOwn(EXPORT_HEADERS, label)) {
+    const field = EXPORT_HEADERS[label];
+    if (field && !used.has(field)) return field;
+  }
+  return SYNONYM_ENTRIES.find(entry => entry.synonym === label && !used.has(entry.field))?.field ?? null;
 }
 
+/** The field whose synonym appears as whole words in the header, unless the header is about something we do not import. */
+function partialField(label: string, used: ReadonlySet<AutoDetectField>): AutoDetectField | null {
+  if (NON_FIELD_HEADER_WORDS.some(word => headerContainsSynonym(label, word))) return null;
+  return (
+    SYNONYM_ENTRIES.find(
+      ({ field, synonym }) =>
+        !used.has(field) &&
+        !EXACT_ONLY_SYNONYMS.has(synonym) &&
+        headerContainsSynonym(label, synonym)
+    )?.field ?? null
+  );
+}
+
+/**
+ * Suggests a field for each header. Exact names are settled across every header first, so a
+ * vague header earlier in the file ("Item Type") cannot take a field a later one names
+ * outright ("Category"); only then are the rest matched word by word.
+ */
 export function autoDetect(headers: readonly string[]): ColumnMapping {
-  const mapping: ColumnMapping = {};
-  const usedDest = new Set<AutoDetectField>();
-  const synonymEntries = (Object.entries(SYNONYMS) as Array<[AutoDetectField, readonly string[]]>)
-    .flatMap(([dest, synonyms]) => synonyms.map(synonym => ({ dest, synonym })))
-    .sort((a, b) => b.synonym.length - a.synonym.length);
+  const chosen = new Map<string, DestinationField>();
+  const used = new Set<AutoDetectField>();
+  const claim = (header: string, field: AutoDetectField | null) => {
+    chosen.set(header, field ?? '__ignore__');
+    if (field) used.add(field);
+  };
 
   for (const header of headers) {
-    const lower = header.toLowerCase().trim();
-
-    const canonical = CANONICAL_HEADERS[lower];
-    if (canonical && (canonical === '__ignore__' || !usedDest.has(canonical))) {
-      mapping[header] = canonical;
-      if (canonical !== '__ignore__') usedDest.add(canonical);
+    const label = normalizeHeaderLabel(header);
+    // Columns the export writes for information only stay unmapped.
+    if (Object.hasOwn(EXPORT_HEADERS, label) && EXPORT_HEADERS[label] === null) {
+      claim(header, null);
       continue;
     }
-
-    const matched = matchSynonym(lower, usedDest, synonymEntries);
-    if (matched) usedDest.add(matched);
-    mapping[header] = matched ?? '__ignore__';
+    const field = exactField(label, used);
+    if (field) claim(header, field);
+  }
+  for (const header of headers) {
+    if (!chosen.has(header)) claim(header, partialField(normalizeHeaderLabel(header), used));
   }
 
-  return mapping;
+  // Many POS exports call the item's name "Description". With no other name column, that is
+  // what it is, and without a name no new item can be imported.
+  if (!used.has('item_name')) {
+    const descriptionHeader = headers.find(header => chosen.get(header) === 'description');
+    if (descriptionHeader) chosen.set(descriptionHeader, 'item_name');
+  }
+
+  return Object.fromEntries(headers.map(header => [header, chosen.get(header) ?? '__ignore__']));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -135,6 +119,12 @@ function normalizeRecords(records: unknown): RowData[] {
   return records.filter(isRecord);
 }
 
+/** The server's row numbers for a sheet, or null when absent or not one per row. */
+function normalizeRowNumbers(value: unknown, rowCount: number): number[] | null {
+  if (!Array.isArray(value) || value.length !== rowCount) return null;
+  return value.every(n => Number.isInteger(n) && n >= 1) ? (value as number[]) : null;
+}
+
 function normalizeRowCount(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0
     ? Math.trunc(value)
@@ -165,12 +155,13 @@ function normalizeSheetData(sheet: unknown, index: number): SheetData {
     sourceColumnCount: normalizeRowCount(sheet.sourceColumnCount, headers.length),
     preview,
     rows,
+    rowNumbers: normalizeRowNumbers(sheet.rowNumbers, rows.length),
     rowCount: normalizeRowCount(sheet.rowCount, rows.length),
     mapping: autoDetect(headers),
   };
 }
 
-function parseUploadResponse(data: unknown): SheetData[] {
+function parseUploadResponse(data: unknown): ParsedImportFile {
   if (!isRecord(data) || !Array.isArray(data.sheets)) {
     throw new Error('Invalid response from server while parsing file.');
   }
@@ -180,7 +171,7 @@ function parseUploadResponse(data: unknown): SheetData[] {
     throw new Error('No data sheets found in file. Please check the file and try again.');
   }
 
-  return sheets;
+  return { sheets, hiddenSheets: normalizeStringList(data.hiddenSheets) };
 }
 
 function readRequiredCount(value: unknown): number {
@@ -241,7 +232,7 @@ function parseImportResult(data: unknown): ImportResult {
   };
 }
 
-export async function uploadFile(file: File): Promise<SheetData[]> {
+export async function uploadFile(file: File): Promise<ParsedImportFile> {
   const form = new FormData();
   form.append('file', file);
 
@@ -264,6 +255,7 @@ export async function confirmImport(sheets: readonly SheetData[]): Promise<Impor
     sheetName: sheet.name,
     categoryName: sheet.categoryName,
     rows: sheet.rows,
+    ...(sheet.rowNumbers ? { rowNumbers: sheet.rowNumbers } : {}),
     mapping: sheet.mapping,
   }));
 

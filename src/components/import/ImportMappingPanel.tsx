@@ -27,6 +27,7 @@ const CATEGORY_VALUE_LIMIT = 12;
 interface Props {
   fileName: string | null;
   sheets: SheetData[];
+  hiddenSheets?: readonly string[];
   activeSheet: SheetData;
   activeSheetIndex: number;
   isMultiSheet: boolean;
@@ -602,6 +603,7 @@ function ImportFooter({
 export function ImportMappingPanel({
   fileName,
   sheets,
+  hiddenSheets = [],
   activeSheet,
   activeSheetIndex,
   isMultiSheet,
@@ -711,6 +713,14 @@ export function ImportMappingPanel({
       )}
 
       {parseError && <ErrorBanner message={parseError} className="mx-5 mt-4" />}
+
+      {hiddenSheets.length > 0 && (
+        <p className="mx-5 mt-4 text-xs text-slate-500">
+          Hidden worksheet{hiddenSheets.length === 1 ? '' : 's'} not imported:{' '}
+          {hiddenSheets.join(', ')}. Unhide {hiddenSheets.length === 1 ? 'it' : 'them'} in Excel
+          to include {hiddenSheets.length === 1 ? 'it' : 'them'}.
+        </p>
+      )}
 
       <div className={cn('p-5', isMultiSheet && 'border-t border-slate-200')}>
         <div className="mb-3 flex flex-wrap items-start justify-between gap-4">

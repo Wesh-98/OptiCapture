@@ -265,16 +265,46 @@ export function searchCondition(columns: string[], q: string): { sql: string; pa
   return { sql: `(${matches.join(' OR ')})`, params: columns.map(() => pattern) };
 }
 
-// UPC/EAN barcodes sometimes arrive with or without a leading zero.
-// EAN-13 = 13 digits; UPC-A = 12 digits (EAN-13 with leading 0 dropped).
-// Try both variants so a scan of "012345678905" also matches "12345678905".
+/**
+ * The forms one retail barcode is written in: UPC-A (12 digits), the same code as EAN-13
+ * with a leading zero (13), and UPC-A with its own leading zero lost (11) — which is what
+ * Excel stores when a barcode is typed into a number cell. A scan of "012345678905" matches
+ * an item saved as "12345678905" or "0012345678905", and the other way round.
+ */
 export function upcVariants(upc: string): string[] {
-  const variants = [upc];
-  if (/^\d+$/.test(upc)) {
-    if (upc.length === 13 && upc.startsWith('0')) variants.push(upc.slice(1));
-    if (upc.length === 12) variants.push('0' + upc);
+  if (!/^\d+$/.test(upc)) return [upc];
+  let upcA: string | null = null;
+  if (upc.length === 11) upcA = `0${upc}`;
+  else if (upc.length === 12) upcA = upc;
+  else if (upc.length === 13 && upc.startsWith('0')) upcA = upc.slice(1);
+  if (upcA === null) return [upc];
+  const forms = [upcA, `0${upcA}`];
+  if (upcA.startsWith('0')) forms.push(upcA.slice(1));
+  return [upc, ...forms.filter(form => form !== upc)];
+}
+
+/**
+ * A UPC as typed, scanned or imported, cleaned to the form it is stored in, or why it cannot
+ * be one. Spaces and dashes inside an all-digit code are separators ("0 12345 67890 5"), so
+ * they go. A value Excel turned into a number ("1.23457E+11", "12345678905.0") has already
+ * lost digits and is refused rather than saved as a barcode nothing will ever scan.
+ * Letter codes ("ABC-123") are store-internal and kept as written.
+ */
+export function normalizeUpc(raw: unknown): { value: string } | { error: string } {
+  if (raw === null || raw === undefined) return { value: '' };
+  const text = String(raw).trim();
+  // Control characters (a NUL from a bad scanner read, a stray tab) are never part of a code.
+  if ([...text].some(char => char.charCodeAt(0) < 0x20 || char.charCodeAt(0) === 0x7f)) {
+    return { error: 'UPC contains characters that cannot be part of a barcode' };
   }
-  return variants;
+  if (/^\d+(\.\d+)?e[+-]?\d+$/i.test(text) || /^\d+\.\d+$/.test(text)) {
+    return {
+      error: `UPC "${text}" looks like a number Excel reformatted — format the column as Text and export it again`,
+    };
+  }
+  const value = /^[\d\s-]+$/.test(text) && /\d/.test(text) ? text.replace(/[\s-]/g, '') : text;
+  if (value.length > 128) return { error: 'UPC must be 128 characters or fewer' };
+  return { value };
 }
 
 function gs1CheckDigitValid(digits: string): boolean {
@@ -442,7 +472,11 @@ export async function lookupProduct(upc: string): Promise<ProductLookup> {
   const cleanUpc = String(upc || '').trim();
   if (!cleanUpc) return { product: null, conclusive: true };
 
-  const variants = upcVariants(cleanUpc);
+  // The 11-digit form only exists because a spreadsheet dropped a zero; no product database
+  // files a barcode under it, so asking for it would only add a round trip to every miss.
+  const variants = upcVariants(cleanUpc).filter(
+    (variant, index) => index === 0 || variant.length >= 12
+  );
 
   // Run every configured provider concurrently so a slow premium provider never
   // delays the two fallbacks. Each provider has its own timeout.

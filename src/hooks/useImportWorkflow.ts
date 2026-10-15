@@ -14,6 +14,7 @@ const initialState: ImportState = {
   step: 'upload',
   file: null,
   sheets: [],
+  hiddenSheets: [],
   activeSheet: 0,
   result: null,
   parseError: null,
@@ -34,18 +35,20 @@ export function useImportWorkflow() {
         step: 'upload',
         file,
         sheets: [],
+        hiddenSheets: [],
         activeSheet: 0,
         result: null,
         parseError: null,
         isParsing: true,
       }));
 
-      const sheets = await uploadFile(file);
+      const { sheets, hiddenSheets } = await uploadFile(file);
 
       setState(prev => ({
         ...prev,
         step: 'map',
         sheets,
+        hiddenSheets,
         activeSheet: 0,
         isParsing: false,
       }));

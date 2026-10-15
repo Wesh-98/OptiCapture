@@ -27,6 +27,7 @@ export function ImportScreen() {
           <ImportMappingPanel
             fileName={workflow.state.file?.name ?? null}
             sheets={workflow.state.sheets}
+            hiddenSheets={workflow.state.hiddenSheets}
             activeSheet={workflow.activeSheet}
             activeSheetIndex={workflow.state.activeSheet}
             isMultiSheet={workflow.isMultiSheet}

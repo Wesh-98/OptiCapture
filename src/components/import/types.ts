@@ -1,24 +1,8 @@
+import type { ImportField } from '../../shared/importHeaders';
+
 export type UploadStep = 'upload' | 'map' | 'importing' | 'done';
 export type RowData = Record<string, unknown>;
-export type DestinationField =
-  | '__ignore__'
-  | 'item_name'
-  | 'quantity'
-  | 'upc'
-  | 'number'
-  | 'sale_price'
-  | 'unit'
-  | 'category'
-  | 'status'
-  | 'tax_percent'
-  | 'tag_names'
-  | 'description'
-  | 'image'
-  | 'external_system'
-  | 'external_store_id'
-  | 'external_category_id'
-  | 'external_item_id'
-  | 'external_sku';
+export type DestinationField = '__ignore__' | ImportField;
 export type AutoDetectField = Exclude<DestinationField, '__ignore__'>;
 export type ColumnMapping = Record<string, DestinationField>;
 
@@ -54,14 +38,23 @@ export interface SheetData {
   sourceColumnCount: number;
   preview: RowData[];
   rows: RowData[];
+  /** The file row each entry of `rows` came from, sent back so results can point at it. */
+  rowNumbers?: number[] | null;
   rowCount: number;
   mapping: ColumnMapping;
+}
+
+export interface ParsedImportFile {
+  sheets: SheetData[];
+  /** Hidden worksheets the server left out. */
+  hiddenSheets: string[];
 }
 
 export interface ImportState {
   step: UploadStep;
   file: File | null;
   sheets: SheetData[];
+  hiddenSheets: string[];
   activeSheet: number;
   result: ImportResult | null;
   parseError: string | null;
@@ -75,6 +68,7 @@ export const DEST_FIELDS: ReadonlyArray<{
 }> = [
   { value: '__ignore__', label: '- ignore -', description: 'Do not import this column' },
   { value: 'item_name', label: 'Item Name', description: 'Inventory display name' },
+  { value: 'brand', label: 'Brand', description: 'Brand or manufacturer' },
   {
     value: 'quantity',
     label: 'Stock Quantity (# units in stock)',

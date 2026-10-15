@@ -1,3 +1,4 @@
+import { isGenericSheetName } from '../../shared/importHeaders';
 import { DEST_FIELDS, IDENTIFIER_DESTINATIONS } from './types';
 import type { ColumnMapping, DestinationField, RowData, SheetData } from './types';
 
@@ -21,20 +22,18 @@ function normalizeHeader(header: string): string {
 
 export function suggestCategoryName(sheetName: string): string | null {
   const trimmed = sheetName.trim();
-  if (
-    !trimmed ||
-    /^(inventory|sheet\s*\d*|worksheet\s*\d*|items?|products?|catalog|data)$/i.test(trimmed)
-  ) {
-    return null;
-  }
-  return trimmed;
+  return !trimmed || isGenericSheetName(trimmed) ? null : trimmed;
 }
 
-/** A parsed cell as display text. Cells arrive as JSON primitives; anything else is shown as JSON. */
+/** A parsed cell as display text. Cells arrive as JSON primitives or link cells; anything else is shown as JSON. */
 export function cellText(value: unknown): string {
   if (value === null || value === undefined) return '';
   if (typeof value === 'string') return value;
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  // A spreadsheet link cell: shown as the text the sheet shows.
+  if (typeof value === 'object' && typeof (value as { text?: unknown }).text === 'string') {
+    return (value as { text: string }).text;
+  }
   return JSON.stringify(value) ?? '';
 }
 

@@ -372,7 +372,11 @@ describe('inventory batch upload parsing', () => {
     expect(res.body.totalRows).toBe(1);
     expect(res.body.sheets[0].preview[0]).toMatchObject({
       item_name: 'Rich Item',
-      image: 'https://drive.google.com/file/d/xlsx123/view?usp=sharing',
+      // A link cell keeps its text and its address; an Image column takes the address.
+      image: {
+        text: 'Drive Link',
+        hyperlink: 'https://drive.google.com/file/d/xlsx123/view?usp=sharing',
+      },
       description: 'Formula Description',
       created_at: '2026-01-02T10:00:00.000Z',
     });
@@ -476,7 +480,7 @@ describe('inventory batch confirm', () => {
     expect(first.status).toBe(200);
     expect(first.body.added).toBe(1);
     expect(first.body.errors).toEqual([
-      '"Blank System Item": External System is required when External Item ID is set',
+      'Sheet "Platform" row 3 ("Blank System Item"): External System is required when External Item ID is set',
     ]);
 
     // The same ID from a different platform is a different item, not an update.

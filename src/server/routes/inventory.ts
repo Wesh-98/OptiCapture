@@ -15,35 +15,19 @@ import {
   savedUploadPath,
   searchCondition,
   upcVariants,
+  isValidGtin,
+  normalizeUpc,
   UnsupportedImageTypeError,
 } from '../helpers.js';
 import { isReservedCategoryName } from './categories.js';
+import { IMPORT_FIELDS, isGenericSheetName, isKnownHeader } from '../../shared/importHeaders.js';
 import type { AuthRequest } from '../types.js';
 import { logError } from '../logger.js';
 import { discardUploads } from '../uploads.js';
 
 export const inventoryRouter = express.Router();
 
-const IMPORT_DESTINATION_FIELDS = new Set([
-  '__ignore__',
-  'item_name',
-  'quantity',
-  'upc',
-  'number',
-  'sale_price',
-  'unit',
-  'category',
-  'status',
-  'tax_percent',
-  'tag_names',
-  'description',
-  'image',
-  'external_system',
-  'external_store_id',
-  'external_category_id',
-  'external_item_id',
-  'external_sku',
-]);
+const IMPORT_DESTINATION_FIELDS = new Set<string>(['__ignore__', ...IMPORT_FIELDS]);
 const IMPORT_IDENTIFIER_FIELDS = new Set(['upc', 'number', 'external_item_id', 'external_sku']);
 
 // Import ceilings. The whole file used to be written inside one synchronous transaction, so
@@ -63,6 +47,8 @@ interface ImportPreviewSheet {
   sourceColumnCount: number;
   preview: Record<string, any>[];
   rows: Record<string, any>[];
+  /** The row each entry of `rows` came from in the file, so results can point at it. */
+  rowNumbers: number[];
   rowCount: number;
 }
 
@@ -71,14 +57,18 @@ interface ImportPreviewSheet {
  * ceiling is checked before the user maps any columns. Rejecting only at batch-confirm
  * would let a user map a 50,001-row file and then lose that work to a 413.
  */
-function sendImportPreview(res: express.Response, sheets: ImportPreviewSheet[]) {
+function sendImportPreview(
+  res: express.Response,
+  sheets: ImportPreviewSheet[],
+  hiddenSheets: string[] = []
+) {
   const totalRows = sheets.reduce((n, s) => n + s.rowCount, 0);
   if (totalRows > MAX_IMPORT_ROWS) {
     return res.status(413).json({
       error: `This file has ${totalRows.toLocaleString('en-US')} rows. Imports are limited to ${MAX_IMPORT_ROWS.toLocaleString('en-US')} rows — split the file and import it in parts.`,
     });
   }
-  return res.json({ sheets, totalRows });
+  return res.json({ sheets, totalRows, hiddenSheets });
 }
 
 // Multer — memory storage for file uploads (xlsx/csv import)
@@ -128,26 +118,34 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-// ExcelJS hands back an object for hyperlink, formula and rich-text cells. Null means the
-// object has none of the fields those carry.
-function normalizeImportedCellObject(
-  value: Record<string, unknown>
-): string | number | boolean | null {
-  if (typeof value.hyperlink === 'string' && value.hyperlink.trim()) {
-    return value.hyperlink.trim();
-  }
-  if (value.result !== undefined && value.result !== null) {
-    return normalizeImportedCellValue(value.result);
-  }
-  if (Array.isArray(value.richText)) {
-    const text = value.richText
+function richTextValue(value: unknown): string {
+  if (typeof value === 'string') return value.trim();
+  if (isRecord(value) && Array.isArray(value.richText)) {
+    return value.richText
       .map(entry => (isRecord(entry) && typeof entry.text === 'string' ? entry.text : ''))
       .join('')
       .trim();
-    if (text) return text;
   }
-  if (typeof value.text === 'string' && value.text.trim()) {
-    return value.text.trim();
+  return '';
+}
+
+// ExcelJS hands back an object for hyperlink, formula, error and rich-text cells. Null means
+// the object has none of the fields those carry.
+function normalizeImportedCellObject(
+  value: Record<string, unknown>
+): string | number | boolean | null {
+  // An error cell (#N/A, #REF!), or a formula whose result is one, holds no value. Importing
+  // it used to write the text {"error":"#N/A"} into the item.
+  if (typeof value.error === 'string') return '';
+  if (value.result !== undefined && value.result !== null) {
+    return normalizeImportedCellValue(value.result);
+  }
+  // A link shows its text in the sheet; that text is the value. The address is only used
+  // when the cell shows nothing else, as with a pasted image link.
+  const text = richTextValue(value.text) || richTextValue(value);
+  if (text) return text;
+  if (typeof value.hyperlink === 'string' && value.hyperlink.trim()) {
+    return value.hyperlink.trim();
   }
   return null;
 }
@@ -170,47 +168,35 @@ function normalizeImportedCellValue(value: unknown): string | number | boolean {
   return typeof value === 'bigint' ? value.toString() : (JSON.stringify(value) ?? '');
 }
 
+/**
+ * A link cell whose text and address differ ("Drive Link" → https://drive…). Both are kept
+ * until the column's destination is known: the address is the value of an Image column, the
+ * text is the value of anything else. Taking the address everywhere used to turn a linked
+ * product name into a URL.
+ */
+interface ImportedLinkCell {
+  text: string;
+  hyperlink: string;
+}
+
+function worksheetCellValue(value: unknown): string | number | boolean | ImportedLinkCell {
+  if (isRecord(value) && typeof value.hyperlink === 'string' && value.hyperlink.trim()) {
+    const text = richTextValue(value.text);
+    const hyperlink = value.hyperlink.trim();
+    if (text && text !== hyperlink) return { text, hyperlink };
+  }
+  return normalizeImportedCellValue(value);
+}
+
+/** The address of a link cell, for an Image column; any other value as it is. */
+function linkTarget(value: unknown): unknown {
+  return isRecord(value) && typeof value.hyperlink === 'string' ? value.hyperlink : value;
+}
+
 function readImportedString(value: unknown): string {
   const normalized = normalizeImportedCellValue(value);
   return typeof normalized === 'string' ? normalized.trim() : String(normalized).trim();
 }
-
-const IMPORT_HEADER_HINTS = new Set([
-  'item_name',
-  'item name',
-  'name',
-  'product name',
-  'description',
-  'quantity',
-  'qty',
-  'stock',
-  'upc',
-  'barcode',
-  'number',
-  'sku',
-  'item number',
-  'sale_price',
-  'sale price',
-  'price',
-  'unit',
-  'category',
-  'status',
-  'tax_percent',
-  'tax',
-  'tag_names',
-  'tags',
-  'image',
-  'image url',
-  'external_system',
-  'external system',
-  'external_store_id',
-  'external category id',
-  'external_category_id',
-  'external_item_id',
-  'external item id',
-  'external_sku',
-  'external sku',
-]);
 
 function detectWorksheetHeader(ws: ExcelJS.Worksheet): {
   rowNumber: number;
@@ -232,18 +218,18 @@ function detectWorksheetHeader(ws: ExcelJS.Worksheet): {
     }
   });
 
+  // A header row is labels: words the import knows, and text rather than numbers. Row width
+  // used to dominate the score, so one data row with a note in a spare column, or a header
+  // with one unlabeled column, made a data row the header and dropped everything above it.
   for (let rowNumber = 1; rowNumber <= lastCandidateRow; rowNumber++) {
     const row = ws.getRow(rowNumber);
-    const values = (row.values as unknown[]).slice(1);
-    const labels = values.map(readImportedString);
-    const nonEmptyCount = labels.filter(Boolean).length;
-    if (nonEmptyCount === 0) continue;
+    const labels = (row.values as unknown[]).slice(1).map(readImportedString).filter(Boolean);
+    if (labels.length === 0) continue;
 
-    const recognizedCount = labels.filter(label =>
-      IMPORT_HEADER_HINTS.has(label.toLocaleLowerCase())
-    ).length;
-    const occupiedWidth = values.length;
-    const score = occupiedWidth * 10 + nonEmptyCount + recognizedCount * 3;
+    const recognizedCount = labels.filter(isKnownHeader).length;
+    const numericCount = labels.filter(label => /^[\d\s.,$%()-]+$/.test(label)).length;
+    const textCount = labels.length - numericCount;
+    const score = recognizedCount * 10 + textCount * 2 + labels.length - numericCount * 3;
     if (score > bestScore) {
       bestScore = score;
       bestRowNumber = rowNumber;
@@ -285,7 +271,8 @@ export function parseImportNumber(
   if (cleaned.endsWith('%')) cleaned = cleaned.slice(0, -1).trimEnd();
   const parsed = Number(cleaned);
   const max = options.max ?? 1_000_000;
-  if (!cleaned || !Number.isFinite(parsed) || parsed < 0) {
+  // Plain decimals only. Number() alone also read "0x10" as 16 and "1e3" as 1000.
+  if (!/^(\d+(\.\d*)?|\.\d+)$/.test(cleaned) || !Number.isFinite(parsed)) {
     return { value: null, error: `${label} "${text}" is not a valid non-negative number` };
   }
   if (options.integer && !Number.isInteger(parsed)) {
@@ -351,18 +338,27 @@ function validateInventoryStrings(values: {
   return null;
 }
 
-function normalizeInventoryStatus(value: unknown, fallback = 'Active'): 'Active' | 'Inactive' {
-  const status = readImportedString(value) || fallback;
-  if (status !== 'Active' && status !== 'Inactive') {
-    throw new Error('status must be Active or Inactive');
-  }
-  return status;
-}
+// How spreadsheets write an item's status. Anything else is refused rather than guessed.
+const IMPORT_STATUS_WORDS: Record<string, 'Active' | 'Inactive'> = {
+  active: 'Active',
+  yes: 'Active',
+  y: 'Active',
+  true: 'Active',
+  '1': 'Active',
+  inactive: 'Inactive',
+  no: 'Inactive',
+  n: 'Inactive',
+  false: 'Inactive',
+  '0': 'Inactive',
+};
 
-function isGenericImportSheetName(name: string): boolean {
-  return /^(inventory|sheet\s*\d*|worksheet\s*\d*|items?|products?|catalog|data)$/i.test(
-    name.trim()
-  );
+/** An imported status cell as Active or Inactive, or null when the cell is blank. */
+export function parseImportStatus(value: unknown): { value: 'Active' | 'Inactive' | null; error?: string } {
+  const text = readImportedString(value);
+  if (!text) return { value: null };
+  const key = text.toLowerCase();
+  if (Object.hasOwn(IMPORT_STATUS_WORDS, key)) return { value: IMPORT_STATUS_WORDS[key] };
+  return { value: null, error: `Status "${text}" must be Active or Inactive (or Yes/No)` };
 }
 
 // The inventory.category_id foreign key only proves the category exists — not that
@@ -402,6 +398,7 @@ const ITEM_LIMITS = {
   tag_names: 1000,
   category: 100,
   number: 128,
+  brand: 200,
   external: 200,
 } as const;
 
@@ -792,12 +789,14 @@ inventoryRouter.post(
     if ('error' in numbers) return res.status(400).json({ error: numbers.error });
     const attributeError = newItemAttributeError(req.body, user.store_id);
     if (attributeError) return res.status(400).json({ error: attributeError });
+    const upcResult = normalizeUpc(upc);
+    if ('error' in upcResult) return res.status(400).json({ error: upcResult.error });
 
     const itemName = item_name.trim();
     // '' is an absent category, not category 0. Passing it straight through hit the
     // category_id foreign key and surfaced as a 500; the PUT route already normalises it.
     const categoryIdValue = categoryIdOrNull(category_id);
-    const cleanUpc = typeof upc === 'string' ? upc.trim() : '';
+    const cleanUpc = upcResult.value;
     // Two items may share a name (the same product in two sizes); they may not share a UPC.
     if (cleanUpc && findItemIdByUpc(cleanUpc, user.store_id) !== null) {
       return res.status(409).json({ error: 'An item with that UPC already exists' });
@@ -1086,10 +1085,18 @@ export function updateInventoryItem(
   storeId: number | undefined,
   userId: number,
   itemId: unknown,
-  body: Record<string, any>,
+  requestBody: Record<string, any>,
   options: ItemUpdateOptions = {}
 ): ItemUpdateResult {
   const bad = (error: string) => ({ status: 400, body: { error } });
+
+  // A typed UPC is stored the way scans and imports store it ("0 12345 67890 5" → digits).
+  let body = requestBody;
+  if (typeof body.upc === 'string') {
+    const upcResult = normalizeUpc(body.upc);
+    if ('error' in upcResult) return bad(upcResult.error);
+    body = { ...body, upc: upcResult.value };
+  }
 
   const textError = updateTextError(body);
   if (textError) return bad(textError);
@@ -1174,6 +1181,138 @@ inventoryRouter.delete(
   }
 );
 
+/**
+ * A CSV file's text. Excel's plain "CSV" save writes Windows-1252, not UTF-8; read as UTF-8
+ * that turned "Café" into "Caf�" and "£3.99" into a rejected price. Valid UTF-8 is read as
+ * UTF-8, anything else as Windows-1252.
+ */
+export function decodeCsvText(buffer: Buffer): string {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+  } catch {
+    return new TextDecoder('windows-1252').decode(buffer);
+  }
+}
+
+/**
+ * Trims the keys of CSV and JSON rows, so the headers the mapping screen shows (it trims
+ * them) are the keys the rows carry. A file with " UPC " as a header used to import nothing:
+ * the mapping said "UPC", every row said " UPC ". Two keys that trim to the same name keep
+ * both, the second as "Name (2)", the way worksheet headers already are.
+ */
+export function trimRowKeys(rawRows: Record<string, unknown>[]): {
+  headers: string[];
+  rows: Record<string, unknown>[];
+} {
+  const headerFor = new Map<string, string>();
+  const taken = new Set<string>();
+  const headers: string[] = [];
+  for (const row of rawRows) {
+    for (const key of Object.keys(row)) {
+      // Papa Parse collects fields beyond the header here; they have no column to map to.
+      if (key === '__parsed_extra' || headerFor.has(key)) continue;
+      const base = key.trim();
+      if (!base) continue;
+      let header = base;
+      for (let n = 2; taken.has(header.toLocaleLowerCase()); n++) header = `${base} (${n})`;
+      taken.add(header.toLocaleLowerCase());
+      headerFor.set(key, header);
+      headers.push(header);
+    }
+  }
+  const rows = rawRows.map(row => {
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(row)) {
+      const header = headerFor.get(key);
+      if (header) out[header] = value;
+    }
+    return out;
+  });
+  return { headers, rows };
+}
+
+/** One sheet parsed from a CSV or JSON file, where row N of the data is line N + 1. */
+function flatPreviewSheet(name: string, rawRows: Record<string, unknown>[]): ImportPreviewSheet {
+  const { headers, rows } = trimRowKeys(rawRows);
+  return {
+    name,
+    headers,
+    headerRowNumber: 1,
+    sourceColumnCount: headers.length,
+    preview: rows.slice(0, 5),
+    rows,
+    rowNumbers: rows.map((_, index) => index + 2),
+    rowCount: rows.length,
+  };
+}
+
+function worksheetPreview(ws: ExcelJS.Worksheet): ImportPreviewSheet {
+  const detectedHeader = detectWorksheetHeader(ws);
+  const rows: Record<string, any>[] = [];
+  const rowNumbers: number[] = [];
+  ws.eachRow((row, rowNumber) => {
+    if (rowNumber <= detectedHeader.rowNumber) return;
+    const obj: Record<string, any> = {};
+    detectedHeader.columns.forEach(column => {
+      obj[column.header] = worksheetCellValue(row.getCell(column.columnNumber).value);
+    });
+    if (Object.values(obj).some(value => readImportedString(value))) {
+      rows.push(obj);
+      rowNumbers.push(rowNumber);
+    }
+  });
+  return {
+    name: ws.name,
+    headers: detectedHeader.columns.map(column => column.header),
+    headerRowNumber: detectedHeader.rowNumber,
+    sourceColumnCount: detectedHeader.sourceColumnCount,
+    preview: rows.slice(0, 5),
+    rows,
+    rowNumbers,
+    rowCount: rows.length,
+  };
+}
+
+function parseJsonImport(res: express.Response, buffer: Buffer) {
+  const parsed = JSON.parse(buffer.toString('utf8'));
+  // Support both raw array and our export format { items: [...] }
+  const rows: Record<string, any>[] = Array.isArray(parsed) ? parsed : (parsed.items ?? []);
+  if (!Array.isArray(rows) || rows.some(row => !isRecord(row))) {
+    return res.status(400).json({ error: 'JSON items must be an array of objects' });
+  }
+  if (rows.length === 0) return res.status(400).json({ error: 'JSON file has no items' });
+  return sendImportPreview(res, [flatPreviewSheet('Inventory', rows)]);
+}
+
+function parseCsvImport(res: express.Response, buffer: Buffer) {
+  const { data, errors } = Papa.parse<Record<string, any>>(decodeCsvText(buffer), {
+    header: true,
+    skipEmptyLines: true,
+    dynamicTyping: false,
+  });
+  if (errors.length && data.length === 0)
+    return res.status(400).json({ error: 'Could not parse CSV file.' });
+  // A header line alone used to come back as an empty sheet with nothing to map.
+  if (data.length === 0) return res.status(400).json({ error: 'File is empty or has no data rows' });
+  return sendImportPreview(res, [flatPreviewSheet('Sheet1', data)]);
+}
+
+async function parseWorkbookImport(res: express.Response, buffer: Buffer) {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(buffer);
+  // Hidden sheets are left out: what the owner sees in Excel is what gets imported. Their
+  // names go back so the mapping screen can say they were skipped.
+  const isHidden = (ws: ExcelJS.Worksheet) => ws.state === 'hidden' || ws.state === 'veryHidden';
+  const hiddenSheets = workbook.worksheets.filter(isHidden).map(ws => ws.name);
+  const sheets = workbook.worksheets
+    .filter(ws => !isHidden(ws))
+    .map(worksheetPreview)
+    .filter(sheet => sheet.rowCount > 0);
+  if (sheets.length === 0)
+    return res.status(400).json({ error: 'File is empty or has no data rows' });
+  return sendImportPreview(res, sheets, hiddenSheets);
+}
+
 // Batch Upload — parse ALL sheets, return headers + preview + full rows per sheet
 inventoryRouter.post(
   '/inventory/batch-upload',
@@ -1189,87 +1328,11 @@ inventoryRouter.post(
         .status(400)
         .json({ error: 'Invalid file type. Only XLSX, CSV, and JSON files are allowed.' });
     }
-    const isJson = format === 'json';
 
     try {
-      if (isJson) {
-        const parsed = JSON.parse(req.file.buffer.toString('utf8'));
-        // Support both raw array and our export format { items: [...] }
-        const rows: Record<string, any>[] = Array.isArray(parsed) ? parsed : (parsed.items ?? []);
-        if (!Array.isArray(rows) || rows.some(row => !isRecord(row))) {
-          return res.status(400).json({ error: 'JSON items must be an array of objects' });
-        }
-        if (rows.length === 0) return res.status(400).json({ error: 'JSON file has no items' });
-        const headers = [...new Set(rows.flatMap(row => Object.keys(row)))];
-        return sendImportPreview(res, [
-          {
-            name: 'Inventory',
-            headers,
-            headerRowNumber: 1,
-            sourceColumnCount: headers.length,
-            preview: rows.slice(0, 5),
-            rows,
-            rowCount: rows.length,
-          },
-        ]);
-      }
-
-      if (format === 'csv') {
-        const { data, errors } = Papa.parse<Record<string, any>>(req.file.buffer.toString('utf8'), {
-          header: true,
-          skipEmptyLines: true,
-          dynamicTyping: false,
-        });
-        if (errors.length && data.length === 0)
-          return res.status(400).json({ error: 'Could not parse CSV file.' });
-        const rows = data as Record<string, any>[];
-        const headers = [...new Set(rows.flatMap(row => Object.keys(row)))];
-        return sendImportPreview(res, [
-          {
-            name: 'Sheet1',
-            headers,
-            headerRowNumber: 1,
-            sourceColumnCount: headers.length,
-            preview: rows.slice(0, 5),
-            rows,
-            rowCount: rows.length,
-          },
-        ]);
-      }
-
-      const workbook = new ExcelJS.Workbook();
-      await workbook.xlsx.load(req.file.buffer);
-      const sheets = workbook.worksheets
-        .map(ws => {
-          const detectedHeader = detectWorksheetHeader(ws);
-          const headerRow = detectedHeader.columns.map(column => column.header);
-          const rows: Record<string, any>[] = [];
-          ws.eachRow((row, rowNumber) => {
-            if (rowNumber <= detectedHeader.rowNumber) return;
-            const obj: Record<string, any> = {};
-            detectedHeader.columns.forEach(column => {
-              obj[column.header] = normalizeImportedCellValue(
-                row.getCell(column.columnNumber).value
-              );
-            });
-            if (Object.values(obj).some(value => readImportedString(value))) rows.push(obj);
-          });
-          return {
-            name: ws.name,
-            headers: headerRow,
-            headerRowNumber: detectedHeader.rowNumber,
-            sourceColumnCount: detectedHeader.sourceColumnCount,
-            preview: rows.slice(0, 5),
-            rows,
-            rowCount: rows.length,
-          };
-        })
-        .filter(s => s.rowCount > 0);
-
-      if (sheets.length === 0)
-        return res.status(400).json({ error: 'File is empty or has no data rows' });
-
-      sendImportPreview(res, sheets);
+      if (format === 'json') return parseJsonImport(res, req.file.buffer);
+      if (format === 'csv') return parseCsvImport(res, req.file.buffer);
+      await parseWorkbookImport(res, req.file.buffer);
     } catch (err: any) {
       logError('import:upload', err);
       res
@@ -1283,7 +1346,7 @@ inventoryRouter.post(
 // A sheet's chosen category, or its own name when none was chosen and the name says something.
 function sheetFallbackCategory(sheet: { sheetName: string; categoryName?: string | null }): string {
   if (Object.hasOwn(sheet, 'categoryName')) return readImportedString(sheet.categoryName);
-  return isGenericImportSheetName(sheet.sheetName) ? '' : sheet.sheetName;
+  return isGenericSheetName(sheet.sheetName) ? '' : sheet.sheetName;
 }
 
 // True when the confirm payload is not a list of sheets shaped the way the mapping page sends them.
@@ -1305,8 +1368,20 @@ function hasInvalidSheetsData(sheetsData: any): boolean {
           destination =>
             typeof destination !== 'string' || !IMPORT_DESTINATION_FIELDS.has(destination)
         ) ||
-        sheet.rows.some(row => !isRecord(row))
+        sheet.rows.some(row => !isRecord(row)) ||
+        hasInvalidRowNumbers(sheet)
     )
+  );
+}
+
+// `rowNumbers` is optional (a client built before it existed sends none), but when sent it
+// must name one file row per data row.
+function hasInvalidRowNumbers(sheet: Record<string, any>): boolean {
+  if (sheet.rowNumbers === undefined) return false;
+  return (
+    !Array.isArray(sheet.rowNumbers) ||
+    sheet.rowNumbers.length !== sheet.rows.length ||
+    sheet.rowNumbers.some((n: unknown) => !Number.isInteger(n) || (n as number) < 1)
   );
 }
 
@@ -1351,6 +1426,7 @@ inventoryRouter.post(
         sheetName: string;
         categoryName?: string | null;
         rows: Record<string, any>[];
+        rowNumbers?: number[];
         mapping: Record<string, string>;
       }[];
     };
@@ -1496,7 +1572,11 @@ inventoryRouter.post(
 
     const categoryIdCache = new Map<string, number | null>();
     const getCategoryId = (name: string): number | null => {
-      const trimmed = String(name || '').trim();
+      // "Soft  Drinks" and "Soft Drinks" are one category.
+      const trimmed = String(name || '')
+        .trim()
+        .split(/\s+/)
+        .join(' ');
       if (!trimmed) return null;
       // GET /categories hides reserved names, so a category created here under one would
       // leave its items unreachable from the category view. Leave the item uncategorised —
@@ -1540,32 +1620,31 @@ inventoryRouter.post(
     const storeOwnsUpload = db.prepare(
       'SELECT 1 FROM inventory WHERE store_id = ? AND image = ? LIMIT 1'
     );
-
-    // A barcode with or without its leading zero is the same item. The scan commit path has
-    // always matched both; this one matched the literal string only, so importing a POS file
-    // created a second row for every item a scan had already added under the other variant.
-    const findByUpc = (value: string): { id: number } | null => {
-      const id = findItemIdByUpc(value, user.store_id);
-      return id === null ? null : { id };
-    };
     const checkNum = db.prepare('SELECT id FROM inventory WHERE number = ? AND store_id = ?');
     const checkExternalSku = db.prepare(
       'SELECT id FROM inventory WHERE external_sku = ? AND store_id = ?'
     );
+    const readIdentity = db.prepare(
+      `SELECT item_name, upc, number, external_system, external_item_id, external_sku
+         FROM inventory WHERE id = ? AND store_id = ?`
+    );
 
     const insertStmt = db.prepare(`
     INSERT INTO inventory (
-      item_name, description, quantity, unit, sale_price, tax_percent, upc, number,
+      item_name, brand, description, quantity, unit, sale_price, tax_percent, upc, number,
       tag_names, category_id, status, image, external_system, external_store_id,
       external_category_id, external_item_id, external_sku, last_imported_at,
       sync_status, store_id, source
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'import')
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'import')
   `);
 
+    // An identifier the item lacks is filled in from the row; one it already has is never
+    // replaced — a row that disagrees with it is refused before it gets here.
     const updateStmt = db.prepare(`
     UPDATE inventory
     SET item_name   = COALESCE(NULLIF(?, ''), item_name),
+        brand       = COALESCE(NULLIF(?, ''), brand),
         description = COALESCE(NULLIF(?, ''), description),
         quantity    = COALESCE(?, quantity),
         unit        = COALESCE(NULLIF(?, ''), unit),
@@ -1575,6 +1654,8 @@ inventoryRouter.post(
         category_id = COALESCE(?, category_id),
         status      = COALESCE(NULLIF(?, ''), status),
         image       = COALESCE(NULLIF(?, ''), image),
+        upc         = COALESCE(NULLIF(upc, ''), NULLIF(?, '')),
+        number      = COALESCE(NULLIF(number, ''), NULLIF(?, '')),
         external_system      = COALESCE(NULLIF(?, ''), external_system),
         external_store_id    = COALESCE(NULLIF(?, ''), external_store_id),
         external_category_id = COALESCE(NULLIF(?, ''), external_category_id),
@@ -1589,27 +1670,61 @@ inventoryRouter.post(
     interface ImportWorkItem {
       sheet: (typeof sheetsData)[number];
       row: Record<string, any>;
-      rowIdx: number;
-      sheetCatId: number | null;
+      /** The row's line in the file, for messages that point the owner at it. */
+      rowNum: number;
     }
+
+    // "Sheet "Snacks" row 14", so a message can be found in the file.
+    const rowPlace = (w: ImportWorkItem) => `Sheet "${w.sheet.sheetName}" row ${w.rowNum}`;
+    const rowError = (w: ImportWorkItem, label: string, message: string) =>
+      addError(`${rowPlace(w)} ("${label}"): ${message}`);
+
+    // A mapped column's value. The mapping names headers as the screen shows them, trimmed;
+    // a row from a client that did not trim its keys is matched on the trimmed key instead.
+    const mappedValue = (row: Record<string, any>, source: string): unknown => {
+      if (Object.hasOwn(row, source)) return row[source];
+      const key = Object.keys(row).find(candidate => candidate.trim() === source.trim());
+      return key === undefined ? undefined : row[key];
+    };
+
+    // A cell's text, without the apostrophe OptiCapture's CSV export puts in front of a value
+    // starting with = + - or @ so spreadsheets do not run it as a formula. Re-importing that
+    // export used to save the apostrophe into the item.
+    const readText = (value: unknown): string => {
+      const text = readImportedString(value);
+      return /^'[=+\-@\t\r]/.test(text) ? text.slice(1) : text;
+    };
+
+    // An imported UPC in its stored form. A number cell holding 11 digits is a 12-digit UPC
+    // whose leading zero Excel dropped; it is put back when the result is a valid barcode.
+    const readUpc = (value: unknown): { value: string } | { error: string } => {
+      const text = readText(value);
+      const restored =
+        typeof value === 'number' && /^\d{11}$/.test(text) && isValidGtin(`0${text}`)
+          ? `0${text}`
+          : text;
+      return normalizeUpc(restored);
+    };
 
     // Reads one row through its sheet mapping and checks it. A row that cannot be imported is
     // reported (skipped or as an error) and comes back as null.
-    const prepareRow = ({ sheet, row, rowIdx }: ImportWorkItem) => {
+    const prepareRow = (workItem: ImportWorkItem) => {
+      const { sheet, row } = workItem;
       const item: Record<string, any> = {};
       for (const [src, dest] of Object.entries(sheet.mapping)) {
-        if (dest && dest !== '__ignore__') item[dest] = row[src];
+        if (dest && dest !== '__ignore__') item[dest] = mappedValue(row, src);
       }
 
-      const upc = readImportedString(item.upc);
-      const number = readImportedString(item.number);
-      const externalSystem = readImportedString(item.external_system);
-      const externalStoreId = readImportedString(item.external_store_id);
-      const externalCategoryId = readImportedString(item.external_category_id);
-      const externalItemId = readImportedString(item.external_item_id);
-      const externalSku = readImportedString(item.external_sku);
-      const itemName = readImportedString(item.item_name);
-      if (!externalItemId && !upc && !number && !externalSku) {
+      const upcRead = readUpc(item.upc);
+      const number = readText(item.number);
+      const externalSystem = readText(item.external_system);
+      const externalStoreId = readText(item.external_store_id);
+      const externalCategoryId = readText(item.external_category_id);
+      const externalItemId = readText(item.external_item_id);
+      const externalSku = readText(item.external_sku);
+      const itemName = readText(item.item_name);
+      const upcText = 'value' in upcRead ? upcRead.value : readText(item.upc);
+      if (!externalItemId && !upcText && !number && !externalSku) {
         const rawName =
           itemName ||
           Object.values(row)
@@ -1617,33 +1732,40 @@ inventoryRouter.post(
             .find(v => v !== '') ||
           '(blank)';
         addSkippedRow({
-          row_num: rowIdx + 2,
+          row_num: workItem.rowNum,
           sheet: sheet.sheetName,
           item_name: rawName,
         });
         return null;
       }
 
+      const rowLabel = (itemName || upcText || number || externalItemId || externalSku).slice(
+        0,
+        80
+      );
+      if ('error' in upcRead) {
+        rowError(workItem, rowLabel, upcRead.error);
+        return null;
+      }
+      const upc = upcRead.value;
+
       // An external item ID is only an identity together with its source system;
       // without one it could merge with another platform's item of the same ID.
       if (externalItemId && !externalSystem) {
-        addError(
-          `"${itemName || upc || number || externalItemId}": External System is required when External Item ID is set`
-        );
+        rowError(workItem, rowLabel, 'External System is required when External Item ID is set');
         return null;
       }
 
-      const rowLabel = (itemName || upc || number || externalItemId || externalSku).slice(0, 80);
       // The same lengths the item form enforces; a file used to be able to store a name,
       // UPC or description of any size.
       const lengthChecks: Array<[label: string, value: string, max: number]> = [
         ['Item name', itemName, ITEM_LIMITS.item_name],
-        ['UPC', upc, ITEM_LIMITS.upc],
+        ['Brand', readText(item.brand), ITEM_LIMITS.brand],
         ['SKU / Item number', number, ITEM_LIMITS.number],
-        ['Description', readImportedString(item.description), ITEM_LIMITS.description],
-        ['Unit', readImportedString(item.unit), ITEM_LIMITS.unit],
-        ['Tags', readImportedString(item.tag_names), ITEM_LIMITS.tag_names],
-        ['Category', readImportedString(item.category), ITEM_LIMITS.category],
+        ['Description', readText(item.description), ITEM_LIMITS.description],
+        ['Unit', readText(item.unit), ITEM_LIMITS.unit],
+        ['Tags', readText(item.tag_names), ITEM_LIMITS.tag_names],
+        ['Category', readText(item.category), ITEM_LIMITS.category],
         ['External system', externalSystem, ITEM_LIMITS.external],
         ['External store ID', externalStoreId, ITEM_LIMITS.external],
         ['External category ID', externalCategoryId, ITEM_LIMITS.external],
@@ -1652,15 +1774,17 @@ inventoryRouter.post(
       ];
       const tooLong = lengthChecks.find(([, value, max]) => value.length > max);
       if (tooLong) {
-        addError(`"${rowLabel}": ${tooLong[0]} must be ${tooLong[2]} characters or fewer`);
+        rowError(workItem, rowLabel, `${tooLong[0]} must be ${tooLong[2]} characters or fewer`);
         return null;
       }
       const qtyResult = parseImportNumber(item.quantity, 'Quantity', { integer: true });
       const priceResult = parseImportNumber(item.sale_price, 'Sale price');
       const taxResult = parseImportNumber(item.tax_percent, 'Tax percent', { max: 100 });
-      const numberError = qtyResult.error ?? priceResult.error ?? taxResult.error;
-      if (numberError) {
-        addError(`"${rowLabel}": ${numberError}`);
+      const statusResult = parseImportStatus(item.status);
+      const valueError =
+        qtyResult.error ?? priceResult.error ?? taxResult.error ?? statusResult.error;
+      if (valueError) {
+        rowError(workItem, rowLabel, valueError);
         return null;
       }
       return {
@@ -1674,6 +1798,7 @@ inventoryRouter.post(
         externalItemId,
         externalSku,
         rowLabel,
+        status: statusResult.value,
         qty: qtyResult.value,
         salePrice: priceResult.value,
         taxPct: taxResult.value,
@@ -1681,20 +1806,123 @@ inventoryRouter.post(
     };
     type PreparedRow = NonNullable<ReturnType<typeof prepareRow>>;
 
-    // The item this row updates: matched by external ID, then UPC, then item number, then
-    // external SKU.
-    const findExistingItem = (p: PreparedRow): { id: number } | null | undefined =>
-      (p.externalItemId
-        ? checkExternalItem.get(p.externalItemId, user.store_id, p.externalSystem)
-        : null) ??
-      (p.upc ? findByUpc(p.upc) : null) ??
-      (p.number ? checkNum.get(p.number, user.store_id) : null) ??
-      (p.externalSku ? checkExternalSku.get(p.externalSku, user.store_id) : null);
+    interface IdentifierMatch {
+      label: string;
+      id: number | null;
+    }
+
+    // Every identifier the row carries, with the item (if any) that already holds it.
+    const identifierMatches = (p: PreparedRow): IdentifierMatch[] => {
+      const lookups: Array<[present: string, label: string, find: () => number | null]> = [
+        [
+          p.externalItemId,
+          `External Item ID "${p.externalItemId}"`,
+          () =>
+            (
+              checkExternalItem.get(p.externalItemId, user.store_id, p.externalSystem) as
+                | { id: number }
+                | undefined
+            )?.id ?? null,
+        ],
+        [p.upc, `UPC ${p.upc}`, () => findItemIdByUpc(p.upc, user.store_id)],
+        [
+          p.number,
+          `SKU "${p.number}"`,
+          () =>
+            (checkNum.get(p.number, user.store_id) as { id: number } | undefined)?.id ?? null,
+        ],
+        [
+          p.externalSku,
+          `External SKU "${p.externalSku}"`,
+          () =>
+            (checkExternalSku.get(p.externalSku, user.store_id) as { id: number } | undefined)
+              ?.id ?? null,
+        ],
+      ];
+      return lookups
+        .filter(([present]) => Boolean(present))
+        .map(([, label, find]) => ({ label, id: find() }));
+    };
+
+    interface ItemIdentity {
+      item_name: string | null;
+      upc: string | null;
+      number: string | null;
+      external_system: string | null;
+      external_item_id: string | null;
+      external_sku: string | null;
+    }
+
+    // Why the item matched by one identifier is not the row's item, or null when it is.
+    // An identifier the item lacks is fine (it is filled in); one it holds with a different
+    // value means the file and the catalog disagree about which product this is.
+    const identityMismatch = (p: PreparedRow, item: ItemIdentity): string | null => {
+      if (p.upc && item.upc && !upcVariants(p.upc).includes(item.upc)) {
+        return `its UPC is ${item.upc}, not ${p.upc}`;
+      }
+      if (p.number && item.number && item.number !== p.number) {
+        return `its SKU is "${item.number}", not "${p.number}"`;
+      }
+      if (p.externalSku && item.external_sku && item.external_sku !== p.externalSku) {
+        return `its External SKU is "${item.external_sku}", not "${p.externalSku}"`;
+      }
+      if (
+        p.externalItemId &&
+        item.external_item_id &&
+        (item.external_item_id !== p.externalItemId || item.external_system !== p.externalSystem)
+      ) {
+        return `its External Item ID is "${item.external_item_id}", not "${p.externalItemId}"`;
+      }
+      return null;
+    };
+
+    const identityOf = (id: number) =>
+      readIdentity.get(id, user.store_id) as ItemIdentity | undefined;
+    const nameOf = (id: number) => identityOf(id)?.item_name ?? `#${id}`;
+
+    // The item this row updates, null for a new item, or a message when the row's identifiers
+    // do not all point at one item. Matching on the first identifier found used to rename and
+    // restock a different product whenever a file's SKU or external ID disagreed with the
+    // catalog, and drop the row's own UPC without a word.
+    const resolveExistingItem = (p: PreparedRow): { id: number | null } | { error: string } => {
+      const found = identifierMatches(p).filter(
+        (match): match is { label: string; id: number } => match.id !== null
+      );
+      if (found.length === 0) return { id: null };
+      const [first] = found;
+      const other = found.find(match => match.id !== first.id);
+      if (other) {
+        return {
+          error: `${first.label} belongs to "${nameOf(first.id)}" but ${other.label} belongs to "${nameOf(other.id)}"`,
+        };
+      }
+      const identity = identityOf(first.id);
+      const mismatch = identity ? identityMismatch(p, identity) : null;
+      if (mismatch) {
+        return { error: `${first.label} belongs to "${nameOf(first.id)}", but ${mismatch}` };
+      }
+      return { id: first.id };
+    };
+
+    // Identifiers already written by this import, with where. A file that lists one product
+    // twice used to save the first row and then quietly overwrite it with the second.
+    const seenIdentifiers = new Map<string, string>();
+    const identifierKeys = (p: PreparedRow): string[] => [
+      ...(p.upc ? upcVariants(p.upc).map(variant => `upc:${variant}`) : []),
+      ...(p.number ? [`number:${p.number}`] : []),
+      ...(p.externalSku ? [`external_sku:${p.externalSku}`] : []),
+      ...(p.externalItemId ? [`external:${p.externalSystem}\u0000${p.externalItemId}`] : []),
+    ];
 
     // Saves the row's image and returns the value to store. `upload.path` is set to the file
     // this import wrote, if any, before anything else can fail, so a failed write can still
     // be cleaned up.
-    const saveRowImage = (rawImage: string, rowLabel: string, upload: { path: string | null }) => {
+    const saveRowImage = (
+      rawImage: string,
+      workItem: ImportWorkItem,
+      rowLabel: string,
+      upload: { path: string | null }
+    ) => {
       const normalizedImage = rawImage ? normalizeImageUrl(rawImage) : null;
       const image = normalizedImage ? saveBase64Image(normalizedImage) : null;
       // Only what this import actually wrote counts as its own, so a rollback cannot
@@ -1705,20 +1933,33 @@ inventoryRouter.post(
         image?.startsWith('/uploads/') &&
         !storeOwnsUpload.get(user.store_id, image)
       ) {
-        addError(
-          `"${rowLabel}": image "${image}" is not an upload of this store, so it was left off the item`
+        rowError(
+          workItem,
+          rowLabel,
+          `image "${image}" is not an upload of this store, so it was left off the item`
         );
         return null;
       }
       return image;
     };
 
+    // Each sheet's own category is created the first time one of its rows needs it, so a
+    // sheet whose rows all name a category (as the export's sheets do) adds no empty one.
+    const sheetCategoryIds = new Map<ImportWorkItem['sheet'], number | null>();
+    const sheetCategoryId = (sheet: ImportWorkItem['sheet']): number | null => {
+      if (!sheetCategoryIds.has(sheet)) {
+        const name = sheetFallbackCategory(sheet);
+        sheetCategoryIds.set(sheet, name ? getCategoryId(name) : null);
+      }
+      return sheetCategoryIds.get(sheet) ?? null;
+    };
+
     interface RowFields {
+      brand: string;
       desc: string;
       unit: string;
       tags: string;
       catId: number | null;
-      status: string | null;
       image: string | null;
       importedAt: string;
     }
@@ -1726,6 +1967,7 @@ inventoryRouter.post(
     const updateRow = (existingId: number, p: PreparedRow, fields: RowFields) =>
       updateStmt.run(
         p.itemName,
+        fields.brand,
         fields.desc,
         p.qty,
         fields.unit,
@@ -1733,8 +1975,10 @@ inventoryRouter.post(
         p.taxPct,
         fields.tags,
         fields.catId,
-        fields.status,
+        p.status,
         fields.image,
+        p.upc,
+        p.number,
         p.externalSystem,
         p.externalStoreId,
         p.externalCategoryId,
@@ -1749,6 +1993,7 @@ inventoryRouter.post(
     const insertRow = (p: PreparedRow, fields: RowFields) =>
       insertStmt.run(
         p.itemName,
+        fields.brand || null,
         fields.desc,
         p.qty,
         fields.unit,
@@ -1758,7 +2003,7 @@ inventoryRouter.post(
         p.number || null,
         fields.tags,
         fields.catId,
-        fields.status ?? 'Active',
+        p.status ?? 'Active',
         fields.image,
         p.externalSystem || null,
         p.externalStoreId || null,
@@ -1772,43 +2017,50 @@ inventoryRouter.post(
 
     const writeRow = (
       p: PreparedRow,
-      sheetCatId: number | null,
+      workItem: ImportWorkItem,
       upload: { path: string | null }
     ) => {
       const { item } = p;
-      const statusText = readImportedString(item.status);
-      const status = statusText ? normalizeInventoryStatus(statusText) : null;
-      const desc = readImportedString(item.description);
-      const unit = readImportedString(item.unit);
-      const tags = readImportedString(item.tag_names);
-      const rowCategory = readImportedString(item.category);
-      const catId = rowCategory ? getCategoryId(rowCategory) : sheetCatId;
-
-      const existing = findExistingItem(p);
-      // A new item needs a real name; a placeholder would reach the catalog as if it were
-      // one. Checked before the image is saved, so a rejected row writes nothing to disk.
-      if (!existing && !p.itemName) {
-        addError(`"${p.rowLabel}": Item name is required for a new item`);
+      const keys = identifierKeys(p);
+      const earlier = keys.map(key => seenIdentifiers.get(key)).find(Boolean);
+      if (earlier) {
+        rowError(workItem, p.rowLabel, `the same item is already in this file at ${earlier}`);
         return;
       }
 
-      const image = saveRowImage(readImportedString(item.image), p.rowLabel, upload);
+      const existing = resolveExistingItem(p);
+      if ('error' in existing) {
+        rowError(workItem, p.rowLabel, existing.error);
+        return;
+      }
+      // A new item needs a real name; a placeholder would reach the catalog as if it were
+      // one. Checked before the image is saved, so a rejected row writes nothing to disk.
+      if (existing.id === null && !p.itemName) {
+        rowError(workItem, p.rowLabel, 'Item name is required for a new item');
+        return;
+      }
+
+      // Categories are only created for rows that are going to be written.
+      const rowCategory = readText(item.category);
+      const catId = rowCategory ? getCategoryId(rowCategory) : sheetCategoryId(workItem.sheet);
+      const image = saveRowImage(readText(linkTarget(item.image)), workItem, p.rowLabel, upload);
       const fields: RowFields = {
-        desc,
-        unit,
-        tags,
+        brand: readText(item.brand),
+        desc: readText(item.description),
+        unit: readText(item.unit),
+        tags: readText(item.tag_names),
         catId,
-        status,
         image,
         importedAt: toSqliteUtc(),
       };
-      if (existing) {
-        updateRow(existing.id, p, fields);
-        results.updated++;
-      } else {
+      if (existing.id === null) {
         insertRow(p, fields);
         results.added++;
+      } else {
+        updateRow(existing.id, p, fields);
+        results.updated++;
       }
+      for (const key of keys) seenIdentifiers.set(key, rowPlace(workItem));
     };
 
     const processRow = (workItem: ImportWorkItem) => {
@@ -1819,7 +2071,7 @@ inventoryRouter.post(
       // still be cleaned up.
       const upload: { path: string | null } = { path: null };
       try {
-        writeRow(prepared, workItem.sheetCatId, upload);
+        writeRow(prepared, workItem, upload);
         if (upload.path) savedImagePaths.push(upload.path);
       } catch (err: any) {
         // The row was not written, so nothing refers to the image it saved. The chunk still
@@ -1828,7 +2080,7 @@ inventoryRouter.post(
         // A full disk or an I/O error makes SQLite roll back the whole transaction. Every
         // later row would then commit on its own, outside the chunk, so stop the chunk here.
         if (!db.inTransaction) throw err;
-        addError(`"${prepared.itemName || prepared.upc || prepared.number}": ${err.message}`);
+        rowError(workItem, prepared.rowLabel, err.message);
       }
     };
 
@@ -1836,14 +2088,12 @@ inventoryRouter.post(
       for (const workItem of chunk) processRow(workItem);
     });
 
-    // Resolve each sheet's fallback category once, then flatten every row into one list so
-    // the commit loop below can slice it into chunks regardless of sheet boundaries.
+    // Flatten every row into one list so the commit loop below can slice it into chunks
+    // regardless of sheet boundaries.
     const work: ImportWorkItem[] = [];
     for (const sheet of sheetsData) {
-      const fallbackCategoryName = sheetFallbackCategory(sheet);
-      const sheetCatId = fallbackCategoryName ? getCategoryId(fallbackCategoryName) : null;
       for (const [rowIdx, row] of sheet.rows.entries()) {
-        work.push({ sheet, row, rowIdx, sheetCatId });
+        work.push({ sheet, row, rowNum: sheet.rowNumbers?.[rowIdx] ?? rowIdx + 2 });
       }
     }
 
