@@ -14,6 +14,7 @@ import {
   removeUploadedFiles,
   savedUploadPath,
   searchCondition,
+  uploadFileName,
   upcVariants,
   isValidGtin,
   normalizeUpc,
@@ -23,7 +24,7 @@ import { isReservedCategoryName } from './categories.js';
 import { IMPORT_FIELDS, isGenericSheetName, isKnownHeader } from '../../shared/importHeaders.js';
 import type { AuthRequest } from '../types.js';
 import { logError } from '../logger.js';
-import { discardUploads } from '../uploads.js';
+import { assertStoreUpload, discardUploads, storeUploadNames } from '../uploads.js';
 
 export const inventoryRouter = express.Router();
 
@@ -568,7 +569,9 @@ function exportCsv(grouped: ExportGroups): string {
     for (const r of items)
       lines.push(EXPORT_COLUMNS.map(column => csvCell(r[column.key])).join(','));
   }
-  return lines.join('\n');
+  // The byte-order mark tells Excel the file is UTF-8. Without it Excel on Windows reads the
+  // local ANSI code page, and "Crème brûlée" opened as "CrÃ¨me brÃ»lÃ©e".
+  return `\uFEFF${lines.join('\n')}`;
 }
 
 async function writeExportPdf(
@@ -626,6 +629,11 @@ function buildExportWorkbook(grouped: ExportGroups) {
     ws.addRow(EXPORT_COLUMNS.map(column => column.label));
     for (const r of items) ws.addRow(EXPORT_COLUMNS.map(column => r[column.key] ?? ''));
   }
+  // Excel refuses a workbook without a worksheet as damaged, which is what a store with no
+  // items used to download. Give it the column headings on an empty sheet.
+  if (wb.worksheets.length === 0) {
+    wb.addWorksheet('Inventory').addRow(EXPORT_COLUMNS.map(column => column.label));
+  }
   return wb;
 }
 
@@ -635,9 +643,13 @@ inventoryRouter.get(
   authenticateToken,
   requireOwner,
   asyncRoute<AuthRequest>(async (req: AuthRequest, res) => {
-    const fmt = ['xlsx', 'csv', 'json', 'pdf'].includes(req.query.format as string)
-      ? (req.query.format as string)
-      : 'xlsx';
+    // No format means XLSX. An unknown one used to mean XLSX too, and still marked every
+    // item exported.
+    const requested = firstQueryValue(req.query.format) ?? 'xlsx';
+    if (!['xlsx', 'csv', 'json', 'pdf'].includes(requested)) {
+      return res.status(400).json({ error: 'format must be xlsx, csv, json or pdf' });
+    }
+    const fmt = requested;
 
     // Only data files can be re-imported elsewhere, so only they mark items as
     // exported, and only once the file has been built (a PDF is a report).
@@ -839,6 +851,7 @@ inventoryRouter.post(
       const savedImage = normalizedImage ? saveBase64Image(normalizedImage) : null;
       createdUpload =
         normalizedImage && savedImage ? savedUploadPath(normalizedImage, savedImage) : null;
+      if (normalizedImage) assertStoreUpload(user.store_id, normalizedImage, savedImage);
       const info = db.transaction(() => {
         const row = db
           .prepare(
@@ -1020,7 +1033,11 @@ function upcChangeError(
 // Builds the SET list from the fields the client sent. A new image is written to disk here,
 // before the update runs; `createdUpload` names that file so it can be removed if the update
 // then fails and no row points at it.
-function buildItemUpdate(body: Record<string, any>, numbers: ItemNumbers) {
+function buildItemUpdate(
+  body: Record<string, any>,
+  numbers: ItemNumbers,
+  storeId: number | undefined
+) {
   const assignments = ['updated_at = CURRENT_TIMESTAMP'];
   const values: unknown[] = [];
   const assign = (column: string, value: unknown) => {
@@ -1037,6 +1054,7 @@ function buildItemUpdate(body: Record<string, any>, numbers: ItemNumbers) {
     const savedImage = normalizedImage ? saveBase64Image(normalizedImage) : null;
     createdUpload =
       normalizedImage && savedImage ? savedUploadPath(normalizedImage, savedImage) : null;
+    if (normalizedImage) assertStoreUpload(storeId, normalizedImage, savedImage);
     assign('image', savedImage);
   }
   return { assignments, values, createdUpload };
@@ -1150,7 +1168,7 @@ export function updateInventoryItem(
   };
 
   try {
-    const update = buildItemUpdate(body, numbers);
+    const update = buildItemUpdate(body, numbers, storeId);
     createdUpload = update.createdUpload;
     const defaultDetails = `Updated item "${body.item_name?.trim() || existingItem.item_name}"`;
     const changes = applyItemUpdate({ itemId, storeId, userId }, update, defaultDetails, options);
@@ -1666,13 +1684,11 @@ inventoryRouter.post(
         AND external_system = ?
     `
     );
-    // An import may name an existing upload — that is how re-importing an export keeps its
-    // images — but only one this store already references. Without that check a sheet could
-    // point a row at any other tenant's upload, and the cleanup paths below would then treat
-    // it as this store's file to delete.
-    const storeOwnsUpload = db.prepare(
-      'SELECT 1 FROM inventory WHERE store_id = ? AND image = ? LIMIT 1'
-    );
+    // The store's uploads as the import started, read on first need. Files this import writes
+    // are its own by construction, and a reference a later row replaces stays on disk (an
+    // import removes no files), so the set at the start is the right one to check against.
+    let ownUploads: Set<string> | null = null;
+    const ownUploadNames = () => (ownUploads ??= storeUploadNames(user.store_id));
     const checkNum = db.prepare('SELECT id FROM inventory WHERE number = ? AND store_id = ?');
     const checkExternalSku = db.prepare(
       'SELECT id FROM inventory WHERE external_sku = ? AND store_id = ?'
@@ -2020,14 +2036,25 @@ inventoryRouter.post(
       upload: { path: string | null }
     ) => {
       const normalizedImage = rawImage ? normalizeImageUrl(rawImage) : null;
-      const image = normalizedImage ? saveBase64Image(normalizedImage) : null;
+      let image: string | null;
+      try {
+        image = normalizedImage ? saveBase64Image(normalizedImage) : null;
+      } catch (err) {
+        if (!(err instanceof UnsupportedImageTypeError)) throw err;
+        // The item is still imported, without the picture, as with another store's upload.
+        // A bad image used to fail the whole row.
+        rowError(workItem, rowLabel, `${err.message}, so it was left off the item`);
+        return null;
+      }
       // Only what this import actually wrote counts as its own, so a rollback cannot
       // delete a file the sheet merely referenced.
       upload.path = normalizedImage && image ? savedUploadPath(normalizedImage, image) : null;
+      // An import may name an existing upload — that is how re-importing an export keeps its
+      // images — but only one this store already references.
       if (
         !upload.path &&
         image?.startsWith('/uploads/') &&
-        !storeOwnsUpload.get(user.store_id, image)
+        !ownUploadNames().has(uploadFileName(image))
       ) {
         rowError(
           workItem,

@@ -66,11 +66,34 @@ function verifyImageMagicBytes(buffer: Buffer, mimeType: string): boolean {
   return false;
 }
 
-// Save base64 image to disk, return file path. Pass-through for URLs/paths.
+export const IMAGE_VALUE_ERROR =
+  'Image must be an https:// link, a Google Drive link, or an uploaded photo';
+
+/**
+ * Whether a stored image value is one the app should render: a web link, a Drive image the
+ * app proxies, or a photo in uploads. Anything else is refused. An item image is rendered as
+ * <img src>, so a same-origin path such as /api/inventory/export?format=csv made every owner
+ * who opened the item list run an export (marking every item exported and logging it), and a
+ * protocol-relative //host link loaded from anywhere.
+ */
+export function isAllowedImageValue(value: string): boolean {
+  const text = value.trim();
+  if (!text) return true;
+  return (
+    /^https?:\/\/[^\s/]/i.test(text) ||
+    /^\/uploads\/[\w-]+(\.\w+)?$/.test(text) ||
+    /^\/api\/drive-image\/[\w-]+$/.test(text)
+  );
+}
+
+// Save base64 image to disk, return file path. Pass-through for links the app may render.
 export function saveBase64Image(base64Data: string): string {
   // Any data URL must be one of the allowed images. Anything else used to fall through and
   // be stored raw in the database (an SVG, or a non-image data URL).
-  if (!/^\s*data:/i.test(base64Data)) return base64Data;
+  if (!/^\s*data:/i.test(base64Data)) {
+    if (!isAllowedImageValue(base64Data)) throw new UnsupportedImageTypeError(IMAGE_VALUE_ERROR);
+    return base64Data;
+  }
   const match = /^data:(image\/\w+);base64,(.+)$/.exec(base64Data);
   if (!match) throw new UnsupportedImageTypeError();
 

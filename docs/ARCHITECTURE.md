@@ -426,7 +426,8 @@ Imported image URLs:
 
 - inventory import reads image values from sheet rows
 - `normalizeImageUrl()` converts supported Google Drive sharing links into `/api/drive-image/:fileId`
-- non-Drive URLs are stored as-is; supported base64 images are persisted through the normal image helper
+- other `http(s)://` links are stored as-is; supported base64 images are persisted through the normal image helper
+- any other value (an `/api/...` path, a `//host` link, another scheme) is left off the item and reported for that row; the same rule refuses it with `400` on manual add, edit and staged-scan edits
 
 Drive proxy:
 

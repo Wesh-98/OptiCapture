@@ -622,9 +622,11 @@ describe('session input validation', () => {
 describe('session item editing and commit flow', () => {
   it('updates, deletes, and clears session items for the owning store', async () => {
     const session = await createSession();
+    // The staged row already has this photo; an edit may keep a store's own upload.
     const itemId = insertSessionItem(session.sessionId, {
       upc: 'edit-item-1',
       product_name: 'Original Name',
+      image: '/uploads/edited.png',
     });
 
     const patchRes = await request

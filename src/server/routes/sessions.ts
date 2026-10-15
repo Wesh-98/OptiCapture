@@ -25,7 +25,7 @@ import {
 import { findItemIdByUpc } from './inventory.js';
 import { SESSION_STATUS } from '../types.js';
 import { logError } from '../logger.js';
-import { discardUploads } from '../uploads.js';
+import { assertStoreUpload, discardUploads } from '../uploads.js';
 
 export const sessionsRouter = express.Router();
 
@@ -936,6 +936,19 @@ function buildItemPatch(
 }
 
 /**
+ * The image value a staged edit stores: a data image saved to uploads, or a link the app may
+ * render. An existing upload must be one this store already uses. Throws
+ * UnsupportedImageTypeError for anything else.
+ */
+function stagedImage(rawImage: string, storeId: number): string | null {
+  if (!rawImage) return null;
+  const normalized = normalizeImageUrl(rawImage);
+  const saved = saveBase64Image(normalized);
+  assertStoreUpload(storeId, normalized, saved);
+  return saved;
+}
+
+/**
  * Why a staged row cannot take this UPC, or null. Re-labelling a row onto a barcode another
  * staged row holds, or one the catalog holds, used to be saved; the commit then kept one of
  * the two rows (or the catalog item) and dropped the other's name, price and quantity while
@@ -1011,9 +1024,7 @@ sessionsRouter.patch('/session/:id/items/:itemId', authenticateToken, (req: Auth
   if (upcConflict) return res.status(409).json({ error: upcConflict });
 
   try {
-    const sanitizedImage = clean.rawImage
-      ? saveBase64Image(normalizeImageUrl(clean.rawImage))
-      : null;
+    const sanitizedImage = stagedImage(clean.rawImage, session.store_id);
 
     if (sanitizedImage && sanitizedImage.length > 2000) {
       return res.status(400).json({ error: 'Image URL must be 2000 characters or fewer' });
