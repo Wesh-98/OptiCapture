@@ -811,7 +811,10 @@ function stagedQuantity(quantity: unknown): { value: number } | { error: string 
 // A staged price (null clears it), or why it cannot be one. Bad values used to be quietly
 // cleared, and there was no ceiling, so a commit could add an item the item form refuses.
 function stagedPrice(salePrice: unknown): { value: number | null } | { error: string } {
-  if (salePrice === null || salePrice === '') return { value: null };
+  // Blank (or only spaces) clears the price; Number('  ') would have saved it as 0.
+  if (salePrice === null || (typeof salePrice === 'string' && !salePrice.trim())) {
+    return { value: null };
+  }
   const parsed = typeof salePrice === 'string' ? Number(salePrice.trim()) : salePrice;
   if (
     typeof parsed !== 'number' ||
@@ -959,9 +962,9 @@ function stagedUpcConflict(
   }
   const catalogId = findItemIdByUpc(newUpc, where.storeId);
   if (catalogId !== null) {
-    const item = db.prepare('SELECT item_name FROM inventory WHERE id = ?').get(catalogId) as
-      | { item_name: string }
-      | undefined;
+    const item = db
+      .prepare('SELECT item_name FROM inventory WHERE id = ? AND store_id = ?')
+      .get(catalogId, where.storeId) as { item_name: string } | undefined;
     return `That barcode is already in your inventory as "${item?.item_name ?? 'an item'}". Remove this row; scanning the barcode confirms the existing item.`;
   }
   return null;
@@ -998,7 +1001,9 @@ sessionsRouter.patch('/session/:id/items/:itemId', authenticateToken, (req: Auth
 
   const clean = sanitizeItemPatch(req.body, stagedItem);
   if ('error' in clean) return res.status(400).json({ error: clean.error });
-  const upcConflict = stagedUpcConflict(clean.sanitizedUpc, {
+  // The row's barcode after this edit: a partial edit that sends no UPC keeps the stored one,
+  // and is checked against it all the same.
+  const upcConflict = stagedUpcConflict(clean.sanitizedUpc ?? stagedItem.upc, {
     sessionId: id,
     itemId,
     storeId: session.store_id,

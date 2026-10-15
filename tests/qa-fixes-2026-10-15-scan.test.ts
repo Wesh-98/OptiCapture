@@ -77,6 +77,12 @@ describe('H5: a staged UPC edit onto another staged row', () => {
 
     const done = await commit(session.sessionId, [first.body.item.id, second.body.item.id]);
     expect(done.body).toMatchObject({ inserted: 2, verified: 0 });
+    expect(inventoryRows('036000291452')).toEqual([
+      { item_name: 'Product One', quantity: 1, sale_price: null },
+    ]);
+    expect(inventoryRows('012345678905')).toEqual([
+      { item_name: 'Product Two', quantity: 1, sale_price: null },
+    ]);
   });
 
   it('also refuses the other form of a staged barcode', async () => {
@@ -130,6 +136,10 @@ describe('M1: the catalog gains a staged barcode after the scan', () => {
     });
     expect(res.status).toBe(409);
     expect(res.body.error).toContain('"Added Meanwhile"');
+
+    // An edit that sends no UPC is checked against the stored one.
+    const partial = await patchItem(session.sessionId, row.body.item.id, { sale_price: 2 });
+    expect(partial.status).toBe(409);
   });
 });
 
@@ -141,6 +151,15 @@ describe('M12 and L10: staged quantities and prices', () => {
       const res = await patchItem(session.sessionId, row.body.item.id, { sale_price: price });
       expect(res.status).toBe(400);
     }
+  });
+
+  it('clears a price of only spaces instead of saving it as 0', async () => {
+    const session = await newSession();
+    const row = await scan(session, '041000005264', 'Blank Price');
+    await patchItem(session.sessionId, row.body.item.id, { sale_price: 3 });
+    const res = await patchItem(session.sessionId, row.body.item.id, { sale_price: '   ' });
+    expect(res.status).toBe(200);
+    expect(res.body.item.sale_price).toBeNull();
   });
 
   it('returns staged prices as numbers', async () => {
