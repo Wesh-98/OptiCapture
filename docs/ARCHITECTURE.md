@@ -407,11 +407,11 @@ Current behavior:
 
 1. The client uploads a file to `POST /api/inventory/batch-upload`.
 2. The server parses XLSX, CSV, or JSON input.
-3. For Excel files, the server detects the strongest header candidate within the first 100 worksheet rows, then returns normalized sheet payloads with the header-row number, worksheet used-column count, headers, preview rows, full rows, and row counts.
-4. The client auto-detects column mappings from header synonyms, presents the workbook filename and every worksheet name, count, and detected column, shows raw and mapped five-row previews, suggests editable categories from meaningful worksheet names, and validates every sheet for a supported identifier or header-count mismatch.
+3. For Excel files, the server detects the header row within the first 100 worksheet rows (known column names and text labels count, row width does not) and skips hidden worksheets, then returns normalized sheet payloads with the header-row number, worksheet used-column count, headers, preview rows, full rows, each row's file line, and row counts. CSV and JSON header names are trimmed so they match what the mapping screen shows.
+4. The client auto-detects column mappings from the header vocabulary in `src/shared/importHeaders.ts` (shared with the server's header detection), presents the workbook filename and every worksheet name, count, and detected column, shows raw and mapped five-row previews, suggests editable categories from meaningful worksheet names, and validates every sheet for a supported identifier or header-count mismatch.
 5. Destination fields are one-to-one. Mapping choices can be copied to matching headers on other sheets without replacing mappings for differently named columns.
 6. Confirming the import sends mapped sheet data to `POST /api/inventory/batch-confirm`.
-7. The server validates the mappings, then runs a transaction that creates missing categories, inserts new rows, updates existing rows, preserves external mapping fields, records skipped rows, and writes audit log details. A mapped row category takes precedence over the user-reviewed worksheet category fallback.
+7. The server validates the mappings, then commits the rows in chunks. Each row's identifiers must all point at the same item (or none); a row that disagrees with the catalog is held back and listed on the result screen, where the owner chooses per row whether the item takes the file's identifiers; a row that repeats an item already in the file is reported with its sheet and row. Valid rows insert or update items, fill in identifiers the item lacks, create the categories they use, and the import writes audit log details. A mapped row category takes precedence over the user-reviewed worksheet category fallback.
 
 ### Image handling
 

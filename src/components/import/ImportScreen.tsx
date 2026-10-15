@@ -27,6 +27,7 @@ export function ImportScreen() {
           <ImportMappingPanel
             fileName={workflow.state.file?.name ?? null}
             sheets={workflow.state.sheets}
+            hiddenSheets={workflow.state.hiddenSheets}
             activeSheet={workflow.activeSheet}
             activeSheetIndex={workflow.state.activeSheet}
             isMultiSheet={workflow.isMultiSheet}
@@ -49,8 +50,10 @@ export function ImportScreen() {
         <ImportResultPanel
           fileName={workflow.state.file?.name ?? null}
           result={workflow.state.result}
+          resolution={workflow.state.resolution}
           sheets={workflow.state.sheets}
           prefersReducedMotion={prefersReducedMotion}
+          onApplyConflictChoices={workflow.applyConflictChoices}
           onReset={workflow.reset}
         />
       )}

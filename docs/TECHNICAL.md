@@ -441,13 +441,18 @@ Upload:
 - accepts XLSX, CSV, and JSON
 - uses `multer` memory storage
 - limits files to 20 MB
-- returns sheets, headers, preview rows, full rows, and row counts
-- scans the first 100 Excel rows for the strongest table-header candidate, allowing title or metadata rows above the table
+- returns sheets, headers, preview rows, full rows, each row's line in the file, and row counts
+- scans the first 100 Excel rows for the header: the row with the most known column names and text labels, so title rows above the table, a stray note in a spare column, or an unlabeled column do not move it
 - returns the detected header-row number and worksheet used-column count so parsing mismatches cannot pass silently
+- trims CSV and JSON header names so they match the names the mapping screen shows, and drops CSV fields beyond the header
+- reads a CSV as UTF-8, or as Windows-1252 when it is not valid UTF-8 (Excel's plain "CSV" save)
+- leaves hidden worksheets out and lists them, so the screen can say so
+- reads an Excel error cell (`#N/A`) as empty; a link cell keeps its text and its address, and only an Image column takes the address
+- refuses a CSV with a header and no rows
 
 Client mapping:
 
-- auto-detects common headers
+- auto-detects common headers from a vocabulary shared with the server (`src/shared/importHeaders.ts`): exact names first across all headers, then whole-word matches, never for columns about cost, discount, vendor, supplier or account; a lone "Description" column is taken as the item name
 - shows the available destinations, current mappings, sample values, and a destination-labelled preview
 - shows the workbook filename plus every worksheet name, row count, header row, worksheet column count, detected column names, and mapping readiness
 - shows both an unmodified five-row source preview and a destination-labelled mapped preview
@@ -455,7 +460,7 @@ Client mapping:
 - prevents duplicate destination mappings
 - applies mappings to case-insensitive matching headers across sheets without adding nonexistent columns
 - includes external mapping fields
-- suggests categories from meaningful worksheet names and lets the user edit or clear each suggestion
+- suggests categories from meaningful worksheet names (not generic ones such as "Sheet1", "Inventory" or the export's "Uncategorized") and lets the user edit or clear each suggestion
 - allows row-level category mapping for single- and multi-sheet files; mapped values take priority over the reviewed worksheet fallback
 
 Confirm:
@@ -463,11 +468,17 @@ Confirm:
 - uses a larger JSON body limit for mapped row payloads
 - processes rows in a transaction
 - rejects unknown, duplicate, or identifier-free mappings
-- creates missing categories
-- updates by external item ID, UPC, item number, or external SKU where possible
-- preserves omitted values on updates and round-trips descriptions, categories, images, pricing, tax, tags, status, and external IDs
+- creates missing categories, only for rows that are written; a worksheet's own category is created the first time one of its rows needs it
+- cleans each UPC the way every other path does (`normalizeUpc`): spaces and dashes inside an all-digit code are removed, and a value Excel reformatted (`1.23457E+11`, `12345678905.0`) is refused; an 11-digit number cell gets its dropped leading zero back when that makes a valid barcode
+- matches an existing item by external item ID, UPC (in any of its 11/12/13-digit forms), item number, or external SKU; an identifier the item lacks is filled in
+- holds back, rather than writes, a row whose identifiers disagree with the item it matched (same item, different SKU, say) or point at two different items, and returns them as `conflicts` (detail capped at 500) plus `conflict_rows` (every one, by sheet and row index)
+- on the result screen the owner chooses, row by row or for all, whether a held-back row gives its item the file's identifiers; the chosen rows are sent again with `identifierConflicts: 'use_file'`. Rows that point at two different items can only be fixed in the file
+- refuses a second row for the same item in one file, whichever identifier it reaches the item by
+- reads status as Active/Inactive, Yes/No, True/False or 1/0 in any case; numbers must be plain decimals (currency signs, thousands separators and a trailing % are allowed)
+- removes the apostrophe the CSV export puts in front of values starting with `=`, `+`, `-` or `@`
+- preserves omitted values on updates and round-trips brand, descriptions, categories, images, pricing, tax, tags, status, and external IDs
 - inserts new rows when no existing match is found
-- records skipped rows and import log details
+- records skipped rows and errors with the sheet and file row, and writes import log details
 - sets `last_imported_at` and `sync_status='imported'`
 
 ## 12. Export Pipeline

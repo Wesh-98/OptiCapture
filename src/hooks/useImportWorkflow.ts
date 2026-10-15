@@ -1,21 +1,23 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
-import { confirmImport, uploadFile } from '../components/import/importApi';
+import { applyFileIdentifiers, confirmImport, uploadFile } from '../components/import/importApi';
 import {
   applyMappingToMatchingHeaders,
   getImportMappingIssues,
   getMappedColumns,
   setMappingDestination,
 } from '../components/import/mapping';
-import type { DestinationField, ImportState } from '../components/import/types';
+import type { ConflictRow, DestinationField, ImportState } from '../components/import/types';
 
 //Import wizard - file parse, column mapping and import.
 const initialState: ImportState = {
   step: 'upload',
   file: null,
   sheets: [],
+  hiddenSheets: [],
   activeSheet: 0,
   result: null,
+  resolution: { status: 'idle' },
   parseError: null,
   isParsing: false,
 };
@@ -26,30 +28,41 @@ function getErrorMessage(error: unknown, fallback: string): string {
 
 export function useImportWorkflow() {
   const [state, setState] = useState<ImportState>(initialState);
+  // Bumped whenever the screen moves to a new file or starts over. A request that answers
+  // after that belongs to a workflow the owner has left, and its answer is dropped: a late
+  // "choices applied" used to lock the conflict panel of the next import.
+  const generation = useRef(0);
+  const isCurrent = (requestGeneration: number) => requestGeneration === generation.current;
 
   const handleFile = async (file: File) => {
+    const requestGeneration = ++generation.current;
     try {
       setState(prev => ({
         ...prev,
         step: 'upload',
         file,
         sheets: [],
+        hiddenSheets: [],
         activeSheet: 0,
         result: null,
+        resolution: { status: 'idle' },
         parseError: null,
         isParsing: true,
       }));
 
-      const sheets = await uploadFile(file);
+      const { sheets, hiddenSheets } = await uploadFile(file);
+      if (!isCurrent(requestGeneration)) return;
 
       setState(prev => ({
         ...prev,
         step: 'map',
         sheets,
+        hiddenSheets,
         activeSheet: 0,
         isParsing: false,
       }));
     } catch (error) {
+      if (!isCurrent(requestGeneration)) return;
       const message = getErrorMessage(error, 'Network error - could not reach server');
       setState(prev => ({ ...prev, isParsing: false, parseError: message }));
     }
@@ -105,18 +118,46 @@ export function useImportWorkflow() {
   };
 
   const handleConfirm = async () => {
+    const requestGeneration = generation.current;
     setState(prev => ({ ...prev, step: 'importing', parseError: null }));
 
     try {
       const result = await confirmImport(state.sheets);
+      if (!isCurrent(requestGeneration)) return;
       setState(prev => ({ ...prev, step: 'done', result }));
     } catch (error) {
+      if (!isCurrent(requestGeneration)) return;
       const message = getErrorMessage(error, 'Import failed');
       setState(prev => ({ ...prev, step: 'map', parseError: message }));
     }
   };
 
-  const reset = () => setState(initialState);
+  // The owner's choice for rows the import held back: the listed ones get the file's
+  // identifiers; every other held-back row stays skipped.
+  const applyConflictChoices = async (
+    rows: ReadonlyArray<Pick<ConflictRow, 'sheet_index' | 'row_index'>>
+  ) => {
+    if (rows.length === 0 || state.resolution.status === 'applying') return;
+    const requestGeneration = generation.current;
+    setState(prev => ({ ...prev, resolution: { status: 'applying' } }));
+    try {
+      const result = await applyFileIdentifiers(state.sheets, rows);
+      if (!isCurrent(requestGeneration)) return;
+      setState(prev => ({
+        ...prev,
+        resolution: { status: 'done', applied: rows.length, result },
+      }));
+    } catch (error) {
+      if (!isCurrent(requestGeneration)) return;
+      const message = getErrorMessage(error, 'Could not apply your choices');
+      setState(prev => ({ ...prev, resolution: { status: 'failed', error: message } }));
+    }
+  };
+
+  const reset = () => {
+    generation.current += 1;
+    setState(initialState);
+  };
 
   const activeSheet = state.sheets[state.activeSheet] ?? null;
   const isMultiSheet = state.sheets.length > 1;
@@ -139,6 +180,7 @@ export function useImportWorkflow() {
     setSheetCategoryName,
     applyToAllSheets,
     handleConfirm,
+    applyConflictChoices,
     reset,
   };
 }
