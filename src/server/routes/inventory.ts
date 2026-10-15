@@ -1244,7 +1244,8 @@ export function trimRowKeys(rawRows: Record<string, unknown>[]): {
       const base = key.trim();
       if (!base) continue;
       let header = base;
-      for (let n = 2; taken.has(header.toLocaleLowerCase()); n++) header = `${base} (${n})`;
+      let copy = 2;
+      while (taken.has(header.toLocaleLowerCase())) header = `${base} (${copy++})`;
       taken.add(header.toLocaleLowerCase());
       headerFor.set(key, header);
       headers.push(header);
@@ -1628,8 +1629,7 @@ inventoryRouter.post(
       // "Soft  Drinks" and "Soft Drinks" are one category.
       const trimmed = String(name || '')
         .trim()
-        .split(/\s+/)
-        .join(' ');
+        .replaceAll(/\s+/g, ' ');
       if (!trimmed) return null;
       // GET /categories hides reserved names, so a category created here under one would
       // leave its items unreachable from the category view. Leave the item uncategorised —

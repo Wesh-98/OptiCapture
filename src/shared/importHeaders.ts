@@ -118,7 +118,7 @@ export const EXPORT_HEADERS: Readonly<Record<string, ImportField | null>> = {
 
 /** A header compared the way every lookup here compares it: trimmed, lower case, single-spaced. */
 export function normalizeHeaderLabel(header: string): string {
-  return header.trim().toLocaleLowerCase().split(/\s+/).join(' ');
+  return header.trim().toLocaleLowerCase().replaceAll(/\s+/g, ' ');
 }
 
 /**
@@ -137,6 +137,8 @@ export function headerContainsSynonym(label: string, synonym: string): boolean {
   return false;
 }
 
+const ALL_SYNONYMS: readonly string[] = Object.values(HEADER_SYNONYMS).flat();
+
 /**
  * True when the header names an import field by the rules the mapping screen suggests
  * fields by: the export's own names and exact synonyms, or a synonym's whole words inside a
@@ -148,10 +150,9 @@ export function isKnownHeader(header: string): boolean {
   const label = normalizeHeaderLabel(header);
   if (!label) return false;
   if (Object.hasOwn(EXPORT_HEADERS, label)) return true;
-  const synonyms = Object.values(HEADER_SYNONYMS).flat();
-  if (synonyms.includes(label)) return true;
+  if (ALL_SYNONYMS.includes(label)) return true;
   if (NON_FIELD_HEADER_WORDS.some(word => headerContainsSynonym(label, word))) return false;
-  return synonyms.some(
+  return ALL_SYNONYMS.some(
     synonym => !EXACT_ONLY_SYNONYMS.has(synonym) && headerContainsSynonym(label, synonym)
   );
 }

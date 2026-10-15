@@ -46,11 +46,11 @@ function ConflictChoice({
         <div className="mt-2 flex flex-wrap gap-4 text-sm text-slate-700">
           <label className="flex items-center gap-1.5">
             <input type="radio" name={name} checked={useFile} onChange={() => onChoose(true)} />
-            Use the file’s values
+            <span>Use the file’s values</span>
           </label>
           <label className="flex items-center gap-1.5">
             <input type="radio" name={name} checked={!useFile} onChange={() => onChoose(false)} />
-            Skip this row
+            <span>Skip this row</span>
           </label>
         </div>
       </fieldset>

@@ -341,6 +341,8 @@ describe('M2: UPC values a spreadsheet mangled', () => {
     expect(normalizeUpc('1.23457E+11')).toHaveProperty('error');
     expect(normalizeUpc('12345678905.0')).toHaveProperty('error');
     expect(normalizeUpc('12\u00003')).toHaveProperty('error');
+    expect(normalizeUpc({ code: '1' })).toEqual({ error: 'UPC must be text' });
+    expect(normalizeUpc(36000291452)).toEqual({ value: '36000291452' });
   });
 
   it('stores an import UPC without separators and refuses a scientific one', async () => {

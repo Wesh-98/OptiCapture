@@ -292,9 +292,14 @@ export function upcVariants(upc: string): string[] {
  */
 export function normalizeUpc(raw: unknown): { value: string } | { error: string } {
   if (raw === null || raw === undefined) return { value: '' };
+  if (typeof raw !== 'string' && typeof raw !== 'number') return { error: 'UPC must be text' };
   const text = String(raw).trim();
   // Control characters (a NUL from a bad scanner read, a stray tab) are never part of a code.
-  if ([...text].some(char => char.charCodeAt(0) < 0x20 || char.charCodeAt(0) === 0x7f)) {
+  const isControl = (char: string) => {
+    const code = char.codePointAt(0) ?? 0;
+    return code < 0x20 || code === 0x7f;
+  };
+  if ([...text].some(isControl)) {
     return { error: 'UPC contains characters that cannot be part of a barcode' };
   }
   if (/^\d+(\.\d+)?e[+-]?\d+$/i.test(text) || /^\d+\.\d+$/.test(text)) {
