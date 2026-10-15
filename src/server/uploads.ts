@@ -55,26 +55,33 @@ export function discardUploads(candidates: Iterable<string | null | undefined>):
 }
 
 /**
- * True when a row of this store already points at the upload: one of its items, a staged
- * scan in one of its sessions, or its logo. An item may name an existing upload (re-saving an
- * item keeps its photo; re-importing an export keeps its images) but only one of its own
- * store's, or a store could show, and later lay claim to, another tenant's file. Compared by
- * uploadFileName, the key the unlink uses.
+ * The upload files a store's rows point at: its items, the staged scans in its sessions and
+ * its logo. Read in one pass, so an import checks thousands of rows against a set instead of
+ * querying once per row (which made a 10,000-row re-import take minutes).
+ */
+export function storeUploadNames(storeId: number | undefined): Set<string> {
+  const rows = db
+    .prepare(
+      `SELECT image AS path FROM inventory WHERE store_id = ? AND image LIKE '%/uploads/%'
+       UNION ALL
+       SELECT si.image FROM session_items si JOIN scan_sessions s ON s.session_id = si.session_id
+        WHERE s.store_id = ? AND si.image LIKE '%/uploads/%'
+       UNION ALL
+       SELECT logo FROM stores WHERE id = ? AND logo LIKE '%/uploads/%'`
+    )
+    .all(storeId, storeId, storeId) as Array<{ path: string }>;
+  return new Set(rows.map(row => uploadFileName(row.path)));
+}
+
+/**
+ * True when a row of this store already points at the upload. An item may name an existing
+ * upload (re-saving an item keeps its photo; re-importing an export keeps its images) but only
+ * one of its own store's, or a store could show, and later lay claim to, another tenant's
+ * file. Compared by uploadFileName, the key the unlink uses.
  */
 export function storeReferencesUpload(storeId: number | undefined, value: string): boolean {
   const name = uploadFileName(value);
-  if (!name) return false;
-  const rows = db
-    .prepare(
-      `SELECT image AS path FROM inventory WHERE store_id = ? AND instr(image, ?) > 0
-       UNION ALL
-       SELECT si.image FROM session_items si JOIN scan_sessions s ON s.session_id = si.session_id
-        WHERE s.store_id = ? AND instr(si.image, ?) > 0
-       UNION ALL
-       SELECT logo FROM stores WHERE id = ? AND instr(logo, ?) > 0`
-    )
-    .all(storeId, name, storeId, name, storeId, name) as Array<{ path: string }>;
-  return rows.some(row => uploadFileName(row.path) === name);
+  return Boolean(name) && storeUploadNames(storeId).has(name);
 }
 
 /**

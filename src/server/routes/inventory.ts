@@ -14,6 +14,7 @@ import {
   removeUploadedFiles,
   savedUploadPath,
   searchCondition,
+  uploadFileName,
   upcVariants,
   isValidGtin,
   normalizeUpc,
@@ -23,7 +24,7 @@ import { isReservedCategoryName } from './categories.js';
 import { IMPORT_FIELDS, isGenericSheetName, isKnownHeader } from '../../shared/importHeaders.js';
 import type { AuthRequest } from '../types.js';
 import { logError } from '../logger.js';
-import { assertStoreUpload, discardUploads, storeReferencesUpload } from '../uploads.js';
+import { assertStoreUpload, discardUploads, storeUploadNames } from '../uploads.js';
 
 export const inventoryRouter = express.Router();
 
@@ -1683,6 +1684,11 @@ inventoryRouter.post(
         AND external_system = ?
     `
     );
+    // The store's uploads as the import started, read on first need. Files this import writes
+    // are its own by construction, and a reference a later row replaces stays on disk (an
+    // import removes no files), so the set at the start is the right one to check against.
+    let ownUploads: Set<string> | null = null;
+    const ownUploadNames = () => (ownUploads ??= storeUploadNames(user.store_id));
     const checkNum = db.prepare('SELECT id FROM inventory WHERE number = ? AND store_id = ?');
     const checkExternalSku = db.prepare(
       'SELECT id FROM inventory WHERE external_sku = ? AND store_id = ?'
@@ -2044,11 +2050,11 @@ inventoryRouter.post(
       // delete a file the sheet merely referenced.
       upload.path = normalizedImage && image ? savedUploadPath(normalizedImage, image) : null;
       // An import may name an existing upload — that is how re-importing an export keeps its
-      // images — but only one this store already references (storeReferencesUpload).
+      // images — but only one this store already references.
       if (
         !upload.path &&
         image?.startsWith('/uploads/') &&
-        !storeReferencesUpload(user.store_id, image)
+        !ownUploadNames().has(uploadFileName(image))
       ) {
         rowError(
           workItem,
