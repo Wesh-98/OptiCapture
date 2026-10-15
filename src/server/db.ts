@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
-import { normalizeImageUrl, searchKey } from './helpers.js';
+import { isAllowedImageValue, normalizeImageUrl, searchKey } from './helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // DATABASE_PATH env var overrides the default file path.
@@ -765,6 +765,26 @@ runMigration(26, () => {
   );
   if (!cols.has('activity_seen_log_id')) {
     db.exec('ALTER TABLE users ADD COLUMN activity_seen_log_id INTEGER NOT NULL DEFAULT 0');
+  }
+});
+
+// Migration 27: item and staged-scan images are now only web links, proxied Drive images or
+// uploaded photos. A value outside that — a same-origin path such as /api/inventory/export,
+// or a protocol-relative //host link — was rendered as <img src> wherever the item appeared,
+// so it is cleared. A raw data: image is left alone: it only ever renders as a picture. A Drive
+// proxy path that kept a stray "&usp=…" from migration 23 is cut back to its file id, which
+// is all the proxy accepts, so that picture starts working instead of being lost.
+runMigration(27, () => {
+  for (const table of ['inventory', 'session_items'] as const) {
+    const rows = db
+      .prepare(`SELECT id, image FROM ${table} WHERE image IS NOT NULL AND TRIM(image) != ''`)
+      .all() as Array<{ id: number; image: string }>;
+    const setImage = db.prepare(`UPDATE ${table} SET image = ? WHERE id = ?`);
+    for (const row of rows) {
+      if (/^\s*data:/i.test(row.image) || isAllowedImageValue(row.image)) continue;
+      const driveFile = /^\/api\/drive-image\/([\w-]+)/.exec(row.image.trim());
+      setImage.run(driveFile ? `/api/drive-image/${driveFile[1]}` : null, row.id);
+    }
   }
 });
 

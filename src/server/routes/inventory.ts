@@ -568,7 +568,9 @@ function exportCsv(grouped: ExportGroups): string {
     for (const r of items)
       lines.push(EXPORT_COLUMNS.map(column => csvCell(r[column.key])).join(','));
   }
-  return lines.join('\n');
+  // The byte-order mark tells Excel the file is UTF-8. Without it Excel on Windows reads the
+  // local ANSI code page, and "Crème brûlée" opened as "CrÃ¨me brÃ»lÃ©e".
+  return `\uFEFF${lines.join('\n')}`;
 }
 
 async function writeExportPdf(
@@ -626,6 +628,11 @@ function buildExportWorkbook(grouped: ExportGroups) {
     ws.addRow(EXPORT_COLUMNS.map(column => column.label));
     for (const r of items) ws.addRow(EXPORT_COLUMNS.map(column => r[column.key] ?? ''));
   }
+  // Excel refuses a workbook without a worksheet as damaged, which is what a store with no
+  // items used to download. Give it the column headings on an empty sheet.
+  if (wb.worksheets.length === 0) {
+    wb.addWorksheet('Inventory').addRow(EXPORT_COLUMNS.map(column => column.label));
+  }
   return wb;
 }
 
@@ -635,9 +642,13 @@ inventoryRouter.get(
   authenticateToken,
   requireOwner,
   asyncRoute<AuthRequest>(async (req: AuthRequest, res) => {
-    const fmt = ['xlsx', 'csv', 'json', 'pdf'].includes(req.query.format as string)
-      ? (req.query.format as string)
-      : 'xlsx';
+    // No format means XLSX. An unknown one used to mean XLSX too, and still marked every
+    // item exported.
+    const requested = firstQueryValue(req.query.format) ?? 'xlsx';
+    if (!['xlsx', 'csv', 'json', 'pdf'].includes(requested)) {
+      return res.status(400).json({ error: 'format must be xlsx, csv, json or pdf' });
+    }
+    const fmt = requested;
 
     // Only data files can be re-imported elsewhere, so only they mark items as
     // exported, and only once the file has been built (a PDF is a report).
@@ -2020,7 +2031,16 @@ inventoryRouter.post(
       upload: { path: string | null }
     ) => {
       const normalizedImage = rawImage ? normalizeImageUrl(rawImage) : null;
-      const image = normalizedImage ? saveBase64Image(normalizedImage) : null;
+      let image: string | null;
+      try {
+        image = normalizedImage ? saveBase64Image(normalizedImage) : null;
+      } catch (err) {
+        if (!(err instanceof UnsupportedImageTypeError)) throw err;
+        // The item is still imported, without the picture, as with another store's upload.
+        // A bad image used to fail the whole row.
+        rowError(workItem, rowLabel, `${err.message}, so it was left off the item`);
+        return null;
+      }
       // Only what this import actually wrote counts as its own, so a rollback cannot
       // delete a file the sheet merely referenced.
       upload.path = normalizedImage && image ? savedUploadPath(normalizedImage, image) : null;

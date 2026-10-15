@@ -212,7 +212,6 @@ describe('inventory listing and export', () => {
     const res = await request
       .get('/api/inventory/export')
       .set('Cookie', adminCookie)
-      .query({ format: 'unknown-format' })
       .buffer(true)
       .parse(binaryParser);
 

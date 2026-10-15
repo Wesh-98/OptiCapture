@@ -487,7 +487,10 @@ Confirm:
 
 ## 12. Export Pipeline
 
-`GET /api/inventory/export` accepts `format=xlsx|csv|json|pdf`.
+`GET /api/inventory/export` accepts `format=xlsx|csv|json|pdf`; no format means XLSX, and any other value is refused with `400` before anything is exported or logged.
+
+- CSV starts with a UTF-8 byte-order mark so Excel reads accented and non-Latin text correctly; values starting with `=`, `+`, `-` or `@` get a leading `'` so spreadsheets do not run them as formulas (the import removes it again).
+- XLSX has one worksheet per category; a store with no items gets an "Inventory" sheet with the column headings, since Excel refuses a workbook without one.
 
 XLSX, CSV and JSON exports are data files that can be re-imported, so once the file is built the server stamps the store's inventory rows with:
 
@@ -531,6 +534,7 @@ Mitigations:
 - Suspended stores and expired sessions are rejected throughout OTP scan paths.
 - Uploaded files are served with dotfiles denied and download disposition.
 - Uploaded image files are deleted once no item, store logo or staged scan points at them.
+- An item or staged-scan image must be an `http(s)://` link, a Google Drive link (stored as `/api/drive-image/:id`), an uploaded photo (`/uploads/<file>`) or a JPG/PNG/GIF/WEBP data image (saved to uploads). Anything else — a same-origin path such as `/api/...`, a `//host` link, another scheme — is refused with `400`; an import leaves it off the item and reports the row. Migration 27 cleared stored values outside this rule.
 - Superadmin item edits are written to the target store's audit log with before and after values.
 
 ## 14. Performance Characteristics
