@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { applyFileIdentifiers, confirmImport, uploadFile } from '../components/import/importApi';
 import {
@@ -28,8 +28,14 @@ function getErrorMessage(error: unknown, fallback: string): string {
 
 export function useImportWorkflow() {
   const [state, setState] = useState<ImportState>(initialState);
+  // Bumped whenever the screen moves to a new file or starts over. A request that answers
+  // after that belongs to a workflow the owner has left, and its answer is dropped: a late
+  // "choices applied" used to lock the conflict panel of the next import.
+  const generation = useRef(0);
+  const isCurrent = (requestGeneration: number) => requestGeneration === generation.current;
 
   const handleFile = async (file: File) => {
+    const requestGeneration = ++generation.current;
     try {
       setState(prev => ({
         ...prev,
@@ -45,6 +51,7 @@ export function useImportWorkflow() {
       }));
 
       const { sheets, hiddenSheets } = await uploadFile(file);
+      if (!isCurrent(requestGeneration)) return;
 
       setState(prev => ({
         ...prev,
@@ -55,6 +62,7 @@ export function useImportWorkflow() {
         isParsing: false,
       }));
     } catch (error) {
+      if (!isCurrent(requestGeneration)) return;
       const message = getErrorMessage(error, 'Network error - could not reach server');
       setState(prev => ({ ...prev, isParsing: false, parseError: message }));
     }
@@ -110,12 +118,15 @@ export function useImportWorkflow() {
   };
 
   const handleConfirm = async () => {
+    const requestGeneration = generation.current;
     setState(prev => ({ ...prev, step: 'importing', parseError: null }));
 
     try {
       const result = await confirmImport(state.sheets);
+      if (!isCurrent(requestGeneration)) return;
       setState(prev => ({ ...prev, step: 'done', result }));
     } catch (error) {
+      if (!isCurrent(requestGeneration)) return;
       const message = getErrorMessage(error, 'Import failed');
       setState(prev => ({ ...prev, step: 'map', parseError: message }));
     }
@@ -127,20 +138,26 @@ export function useImportWorkflow() {
     rows: ReadonlyArray<Pick<ConflictRow, 'sheet_index' | 'row_index'>>
   ) => {
     if (rows.length === 0 || state.resolution.status === 'applying') return;
+    const requestGeneration = generation.current;
     setState(prev => ({ ...prev, resolution: { status: 'applying' } }));
     try {
       const result = await applyFileIdentifiers(state.sheets, rows);
+      if (!isCurrent(requestGeneration)) return;
       setState(prev => ({
         ...prev,
         resolution: { status: 'done', applied: rows.length, result },
       }));
     } catch (error) {
+      if (!isCurrent(requestGeneration)) return;
       const message = getErrorMessage(error, 'Could not apply your choices');
       setState(prev => ({ ...prev, resolution: { status: 'failed', error: message } }));
     }
   };
 
-  const reset = () => setState(initialState);
+  const reset = () => {
+    generation.current += 1;
+    setState(initialState);
+  };
 
   const activeSheet = state.sheets[state.activeSheet] ?? null;
   const isMultiSheet = state.sheets.length > 1;

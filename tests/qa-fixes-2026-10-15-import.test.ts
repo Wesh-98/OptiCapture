@@ -9,6 +9,7 @@ import { db } from '../src/server/db.js';
 import { normalizeUpc, upcVariants } from '../src/server/helpers.js';
 import { autoDetect, confirmImport, uploadFile } from '../src/components/import/importApi.js';
 import { cellText, suggestCategoryName } from '../src/components/import/mapping.js';
+import { isKnownHeader } from '../src/shared/importHeaders.js';
 import { createTestApp, registerStore } from './helpers.js';
 
 const request = createTestApp();
@@ -119,6 +120,32 @@ describe('H2: finding the header row of a worksheet', () => {
       headerRowNumber: 1,
       headers: ['UPC', 'Item Name', 'Price'],
     });
+  });
+
+  it('keeps a header whose labels contain field names, over a data row holding "UPC"', async () => {
+    const buffer = await workbook(wb => {
+      const ws = wb.addWorksheet('Data');
+      ws.addRow(['Product Name Details', 'Barcode Value']);
+      ws.addRow(['UPC', 'Widget', 'note']);
+      ws.addRow(['Gadget', '12345', 'x']);
+    });
+    const up = await upload(buffer, 'partial.xlsx');
+    expect(up.body.sheets[0]).toMatchObject({
+      headerRowNumber: 1,
+      headers: ['Product Name Details', 'Barcode Value'],
+    });
+  });
+
+  it('counts exact-only names and whole-word names as headers, but not unimported ones', () => {
+    expect(
+      ['Item', 'Size', 'Active', 'Product Name Details', 'UPC Code'].map(isKnownHeader)
+    ).toEqual([true, true, true, true, true]);
+    expect(['Unit Cost', 'Inactive Date', 'Item Type', 'Vendor Name'].map(isKnownHeader)).toEqual([
+      false,
+      false,
+      false,
+      false,
+    ]);
   });
 
   it('keeps a header with unfamiliar labels and an unlabeled column', async () => {

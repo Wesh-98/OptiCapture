@@ -137,12 +137,23 @@ export function headerContainsSynonym(label: string, synonym: string): boolean {
   return false;
 }
 
-/** True when the header is one the import knows by name — the export's or a synonym. */
+/**
+ * True when the header names an import field by the rules the mapping screen suggests
+ * fields by: the export's own names and exact synonyms, or a synonym's whole words inside a
+ * longer header ("Product Name Details") unless the header is about something not imported.
+ * The server finds a worksheet's header row with this, so a header the screen would map is
+ * never outscored by a data row that merely contains one header-like word.
+ */
 export function isKnownHeader(header: string): boolean {
   const label = normalizeHeaderLabel(header);
   if (!label) return false;
   if (Object.hasOwn(EXPORT_HEADERS, label)) return true;
-  return Object.values(HEADER_SYNONYMS).some(synonyms => synonyms.includes(label));
+  const synonyms = Object.values(HEADER_SYNONYMS).flat();
+  if (synonyms.includes(label)) return true;
+  if (NON_FIELD_HEADER_WORDS.some(word => headerContainsSynonym(label, word))) return false;
+  return synonyms.some(
+    synonym => !EXACT_ONLY_SYNONYMS.has(synonym) && headerContainsSynonym(label, synonym)
+  );
 }
 
 /**
