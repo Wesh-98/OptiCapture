@@ -56,18 +56,20 @@ export function discardUploads(candidates: Iterable<string | null | undefined>):
 
 /**
  * The upload files a store's rows point at: its items, the staged scans in its sessions and
- * its logo. Read in one pass, so an import checks thousands of rows against a set instead of
+ * its logo. Only local '/uploads/…' paths count. A web link is not an upload even when its
+ * path has '/uploads/' in it: counting https://elsewhere/uploads/<file> let a store save that
+ * link and then claim another store's <file> as its own. Read in one pass, so an import checks thousands of rows against a set instead of
  * querying once per row (which made a 10,000-row re-import take minutes).
  */
 export function storeUploadNames(storeId: number | undefined): Set<string> {
   const rows = db
     .prepare(
-      `SELECT image AS path FROM inventory WHERE store_id = ? AND image LIKE '%/uploads/%'
+      `SELECT image AS path FROM inventory WHERE store_id = ? AND image LIKE '/uploads/%'
        UNION ALL
        SELECT si.image FROM session_items si JOIN scan_sessions s ON s.session_id = si.session_id
-        WHERE s.store_id = ? AND si.image LIKE '%/uploads/%'
+        WHERE s.store_id = ? AND si.image LIKE '/uploads/%'
        UNION ALL
-       SELECT logo FROM stores WHERE id = ? AND logo LIKE '%/uploads/%'`
+       SELECT logo FROM stores WHERE id = ? AND logo LIKE '/uploads/%'`
     )
     .all(storeId, storeId, storeId) as Array<{ path: string }>;
   return new Set(rows.map(row => uploadFileName(row.path)));

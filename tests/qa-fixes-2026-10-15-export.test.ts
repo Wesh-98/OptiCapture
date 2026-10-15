@@ -235,6 +235,28 @@ describe('M11: images that are another store’s uploads', () => {
   });
 });
 
+describe('M11: a web link does not make an upload the store’s own', () => {
+  it('refuses /uploads/<file> after saving https://…/uploads/<file>', async () => {
+    const other = await registerStore(request, { storeName: 'Owner Mart', username: 'qaowner2' });
+    const theirs = '/uploads/0000cccc-launder.png';
+    db.prepare(
+      "INSERT INTO inventory (item_name, upc, image, store_id) VALUES ('Theirs', '360000000001', ?, ?)"
+    ).run(theirs, other.storeId);
+
+    const link = await request
+      .post('/api/inventory')
+      .set('Cookie', cookie)
+      .send({ item_name: 'Link', upc: '360000000002', image: `https://x.example${theirs}` });
+    expect(link.status).toBe(200);
+
+    const claim = await request
+      .post('/api/inventory')
+      .set('Cookie', cookie)
+      .send({ item_name: 'Claim', upc: '360000000003', image: theirs });
+    expect(claim.status).toBe(400);
+  });
+});
+
 describe('L12: a bad image in an import row', () => {
   it('leaves the picture off but still imports the item', async () => {
     const csv = [
