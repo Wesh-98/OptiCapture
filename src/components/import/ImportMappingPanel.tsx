@@ -36,6 +36,8 @@ interface Props {
   totalRows: number;
   mappedCount: number;
   mappingIssues: MappingIssue[];
+  /** Shown like issues but never block the import. */
+  mappingWarnings?: MappingIssue[];
   mappingsReady: boolean;
   onReset: () => void;
   onSelectSheet: (index: number) => void;
@@ -59,16 +61,26 @@ function ErrorBanner({ message, className }: Readonly<{ message: string; classNa
   );
 }
 
-function MappingIssueNotices({ issues }: Readonly<{ issues: MappingIssue[] }>) {
+const NOTICE_TEXT = {
+  issue: { heading: 'Mapping needs attention', label: 'Mapping Issue' },
+  warning: { heading: 'Check before importing', label: 'Heads Up' },
+} as const;
+
+function MappingIssueNotices({
+  issues,
+  tone = 'issue',
+}: Readonly<{ issues: MappingIssue[]; tone?: keyof typeof NOTICE_TEXT }>) {
   const [closedIssues, setClosedIssues] = useState<number[]>([]);
   const visibleIssues = issues
     .map((issue, index) => ({ issue, index }))
     .filter(({ index }) => !closedIssues.includes(index));
+  const text = NOTICE_TEXT[tone];
+  const headingId = `mapping-${tone}-heading`;
 
   return (
-    <section className="mx-5 mb-4" aria-labelledby="mapping-issues-heading">
-      <h3 id="mapping-issues-heading" className="text-sm font-semibold text-red-900">
-        Mapping needs attention
+    <section className="mx-5 mb-4" aria-labelledby={headingId}>
+      <h3 id={headingId} className="text-sm font-semibold text-red-900">
+        {text.heading}
       </h3>
       {visibleIssues.length > 0 ? (
         <ul className="mt-2 flex max-w-full items-start gap-3 overflow-x-auto px-1 pt-1 pb-3">
@@ -79,12 +91,12 @@ function MappingIssueNotices({ issues }: Readonly<{ issues: MappingIssue[] }>) {
             >
               <div className="flex items-center justify-between gap-3 bg-teal-300 px-3 py-2">
                 <strong className="text-xs/none font-bold uppercase text-red-800">
-                  Mapping Issue
+                  {text.label}
                 </strong>
                 <button
                   type="button"
                   onClick={() => setClosedIssues(current => [...current, index])}
-                  aria-label={`Close mapping issue: ${issue.sheetName}: ${issue.message}`}
+                  aria-label={`Close ${text.label.toLowerCase()}: ${issue.sheetName}: ${issue.message}`}
                   className="flex size-6 items-center justify-center border-2 border-black bg-white hover:bg-teal-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-black"
                 >
                   <X size={14} strokeWidth={4} className="text-red-600" aria-hidden="true" />
@@ -612,6 +624,7 @@ export function ImportMappingPanel({
   totalRows,
   mappedCount,
   mappingIssues,
+  mappingWarnings = [],
   mappingsReady,
   onReset,
   onSelectSheet,
@@ -717,8 +730,8 @@ export function ImportMappingPanel({
       {hiddenSheets.length > 0 && (
         <p className="mx-5 mt-4 text-xs text-slate-500">
           Hidden worksheet{hiddenSheets.length === 1 ? '' : 's'} not imported:{' '}
-          {hiddenSheets.join(', ')}. Unhide {hiddenSheets.length === 1 ? 'it' : 'them'} in Excel
-          to include {hiddenSheets.length === 1 ? 'it' : 'them'}.
+          {hiddenSheets.join(', ')}. Unhide {hiddenSheets.length === 1 ? 'it' : 'them'} in Excel to
+          include {hiddenSheets.length === 1 ? 'it' : 'them'}.
         </p>
       )}
 
@@ -856,6 +869,13 @@ export function ImportMappingPanel({
 
       {mappingIssues.length > 0 && (
         <MappingIssueNotices key={JSON.stringify(mappingIssues)} issues={mappingIssues} />
+      )}
+      {mappingWarnings.length > 0 && (
+        <MappingIssueNotices
+          key={JSON.stringify(mappingWarnings)}
+          issues={mappingWarnings}
+          tone="warning"
+        />
       )}
 
       {isImporting && <ImportProgress totalRows={totalRows} />}

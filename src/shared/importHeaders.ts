@@ -30,7 +30,7 @@ export type ImportField = (typeof IMPORT_FIELDS)[number];
 
 /** Header spellings for each field, lower case. */
 export const HEADER_SYNONYMS: Record<ImportField, readonly string[]> = {
-  item_name: ['item description', 'product name', 'name', 'title', 'item name', 'item'],
+  item_name: ['item description', 'product name', 'name', 'title', 'item name', 'item', 'product'],
   brand: ['brand', 'brand name', 'manufacturer', 'make'],
   quantity: ['quantity', 'qty', 'stock', 'on hand', 'count', 'units on hand'],
   upc: ['upc', 'barcode', 'ean', 'gtin', 'upc code'],
@@ -65,9 +65,16 @@ export const HEADER_SYNONYMS: Record<ImportField, readonly string[]> = {
 
 /**
  * Synonyms that only count as the whole header, never as words inside a longer one: "item"
- * would otherwise claim "Item Type", and "active" would claim "Inactive Date".
+ * would otherwise claim "Item Type", "product" would claim "Product Type", and "active" would
+ * claim "Inactive Date".
  */
-export const EXACT_ONLY_SYNONYMS: ReadonlySet<string> = new Set(['item', 'make', 'size', 'active']);
+export const EXACT_ONLY_SYNONYMS: ReadonlySet<string> = new Set([
+  'item',
+  'product',
+  'make',
+  'size',
+  'active',
+]);
 
 /**
  * Words that mean a header is about something we do not import, so it is never matched by a

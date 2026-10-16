@@ -4,6 +4,7 @@ import { applyFileIdentifiers, confirmImport, uploadFile } from '../components/i
 import {
   applyMappingToMatchingHeaders,
   getImportMappingIssues,
+  getImportMappingWarnings,
   getMappedColumns,
   setMappingDestination,
 } from '../components/import/mapping';
@@ -164,6 +165,7 @@ export function useImportWorkflow() {
   const mappedCount = activeSheet ? getMappedColumns(activeSheet).length : 0;
   const totalRows = state.sheets.reduce((total, sheet) => total + sheet.rowCount, 0);
   const mappingIssues = getImportMappingIssues(state.sheets);
+  const mappingWarnings = getImportMappingWarnings(state.sheets);
 
   return {
     state,
@@ -172,6 +174,7 @@ export function useImportWorkflow() {
     mappedCount,
     totalRows,
     mappingIssues,
+    mappingWarnings,
     mappingsReady: state.sheets.length > 0 && mappingIssues.length === 0,
     handleFileChange,
     handleFile,

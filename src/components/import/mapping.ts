@@ -123,6 +123,27 @@ export function getImportMappingIssues(sheets: readonly SheetData[]): MappingIss
   });
 }
 
+/**
+ * Things worth a second look that do not stop the import. A sheet with no Item Name column
+ * is valid — a UPC + price sheet updates existing items — but every new item on it is
+ * refused for want of a name, which an owner who missed an unrecognised name column would
+ * only find out from the result.
+ */
+export function getImportMappingWarnings(sheets: readonly SheetData[]): MappingIssue[] {
+  return sheets.flatMap(sheet =>
+    getMappedColumns(sheet).some(column => column.destination === 'item_name')
+      ? []
+      : [
+          {
+            category: 'No item name column',
+            sheetName: sheet.name,
+            message:
+              'items already in your catalog will update, but new items will be skipped. Map the column that holds product names to Item Name to add them.',
+          },
+        ]
+  );
+}
+
 export function setMappingDestination(
   sheet: SheetData,
   sourceHeader: string,
