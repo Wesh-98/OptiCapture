@@ -695,7 +695,7 @@ describe('useAdminStoreInventory', () => {
     const before = calls.length;
 
     act(() => result.current.refresh());
-    await waitFor(() => expect(calls.length).toBe(before + 3));
+    await waitFor(() => expect(calls).toHaveLength(before + 3));
     // A refresh does not blank the header while it reloads.
     expect(result.current.store).not.toBeNull();
   });

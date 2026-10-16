@@ -224,7 +224,7 @@ describe('BrowserStoreBarcodeReader', () => {
     controls.stop();
     const calls = callback.mock.calls.length;
     await vi.advanceTimersByTimeAsync(150 * 5);
-    expect(callback.mock.calls.length).toBe(calls);
+    expect(callback.mock.calls).toHaveLength(calls);
   });
 
   it('waits for the video to have a frame before decoding', async () => {

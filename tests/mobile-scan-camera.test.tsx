@@ -298,7 +298,7 @@ describe('useMobileScan — detected barcodes', () => {
     });
     expect(scanBodies).toHaveLength(2);
 
-    // After three empty frames the first product can be scanned again.
+    // After three empty frames the last product can be scanned again.
     act(() => {
       onUndetected();
       onUndetected();

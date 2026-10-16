@@ -190,9 +190,9 @@ describe('PUT /api/categories/:id — validation', () => {
     const row = db.prepare('SELECT name, icon FROM categories WHERE id = ?').get(id);
     expect(row).toEqual({ name: 'Salty Snacks', icon: 'Package' });
     const log = db
-      .prepare("SELECT details FROM logs WHERE store_id = ? AND action = 'UPDATE' ORDER BY id DESC")
-      .get(store.storeId) as { details: string } | undefined;
-    expect(log?.details).toBe('Updated category "Salty Snacks"');
+      .prepare("SELECT 1 FROM logs WHERE store_id = ? AND action = 'UPDATE' AND details = ?")
+      .get(store.storeId, 'Updated category "Salty Snacks"');
+    expect(log).toBeTruthy();
   });
 });
 

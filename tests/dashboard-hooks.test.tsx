@@ -7,7 +7,7 @@
  * actions that rewrite or delete every item in a category). The server side of each call is
  * covered by the route tests; this file covers what the page sends and how it reacts.
  */
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { PropsWithChildren } from 'react';
 import { act, cleanup, renderHook } from '@testing-library/react';
 import type { Category, InventoryItem } from '../src/components/dashboard/types';
@@ -374,9 +374,15 @@ describe('useItemManagement', () => {
 
   it('downloads an export in the chosen format', async () => {
     const calls = stubFetch(() => new Response('a,b\n1,2', { status: 200 }));
-    const createObjectURL = vi.fn(() => 'blob:export');
-    const revokeObjectURL = vi.fn();
-    vi.stubGlobal('URL', Object.assign(URL, { createObjectURL, revokeObjectURL }));
+    // jsdom has no object URLs. Spy on them so afterEach restores them, and remove any this
+    // test had to add, so the real URL is left as it was found.
+    const added = (['createObjectURL', 'revokeObjectURL'] as const).filter(name => !(name in URL));
+    for (const name of added) Object.assign(URL, { [name]: () => '' });
+    onTestFinished(() => {
+      for (const name of added) Reflect.deleteProperty(URL, name);
+    });
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:export');
+    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
     const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
     const { result, addToast } = mount();
     act(() => {

@@ -140,7 +140,10 @@ describe('POST /api/auth/register — input limits', () => {
       password: undefined,
       oauth_key: 'stale-key',
     });
-    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('Google session expired. Please sign in with Google again.');
+    // The stale key is discarded, not left to be tried again.
+    expect(pendingOAuth.has('stale-key')).toBe(false);
     expect(db.prepare("SELECT 1 FROM users WHERE username = 'googler'").get()).toBeUndefined();
   });
 });
