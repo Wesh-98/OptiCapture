@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { CategoryStatusFilter, InventoryItem, ItemForm } from '../components/dashboard/types';
 import { emptyForm } from '../components/dashboard/types';
 import { readFileAsDataUrl } from '../lib/imageUpload';
@@ -8,8 +8,12 @@ export function useItemManagement(
   selectedCategoryId: number | null,
   selectedStatus: CategoryStatusFilter,
   onStatsChange: () => void,
-  addToast: (type: 'success' | 'error' | 'warning', message: string) => void
+  addToast: (type: 'success' | 'error' | 'warning', message: string) => void,
+  /** Searches items on the server; in the categories view a query lists matches store-wide. */
+  itemQuery = ''
 ) {
+  // The item list shows when a category is open, or as search results over the categories.
+  const listShown = viewMode === 'items' || itemQuery !== '';
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [totalItems, setTotalItems] = useState(0);
   const [formData, setFormData] = useState<ItemForm>({ ...emptyForm });
@@ -21,13 +25,17 @@ export function useItemManagement(
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportFormat, setExportFormat] = useState<'xlsx' | 'csv' | 'json' | 'pdf'>('xlsx');
   const [exporting, setExporting] = useState(false);
+  // Numbers each list request; typing fires several, and only the latest may fill the list.
+  const latestFetchRef = useRef(0);
 
   const fetchItems = async (
     categoryId: number | null,
     page = 1,
     limit = 50,
-    status = selectedStatus
+    status = selectedStatus,
+    q = itemQuery
   ) => {
+    const request = ++latestFetchRef.current;
     const params = new URLSearchParams({
       page: String(page),
       limit: String(limit),
@@ -41,9 +49,14 @@ export function useItemManagement(
       params.set('status', status);
     }
 
+    if (q) {
+      params.set('q', q);
+    }
+
     const res = await fetch(`/api/inventory?${params.toString()}`, { credentials: 'include' });
-    if (res.ok) {
-      const data = await res.json();
+    if (request !== latestFetchRef.current || !res.ok) return;
+    const data = await res.json();
+    if (request === latestFetchRef.current) {
       setItems(data.items ?? []);
       setTotalItems(data.total ?? 0);
     }
@@ -72,7 +85,7 @@ export function useItemManagement(
         setIsAddModalOpen(false);
         setFormData({ ...emptyForm });
         onStatsChange();
-        if (viewMode === 'items') void fetchItems(selectedCategoryId);
+        if (listShown) void fetchItems(selectedCategoryId);
       } else {
         const err = await res.json();
         addToast('error', err.error || 'Failed to add item');
@@ -97,7 +110,7 @@ export function useItemManagement(
         addToast('success', `Saved changes to "${editFormData.item_name.trim()}"`);
         setEditingItem(null);
         onStatsChange();
-        if (viewMode === 'items') void fetchItems(selectedCategoryId);
+        if (listShown) void fetchItems(selectedCategoryId);
       } else {
         const err = await res.json();
         addToast('error', err.error || 'Failed to update item');
@@ -151,7 +164,7 @@ export function useItemManagement(
       addToast('success', name ? `Deleted "${name}"` : 'Item deleted');
       setItems(prev => prev.filter(i => i.id !== itemId));
       onStatsChange();
-      if (viewMode === 'items') void fetchItems(selectedCategoryId);
+      if (listShown) void fetchItems(selectedCategoryId);
     } catch (error) {
       addToast('error', error instanceof Error ? error.message : 'Failed to delete item');
     } finally {

@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 
 test.beforeEach(async ({ page }) => {
   await page.route('**/api/auth/me', async route => {
@@ -157,7 +157,7 @@ test('shows camera permission failures once and retries only when requested', as
   await expect(permissionError).toBeVisible();
 });
 
-test('opens category inventory even after filtering the category list', async ({ page }) => {
+async function mockSnacksDashboard(page: Page) {
   await page.route('**/api/auth/me', async route => {
     await route.fulfill({
       json: {
@@ -220,8 +220,15 @@ test('opens category inventory even after filtering the category list', async ({
 
   await page.route('**/api/inventory?*', async route => {
     const url = new URL(route.request().url());
-    if (url.searchParams.get('category_id') !== '2') {
+    // The open Snacks category, or a store-wide item search; the mock item matches "pretzel".
+    const query = url.searchParams.get('q')?.toLowerCase();
+    const inSnacks = url.searchParams.get('category_id') === '2';
+    if (!inSnacks && !query) {
       await route.fallback();
+      return;
+    }
+    if (query && !'pretzel rods'.includes(query)) {
+      await route.fulfill({ json: { items: [], total: 0, page: 1, limit: 50 } });
       return;
     }
 
@@ -247,16 +254,44 @@ test('opens category inventory even after filtering the category list', async ({
       },
     });
   });
+}
+
+test('opens category inventory even after filtering the category list', async ({ page }) => {
+  await mockSnacksDashboard(page);
 
   await page.goto('/');
 
-  await page.getByPlaceholder('Search categories...').fill('Snacks');
+  await page.getByPlaceholder('Search Categories/Items...').fill('Snacks');
   await page.getByTitle('View Snacks items').click();
 
   await expect(page.getByRole('heading', { name: 'Snacks Items' })).toBeVisible();
   await expect(page.getByPlaceholder('Search items...')).toHaveValue('');
   await expect(page.getByText('Pretzel Rods')).toBeVisible();
   await expect(page.getByText('999111222333')).toBeVisible();
+});
+
+test('finds items from the categories search box, by name across the store', async ({ page }) => {
+  await mockSnacksDashboard(page);
+  const searches: string[] = [];
+  page.on('request', request => {
+    const url = new URL(request.url());
+    if (url.pathname === '/api/inventory' && url.searchParams.has('q')) {
+      searches.push(url.searchParams.get('q')!);
+    }
+  });
+
+  await page.goto('/');
+  await page.getByPlaceholder('Search Categories/Items...').fill('pretzel');
+
+  const results = page.getByRole('region', { name: 'Matching items' });
+  await expect(results.getByText('Items matching')).toBeVisible();
+  await expect(results.getByText('Pretzel Rods')).toBeVisible();
+  // Typing pauses into one store-wide request, not one per keystroke.
+  expect(searches).toEqual(['pretzel']);
+
+  // One character filters categories only; the item results go away.
+  await page.getByPlaceholder('Search Categories/Items...').fill('p');
+  await expect(results).toBeHidden();
 });
 
 test('opens export from owner navigation and clears the route after download', async ({ page }) => {

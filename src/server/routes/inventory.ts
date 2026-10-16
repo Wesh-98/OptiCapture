@@ -13,7 +13,7 @@ import {
   firstQueryValue,
   removeUploadedFiles,
   savedUploadPath,
-  searchCondition,
+  itemSearchCondition,
   uploadFileName,
   upcVariants,
   isValidGtin,
@@ -506,10 +506,12 @@ export function listStoreInventory(
     params.push(status);
   }
 
-  if (q) {
-    const text = searchCondition(['i.item_name', 'i.upc', 'c.name', 'i.tag_names'], String(q));
-    conditions.push(text.sql);
-    params.push(...text.params);
+  // The same search the Super Admin uses: name, UPC in either form, brand, category or tag.
+  const searchText = q?.trim();
+  if (searchText) {
+    const match = itemSearchCondition(searchText);
+    conditions.push(match.sql);
+    params.push(...match.params);
   }
 
   const from = `FROM inventory i LEFT JOIN categories c ON i.category_id = c.id WHERE ${conditions.join(' AND ')}`;

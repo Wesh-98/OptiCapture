@@ -6,10 +6,9 @@ import { BCRYPT_COST } from '../cache.js';
 import {
   firstQueryValue,
   generateTempPassword,
+  itemSearchCondition,
   normalizeUsername,
-  searchCondition,
   UnsupportedImageTypeError,
-  upcVariants,
 } from '../helpers.js';
 import { isEmailShaped } from '../../lib/emailFormat.js';
 import {
@@ -383,11 +382,9 @@ adminRouter.get('/search', authenticateToken, requireSuperadmin, (req: AuthReque
   if (!filters) return;
   const { storeId, page } = filters;
 
-  const text = searchCondition(['i.item_name', 'i.upc', 'i.brand', 'c.name', 'i.tag_names'], q);
-  const otherUpcForms = upcVariants(q).slice(1);
-  const matches = [text.sql, ...otherUpcForms.map(() => 'i.upc = ?')];
-  const conditions = ['i.store_id != ?', `(${matches.join(' OR ')})`];
-  const params: unknown[] = [HQ_STORE_ID, ...text.params, ...otherUpcForms];
+  const match = itemSearchCondition(q);
+  const conditions = ['i.store_id != ?', match.sql];
+  const params: unknown[] = [HQ_STORE_ID, ...match.params];
   if (storeId !== null) {
     conditions.push('i.store_id = ?');
     params.push(storeId);

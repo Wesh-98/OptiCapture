@@ -8,6 +8,7 @@ import { useActiveSessions } from '../hooks/useActiveSessions';
 import { useCategoryManagement } from '../hooks/useCategoryManagement';
 import { useItemManagement } from '../hooks/useItemManagement';
 import { useToast } from '../hooks/useToast';
+import { SEARCH_MIN_LENGTH } from '../hooks/useAdminItemSearch';
 import { StatsHeader } from '../components/dashboard/StatsHeader';
 import { SessionsSection } from '../components/dashboard/SessionsSection';
 import { DashboardToolbar } from '../components/dashboard/DashboardToolbar';
@@ -20,6 +21,8 @@ import { ExportModal } from '../components/dashboard/ExportModal';
 import { emptyForm } from '../components/dashboard/types';
 import type { Category } from '../components/dashboard/types';
 
+const SEARCH_DEBOUNCE_MS = 300;
+
 export default function Dashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -31,6 +34,9 @@ export default function Dashboard() {
   const [viewMode, setViewMode] = useState<'categories' | 'items'>('categories');
   const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
   const [search, setSearch] = useState('');
+  // The search box filters categories as typed; from SEARCH_MIN_LENGTH characters and a pause
+  // in typing it also searches items on the server, the same way the Super Admin search does.
+  const [itemQuery, setItemQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'' | 'Active' | 'Inactive'>('');
   const [activeActionMenu, setActiveActionMenu] = useState<number | null>(null);
   const [selectedItemIds, setSelectedItemIds] = useState<Set<number>>(new Set());
@@ -53,7 +59,8 @@ export default function Dashboard() {
     selectedCategory?.id ?? null,
     statusFilter,
     refreshVisibleStats,
-    addToast
+    addToast,
+    itemQuery
   );
   const { setShowExportModal } = items;
 
@@ -78,6 +85,11 @@ export default function Dashboard() {
       void fetchStats(selectedCategory?.id ?? null);
     } else {
       void fetchStats();
+      // Search results over the categories follow the status filter too.
+      if (itemQuery) {
+        setCurrentPage(1);
+        void items.fetchItems(null, 1, pageSize);
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewMode, selectedCategory, statusFilter]);
@@ -87,10 +99,30 @@ export default function Dashboard() {
     setCurrentPage(1);
   }, [search]);
 
+  useEffect(() => {
+    const next = search.trim();
+    const query = next.length >= SEARCH_MIN_LENGTH ? next : '';
+    if (!query) {
+      setItemQuery('');
+      return;
+    }
+    const timer = setTimeout(() => setItemQuery(query), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  // A search lists matching items: within the open category, or store-wide over categories.
+  useEffect(() => {
+    if (viewMode === 'categories' && !itemQuery) return;
+    setCurrentPage(1);
+    void items.fetchItems(selectedCategory?.id ?? null, 1, pageSize);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itemQuery]);
+
   const handleViewItems = (cat: Category) => {
     setSelectedCategory(cat);
     setViewMode('items');
     setSearch('');
+    setItemQuery('');
     setCurrentPage(1);
     setSelectedItemIds(new Set());
     void items.fetchItems(cat.id, 1, pageSize);
@@ -101,6 +133,7 @@ export default function Dashboard() {
     setViewMode('categories');
     setSelectedCategory(null);
     setSearch('');
+    setItemQuery('');
     setSelectedItemIds(new Set());
   };
 
@@ -163,6 +196,43 @@ export default function Dashboard() {
       handleCloseExportModal();
     }
   };
+
+  // One table for a category's items and for search results, so both behave the same.
+  const itemsTable = (
+    <ItemsTable
+      items={items.items}
+      total={items.totalItems}
+      canEditItems={canEditItems}
+      canSelectAll={viewMode === 'items' && !itemQuery}
+      pageSize={pageSize}
+      currentPage={currentPage}
+      confirmDeleteItemId={items.confirmDeleteItemId}
+      deletingItemId={items.deletingItemId}
+      selectedItemIds={selectedItemIds}
+      selectingAll={selectingAll}
+      onPageSizeChange={size => {
+        setPageSize(size);
+        setCurrentPage(1);
+        void items.fetchItems(selectedCategory?.id ?? null, 1, size, statusFilter);
+      }}
+      onPageChange={page => {
+        setCurrentPage(page);
+        void items.fetchItems(selectedCategory?.id ?? null, page, pageSize, statusFilter);
+      }}
+      onConfirmDelete={items.setConfirmDeleteItemId}
+      onDelete={itemId => {
+        setSelectedItemIds(current => {
+          const next = new Set(current);
+          next.delete(itemId);
+          return next;
+        });
+        void items.handleDeleteItem(itemId);
+      }}
+      onEdit={items.openEditModal}
+      onToggleItem={handleToggleItem}
+      onToggleSelectAll={() => void handleToggleSelectAll()}
+    />
+  );
 
   return (
     <div className="space-y-6">
@@ -229,54 +299,32 @@ export default function Dashboard() {
         />
 
         {viewMode === 'categories' ? (
-          <CategoriesTable
-            categories={cats.categories}
-            search={search}
-            statusFilter={statusFilter}
-            isOwner={isOwner}
-            activeActionMenu={activeActionMenu}
-            setActiveActionMenu={setActiveActionMenu}
-            pendingCategoryAction={cats.pendingCategoryAction}
-            setPendingCategoryAction={cats.setPendingCategoryAction}
-            onViewItems={handleViewItems}
-            onEditCategory={cats.openEditCat}
-            onCategoryAction={cats.handleCategoryAction}
-            onDeleteCategory={cats.handleDeleteCategory}
-          />
+          <>
+            <CategoriesTable
+              categories={cats.categories}
+              search={search}
+              statusFilter={statusFilter}
+              isOwner={isOwner}
+              activeActionMenu={activeActionMenu}
+              setActiveActionMenu={setActiveActionMenu}
+              pendingCategoryAction={cats.pendingCategoryAction}
+              setPendingCategoryAction={cats.setPendingCategoryAction}
+              onViewItems={handleViewItems}
+              onEditCategory={cats.openEditCat}
+              onCategoryAction={cats.handleCategoryAction}
+              onDeleteCategory={cats.handleDeleteCategory}
+            />
+            {itemQuery && (
+              <section aria-label="Matching items" className="border-t border-slate-200">
+                <h3 className="px-6 pt-4 pb-2 text-sm font-semibold text-slate-700">
+                  Items matching &ldquo;{itemQuery}&rdquo;
+                </h3>
+                {itemsTable}
+              </section>
+            )}
+          </>
         ) : (
-          <ItemsTable
-            items={items.items}
-            total={items.totalItems}
-            search={search}
-            canEditItems={canEditItems}
-            pageSize={pageSize}
-            currentPage={currentPage}
-            confirmDeleteItemId={items.confirmDeleteItemId}
-            deletingItemId={items.deletingItemId}
-            selectedItemIds={selectedItemIds}
-            selectingAll={selectingAll}
-            onPageSizeChange={size => {
-              setPageSize(size);
-              setCurrentPage(1);
-              void items.fetchItems(selectedCategory?.id ?? null, 1, size, statusFilter);
-            }}
-            onPageChange={page => {
-              setCurrentPage(page);
-              void items.fetchItems(selectedCategory?.id ?? null, page, pageSize, statusFilter);
-            }}
-            onConfirmDelete={items.setConfirmDeleteItemId}
-            onDelete={itemId => {
-              setSelectedItemIds(current => {
-                const next = new Set(current);
-                next.delete(itemId);
-                return next;
-              });
-              void items.handleDeleteItem(itemId);
-            }}
-            onEdit={items.openEditModal}
-            onToggleItem={handleToggleItem}
-            onToggleSelectAll={() => void handleToggleSelectAll()}
-          />
+          itemsTable
         )}
       </div>
 

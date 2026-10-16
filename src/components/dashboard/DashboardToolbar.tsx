@@ -63,7 +63,10 @@ export function DashboardToolbar({
             type="text"
             value={search}
             onChange={e => onSearchChange(e.target.value)}
-            placeholder={viewMode === 'categories' ? 'Search categories...' : 'Search items...'}
+            placeholder={
+              viewMode === 'categories' ? 'Search Categories/Items...' : 'Search items...'
+            }
+            aria-label={viewMode === 'categories' ? 'Search categories and items' : 'Search items'}
             className="w-full pl-9 pr-4 py-2.5 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-navy-700"
           />
         </div>

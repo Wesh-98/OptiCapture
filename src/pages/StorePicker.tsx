@@ -24,8 +24,12 @@ export default function StorePicker() {
     try {
       await switchStore(storeId);
       navigate('/');
-    } catch {
-      setError('Could not open that store. Please try again.');
+    } catch (switchError) {
+      setError(
+        switchError instanceof Error
+          ? switchError.message
+          : 'Could not open that store. Please try again.'
+      );
     } finally {
       setPendingStoreId(null);
     }
