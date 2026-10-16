@@ -155,7 +155,11 @@ export function AuthProvider({ children }: Readonly<{ children: ReactNode }>) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ store_id: storeId }),
       });
-      if (!res.ok) throw new Error('Failed to switch store');
+      if (!res.ok) {
+        // The server says why ("Store is suspended", "No access to that store"); keep it.
+        const payload = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(payload?.error || 'Could not open that store. Please try again.');
+      }
 
       persistActiveStoreId(storeId);
       setActiveStoreId(storeId);

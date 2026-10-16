@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../hooks/useToast';
 import { Link, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard,
@@ -182,6 +183,7 @@ function DesktopSidebar({
 
 export default function Layout({ children }: Readonly<{ children: React.ReactNode }>) {
   const { user, logout, leaveCurrentStore, myStores, switchStore, activeStoreId } = useAuth();
+  const { addToast } = useToast();
   const location = useLocation();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
@@ -211,13 +213,25 @@ export default function Layout({ children }: Readonly<{ children: React.ReactNod
   const isNavItemActive = (item: NavItem) =>
     navItemIsActive(item, location.pathname, isExportRouteActive, hasExportNavItem);
 
+  // A suspended store cannot be opened (the server refuses it), so it is shown but greyed out.
+  const isUnavailable = (store: { id: number; status: string }) =>
+    store.status !== 'active' && store.id !== resolvedActiveStoreId;
+  const storeRoleLabel = (store: { role: string; status: string }) =>
+    store.status === 'active' ? store.role : `${store.role} · ${store.status}`;
+
   const handleSwitchStore = async (storeId: number) => {
     setStoreSwitcherOpen(false);
     if (resolvedActiveStoreId === storeId) {
       return;
     }
 
-    await switchStore(storeId);
+    try {
+      await switchStore(storeId);
+    } catch (error) {
+      // Refused (e.g. suspended since this page loaded): say why instead of doing nothing.
+      addToast('error', error instanceof Error ? error.message : 'Could not open that store.');
+      return;
+    }
     globalThis.location.reload();
   };
 
@@ -292,8 +306,10 @@ export default function Layout({ children }: Readonly<{ children: React.ReactNod
                     <button
                       key={store.id}
                       onClick={() => void handleSwitchStore(store.id)}
+                      disabled={isUnavailable(store)}
+                      title={isUnavailable(store) ? 'This store is suspended' : undefined}
                       className={cn(
-                        'w-full flex items-center gap-3 px-3 py-2.5 hover:bg-slate-50 transition-colors text-left',
+                        'w-full flex items-center gap-3 px-3 py-2.5 hover:bg-slate-50 transition-colors text-left disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent',
                         store.id === resolvedActiveStoreId && 'bg-theme-subtle text-brand-600'
                       )}
                     >
@@ -310,7 +326,7 @@ export default function Layout({ children }: Readonly<{ children: React.ReactNod
                       )}
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-slate-800 truncate">{store.name}</p>
-                        <p className="text-xs text-slate-400 capitalize">{store.role}</p>
+                        <p className="text-xs text-slate-400 capitalize">{storeRoleLabel(store)}</p>
                       </div>
                       {store.id === resolvedActiveStoreId && (
                         <div className="w-2 h-2 rounded-full bg-brand-400 flex-shrink-0" />
@@ -393,8 +409,10 @@ export default function Layout({ children }: Readonly<{ children: React.ReactNod
                             setIsMobileMenuOpen(false);
                             void handleSwitchStore(store.id);
                           }}
+                          disabled={isUnavailable(store)}
+                          title={isUnavailable(store) ? 'This store is suspended' : undefined}
                           className={cn(
-                            'w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left',
+                            'w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left disabled:cursor-not-allowed disabled:opacity-50',
                             store.id === resolvedActiveStoreId
                               ? 'bg-theme-subtle text-brand-600'
                               : 'hover:bg-theme-subtle hover:text-theme-text'
@@ -413,7 +431,9 @@ export default function Layout({ children }: Readonly<{ children: React.ReactNod
                           )}
                           <div className="min-w-0 flex-1">
                             <p className="truncate text-sm font-medium">{store.name}</p>
-                            <p className="text-xs text-slate-400 capitalize">{store.role}</p>
+                            <p className="text-xs text-slate-400 capitalize">
+                              {storeRoleLabel(store)}
+                            </p>
                           </div>
                         </button>
                       ))}
