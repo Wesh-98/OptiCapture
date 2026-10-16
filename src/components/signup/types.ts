@@ -51,7 +51,9 @@ export function validateSignupForm(
     errors.username = 'Username is required';
   }
 
-  if (formData.email && !validateEmail(formData.email)) {
+  // Checked as it will be sent: registerStore trims it, so a trailing space a phone
+  // keyboard adds after autocomplete must not fail here.
+  if (formData.email && !validateEmail(formData.email.trim())) {
     errors.email = 'Enter a valid email address';
   }
 
