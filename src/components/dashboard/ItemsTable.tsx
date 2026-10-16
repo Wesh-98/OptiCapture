@@ -5,8 +5,9 @@ import type { InventoryItem } from './types';
 interface Props {
   items: InventoryItem[];
   total: number;
-  search: string;
   canEditItems: boolean;
+  /** Select All picks every item in the open category, so it is off for search results. */
+  canSelectAll: boolean;
   pageSize: 50 | 100 | 200;
   currentPage: number;
   confirmDeleteItemId: number | null;
@@ -25,8 +26,8 @@ interface Props {
 export function ItemsTable({
   items,
   total,
-  search,
   canEditItems,
+  canSelectAll,
   pageSize,
   currentPage,
   confirmDeleteItemId,
@@ -41,10 +42,8 @@ export function ItemsTable({
   onToggleItem,
   onToggleSelectAll,
 }: Readonly<Props>) {
-  // Items arrive pre-paginated from the server; filter locally only for toolbar search
-  const pagedItems = search
-    ? items.filter(i => i.item_name.toLowerCase().includes(search.toLowerCase()))
-    : items;
+  // Items arrive paginated and already searched by the server.
+  const pagedItems = items;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const allSelected = total > 0 && selectedItemIds.size === total;
 
@@ -59,7 +58,7 @@ export function ItemsTable({
                   <input
                     type="checkbox"
                     checked={allSelected}
-                    disabled={selectingAll || total === 0}
+                    disabled={!canSelectAll || selectingAll || total === 0}
                     onChange={onToggleSelectAll}
                     className="rounded border-slate-300 text-brand-600 focus:ring-brand-400"
                   />

@@ -307,6 +307,21 @@ export function upcVariants(upc: string): string[] {
 }
 
 /**
+ * The item search used everywhere items are searched: the store's inventory and the Super
+ * Admin's. Matches name, brand, category or tag anywhere, ignoring spaces and punctuation
+ * ("coca cola" finds "Coca-Cola"), and a full barcode in its other forms, since stores hold
+ * either. Expects items aliased `i` and their category `c`.
+ */
+export function itemSearchCondition(q: string): { sql: string; params: string[] } {
+  const text = searchCondition(['i.item_name', 'i.upc', 'i.brand', 'c.name', 'i.tag_names'], q);
+  const otherUpcForms = upcVariants(q).slice(1);
+  return {
+    sql: `(${[text.sql, ...otherUpcForms.map(() => 'i.upc = ?')].join(' OR ')})`,
+    params: [...text.params, ...otherUpcForms],
+  };
+}
+
+/**
  * A UPC as typed, scanned or imported, cleaned to the form it is stored in, or why it cannot
  * be one. Spaces and dashes inside an all-digit code are separators ("0 12345 67890 5"), so
  * they go. A value Excel turned into a number ("1.23457E+11", "12345678905.0") has already
