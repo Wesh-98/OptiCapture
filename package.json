@@ -70,7 +70,7 @@
     "@typescript-eslint/eslint-plugin": "^8.57.2",
     "@typescript-eslint/parser": "^8.57.2",
     "@vitejs/plugin-react": "^5.0.4",
-    "@vitest/coverage-v8": "^4.1.4",
+    "@vitest/coverage-v8": "^4.1.12",
     "agentation": "^3.1.2",
     "concurrently": "^9.2.1",
     "eslint": "^10.1.0",
@@ -85,7 +85,7 @@
     "tailwindcss": "^4.1.14",
     "typescript": "~5.8.2",
     "vite": "^6.2.0",
-    "vitest": "^4.1.4"
+    "vitest": "^4.1.12"
   },
   "overrides": {
     "qs": "^6.16.0",

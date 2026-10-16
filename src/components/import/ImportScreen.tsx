@@ -36,6 +36,7 @@ export function ImportScreen() {
             totalRows={workflow.totalRows}
             mappedCount={workflow.mappedCount}
             mappingIssues={workflow.mappingIssues}
+            mappingWarnings={workflow.mappingWarnings}
             mappingsReady={workflow.mappingsReady}
             onReset={workflow.reset}
             onSelectSheet={workflow.setActiveSheet}

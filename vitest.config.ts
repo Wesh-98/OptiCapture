@@ -48,12 +48,17 @@ export default defineConfig({
       provider: 'v8',
       include: [
         'src/server/**',
-        'src/hooks/useScanSession.ts',
-        'src/hooks/useMobileScan.ts',
-        'src/hooks/useHardwareScanner.ts',
-        'src/lib/mobileScanScanner.ts',
+        'src/shared/**',
+        'src/hooks/**',
+        'src/lib/**',
+        // The plain .ts helpers beside each page (API clients, validators, reducers);
+        // the .tsx components are covered by the e2e suite instead.
+        'src/components/**/*.ts',
       ],
-      exclude: ['src/server/db.ts'], // migration code; hard to meaningfully unit test
+      exclude: [
+        'src/server/db.ts', // migration code; hard to meaningfully unit test
+        'src/components/**/*.tsx',
+      ],
     },
   },
 });

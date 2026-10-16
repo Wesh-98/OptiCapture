@@ -229,32 +229,30 @@ function readImportedString(value: unknown): string {
   return typeof normalized === 'string' ? normalized.trim() : String(normalized).trim();
 }
 
-function detectWorksheetHeader(ws: ExcelJS.Worksheet): {
-  rowNumber: number;
-  columns: Array<{ columnNumber: number; header: string }>;
-  sourceColumnCount: number;
-} {
-  const lastCandidateRow = Math.min(Math.max(ws.rowCount, 1), 100);
-  let bestRowNumber = 1;
+/** Only the top of a sheet is searched for its header row. */
+const HEADER_SEARCH_ROWS = 100;
+
+/** How many columns a row uses: the position of its last non-blank cell. */
+function usedColumnCount(values: readonly unknown[]): number {
+  for (let index = values.length - 1; index >= 0; index--) {
+    if (readImportedString(values[index])) return index + 1;
+  }
+  return 0;
+}
+
+/**
+ * Which of `rows` (each a row's cells, first column first) is the header, as an index into
+ * `rows`. A header row is labels: words the import knows, and text rather than numbers. Row
+ * width used to dominate the score, so one data row with a note in a spare column, or a
+ * header with one unlabeled column, made a data row the header and dropped everything above
+ * it. Ties go to the earlier row. Workbooks and CSV files are searched the same way, so a
+ * title line above the headers is skipped whichever format the store exported.
+ */
+function pickHeaderRowIndex(rows: ReadonlyArray<readonly unknown[]>): number {
+  let bestIndex = 0;
   let bestScore = -1;
-  let sourceColumnCount = 0;
-
-  ws.eachRow(row => {
-    const values = (row.values as unknown[]).slice(1);
-    for (let index = values.length - 1; index >= 0; index--) {
-      if (readImportedString(values[index])) {
-        sourceColumnCount = Math.max(sourceColumnCount, index + 1);
-        break;
-      }
-    }
-  });
-
-  // A header row is labels: words the import knows, and text rather than numbers. Row width
-  // used to dominate the score, so one data row with a note in a spare column, or a header
-  // with one unlabeled column, made a data row the header and dropped everything above it.
-  for (let rowNumber = 1; rowNumber <= lastCandidateRow; rowNumber++) {
-    const row = ws.getRow(rowNumber);
-    const labels = (row.values as unknown[]).slice(1).map(readImportedString).filter(Boolean);
+  for (let index = 0; index < Math.min(rows.length, HEADER_SEARCH_ROWS); index++) {
+    const labels = rows[index].map(readImportedString).filter(Boolean);
     if (labels.length === 0) continue;
 
     const recognizedCount = labels.filter(isKnownHeader).length;
@@ -263,13 +261,18 @@ function detectWorksheetHeader(ws: ExcelJS.Worksheet): {
     const score = recognizedCount * 10 + textCount * 2 + labels.length - numericCount * 3;
     if (score > bestScore) {
       bestScore = score;
-      bestRowNumber = rowNumber;
+      bestIndex = index;
     }
   }
+  return bestIndex;
+}
 
-  const headerValues = (ws.getRow(bestRowNumber).values as unknown[]).slice(1);
+/** The header row's labelled columns; a repeated label is kept as "Name (2)". */
+function headerColumns(
+  headerValues: readonly unknown[]
+): Array<{ columnNumber: number; header: string }> {
   const usedHeaders = new Map<string, number>();
-  const columns = headerValues.flatMap((value, index) => {
+  return headerValues.flatMap((value, index) => {
     const baseHeader = readImportedString(value);
     if (!baseHeader) return [];
 
@@ -283,8 +286,33 @@ function detectWorksheetHeader(ws: ExcelJS.Worksheet): {
       },
     ];
   });
+}
 
-  return { rowNumber: bestRowNumber, columns, sourceColumnCount };
+function detectWorksheetHeader(ws: ExcelJS.Worksheet): {
+  rowNumber: number;
+  columns: Array<{ columnNumber: number; header: string }>;
+  sourceColumnCount: number;
+} {
+  let sourceColumnCount = 0;
+  ws.eachRow(row => {
+    sourceColumnCount = Math.max(
+      sourceColumnCount,
+      usedColumnCount((row.values as unknown[]).slice(1))
+    );
+  });
+
+  const candidateRows: unknown[][] = [];
+  const lastCandidateRow = Math.min(Math.max(ws.rowCount, 1), HEADER_SEARCH_ROWS);
+  for (let rowNumber = 1; rowNumber <= lastCandidateRow; rowNumber++) {
+    candidateRows.push((ws.getRow(rowNumber).values as unknown[]).slice(1));
+  }
+  const rowNumber = pickHeaderRowIndex(candidateRows) + 1;
+
+  return {
+    rowNumber,
+    columns: headerColumns((ws.getRow(rowNumber).values as unknown[]).slice(1)),
+    sourceColumnCount,
+  };
 }
 
 // Spreadsheet numbers arrive as text such as "$3.99", "1,200" or "8.25%". Strip that
@@ -1243,7 +1271,7 @@ export function decodeCsvText(buffer: Buffer): string {
 }
 
 /**
- * Trims the keys of CSV and JSON rows, so the headers the mapping screen shows (it trims
+ * Trims the keys of JSON rows, so the headers the mapping screen shows (it trims
  * them) are the keys the rows carry. A file with " UPC " as a header used to import nothing:
  * the mapping said "UPC", every row said " UPC ". Two keys that trim to the same name keep
  * both, the second as "Name (2)", the way worksheet headers already are.
@@ -1257,7 +1285,7 @@ export function trimRowKeys(rawRows: Record<string, unknown>[]): {
   const headers: string[] = [];
   for (const row of rawRows) {
     for (const key of Object.keys(row)) {
-      // Papa Parse collects fields beyond the header here; they have no column to map to.
+      // Papa Parse's name for fields beyond a CSV header; never a real column.
       if (key === '__parsed_extra' || headerFor.has(key)) continue;
       const base = key.trim();
       if (!base) continue;
@@ -1280,7 +1308,7 @@ export function trimRowKeys(rawRows: Record<string, unknown>[]): {
   return { headers, rows };
 }
 
-/** One sheet parsed from a CSV or JSON file, where row N of the data is line N + 1. */
+/** The one sheet of a JSON file, where item N is reported as row N + 1. */
 function flatPreviewSheet(name: string, rawRows: Record<string, unknown>[]): ImportPreviewSheet {
   const { headers, rows } = trimRowKeys(rawRows);
   return {
@@ -1291,6 +1319,41 @@ function flatPreviewSheet(name: string, rawRows: Record<string, unknown>[]): Imp
     preview: rows.slice(0, 5),
     rows,
     rowNumbers: rows.map((_, index) => index + 2),
+    rowCount: rows.length,
+  };
+}
+
+/**
+ * One sheet from a CSV file's records (record N is spreadsheet row N, which is what the store
+ * sees when it opens the file). The header row is found the way a worksheet's is, so a title
+ * or export-date line above the headers no longer becomes the only column.
+ */
+function csvPreviewSheet(name: string, records: readonly string[][]): ImportPreviewSheet {
+  const headerIndex = pickHeaderRowIndex(records);
+  const columns = headerColumns(records[headerIndex] ?? []);
+  const rows: Record<string, unknown>[] = [];
+  const rowNumbers: number[] = [];
+  for (let index = headerIndex + 1; index < records.length; index++) {
+    const record = records[index];
+    const row: Record<string, unknown> = {};
+    for (const column of columns) row[column.header] = record[column.columnNumber - 1] ?? '';
+    if (Object.values(row).some(value => readImportedString(value))) {
+      rows.push(row);
+      rowNumbers.push(index + 1);
+    }
+  }
+  return {
+    name,
+    headers: columns.map(column => column.header),
+    headerRowNumber: headerIndex + 1,
+    // A loop, not Math.max(...spread): a large file has more records than a call can take.
+    sourceColumnCount: records.reduce(
+      (widest, record) => Math.max(widest, usedColumnCount(record)),
+      0
+    ),
+    preview: rows.slice(0, 5),
+    rows,
+    rowNumbers,
     rowCount: rows.length,
   };
 }
@@ -1334,16 +1397,20 @@ function parseJsonImport(res: express.Response, buffer: Buffer) {
 }
 
 function parseCsvImport(res: express.Response, buffer: Buffer) {
-  const { data, errors } = Papa.parse<Record<string, any>>(decodeCsvText(buffer), {
-    header: true,
-    skipEmptyLines: true,
+  // Records, not objects: the header row is chosen afterwards, like a worksheet's. Blank
+  // lines are kept so each record's number is its row number in the file.
+  const { data, errors } = Papa.parse<string[]>(decodeCsvText(buffer), {
+    header: false,
+    skipEmptyLines: false,
     dynamicTyping: false,
   });
   if (errors.length && data.length === 0)
     return res.status(400).json({ error: 'Could not parse CSV file.' });
+  const sheet = csvPreviewSheet('Sheet1', data);
   // A header line alone used to come back as an empty sheet with nothing to map.
-  if (data.length === 0) return res.status(400).json({ error: 'File is empty or has no data rows' });
-  return sendImportPreview(res, [flatPreviewSheet('Sheet1', data)]);
+  if (sheet.rowCount === 0)
+    return res.status(400).json({ error: 'File is empty or has no data rows' });
+  return sendImportPreview(res, [sheet]);
 }
 
 async function parseWorkbookImport(res: express.Response, buffer: Buffer) {

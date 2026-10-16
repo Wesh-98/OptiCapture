@@ -74,6 +74,9 @@ export function useAdminStores() {
         return;
       }
       if (res.ok) setStores(await res.json());
+      else setActionError(await readErrorMessage(res, 'Failed to load stores'));
+    } catch {
+      setActionError('Failed to load stores');
     } finally {
       setIsLoading(false);
     }
@@ -99,6 +102,8 @@ export function useAdminStores() {
         const data = await res.json().catch(() => ({}));
         setActionError(data.error || 'Failed to update store status');
       }
+    } catch {
+      setActionError('Failed to update store status');
     } finally {
       setTogglingId(null);
     }

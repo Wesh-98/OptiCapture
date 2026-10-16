@@ -33,7 +33,7 @@ async function readErrorMessage(res: Response, fallback: string): Promise<string
 }
 
 export async function fetchPendingGoogleProfile(pendingKey: string): Promise<PendingGoogleProfile> {
-  const res = await fetch(`/api/auth/google/pending?key=${pendingKey}`);
+  const res = await fetch(`/api/auth/google/pending?key=${encodeURIComponent(pendingKey)}`);
 
   if (!res.ok) {
     throw new Error(await readErrorMessage(res, 'Could not load Google signup details.'));
