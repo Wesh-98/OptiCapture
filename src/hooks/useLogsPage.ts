@@ -22,8 +22,13 @@ export function useLogsPage() {
   const [logsCount, setLogsCount] = useState(0);
 
   const filterRef = useRef<HTMLDivElement>(null);
+  // Numbers each load. Answers arrive in any order, and one for a filter or page the owner
+  // has already left must not replace the list they are now looking at.
+  const latestRequestRef = useRef(0);
 
   const refreshLogs = useCallback(async () => {
+    const request = ++latestRequestRef.current;
+    const isLatest = () => request === latestRequestRef.current;
     setIsLoading(true);
     setFetchError('');
 
@@ -36,17 +41,19 @@ export function useLogsPage() {
         page: currentPage,
         limit: pageSize,
       });
+      if (!isLatest()) return;
       setLogs(page.items);
       setResultCount(page.total);
       setLogsCount(page.storeTotal);
     } catch (error) {
+      if (!isLatest()) return;
       setFetchError(
         error instanceof Error
           ? error.message
           : 'Could not load activity logs. Check your connection and try again.'
       );
     } finally {
-      setIsLoading(false);
+      if (isLatest()) setIsLoading(false);
     }
   }, [actionFilter, currentPage, dateFrom, dateTo, pageSize, search]);
 
