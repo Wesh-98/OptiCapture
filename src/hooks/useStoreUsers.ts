@@ -100,7 +100,10 @@ export function useStoreUsers() {
         setAddError(message);
         return;
       }
-      await loadUsersForStore(usersStore.id);
+      // The user exists now; a failed list reload is reported on its own, not as a failed add.
+      await loadUsersForStore(usersStore.id).catch((error: unknown) =>
+        setUsersError(error instanceof Error ? error.message : 'Failed to load store users')
+      );
       addToast(
         'success',
         userActionMode === 'create'
@@ -126,10 +129,16 @@ export function useStoreUsers() {
 
   const removeUser = async (userId: number) => {
     if (!usersStore) return;
-    const res = await fetch(`/api/admin/stores/${usersStore.id}/users/${userId}`, {
-      method: 'DELETE',
-      credentials: 'include',
-    });
+    let res: Response;
+    try {
+      res = await fetch(`/api/admin/stores/${usersStore.id}/users/${userId}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+    } catch {
+      setUsersError('Failed to remove user');
+      return;
+    }
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       setUsersError(data.error || 'Failed to remove user');
